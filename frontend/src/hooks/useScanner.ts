@@ -7,6 +7,8 @@
  * - WASM matching offloaded with requestIdleCallback; call markSyncComplete when done (indexer path).
  */
 
+import { rpc as StellarRpc, xdr } from "@stellar/stellar-sdk";
+import { getRpcUrls } from "../lib/chain";
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { StellarNetwork } from "../lib/chain";
 import {
@@ -88,17 +90,143 @@ async function fetchFromSubgraph(
   return null;
 }
 
+/** Maximum ledgers per getEvents page (Soroban RPC limit). */
+const SOROBAN_EVENTS_PAGE_SIZE = 200;
+
+/**
+ * Parse a Soroban contract event into the CachedAnnouncement args shape.
+ * The stealth-announcer emits: (stealthAddress, ephemeralPubKey, metadata)
+ * as ScVal bytes values in the event body (map or vec).
+ */
+function parseSorobanAnnouncementEvent(event: StellarRpc.Api.EventResponse): {
+  stealthAddress?: string;
+  ephemeralPubKey?: string;
+  metadata?: string;
+} | null {
+  try {
+    const val = event.value; // already parsed xdr.ScVal
+
+    function scValToHex(v: xdr.ScVal): string | undefined {
+      try {
+        if (v.switch() === xdr.ScValType.scvBytes()) {
+          return "0x" + Buffer.from(v.bytes()).toString("hex");
+        }
+        if (v.switch() === xdr.ScValType.scvString()) {
+          return Buffer.from(v.str()).toString("utf8");
+        }
+      } catch {
+        return undefined;
+      }
+      return undefined;
+    }
+
+    if (val.switch() === xdr.ScValType.scvMap()) {
+      const map = val.map() ?? [];
+      const result: Record<string, string> = {};
+      for (const entry of map) {
+        const key =
+          entry.key().switch() === xdr.ScValType.scvSymbol()
+            ? Buffer.from(entry.key().sym()).toString("utf8")
+            : undefined;
+        if (!key) continue;
+        const v = scValToHex(entry.val());
+        if (v) result[key] = v;
+      }
+      return {
+        stealthAddress: result["stealth_address"] ?? result["stealthAddress"],
+        ephemeralPubKey: result["ephemeral_pub_key"] ?? result["ephemeralPubKey"],
+        metadata: result["metadata"],
+      };
+    }
+
+    if (val.switch() === xdr.ScValType.scvVec()) {
+      const vec = val.vec() ?? [];
+      return {
+        stealthAddress: scValToHex(vec[0]),
+        ephemeralPubKey: scValToHex(vec[1]),
+        metadata: scValToHex(vec[2]),
+      };
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch Soroban contract events for the stealth-announcer contract using
+ * the Soroban RPC `getEvents` endpoint. Paginates from `fromLedger` to
+ * `toLedger` in chunks of SOROBAN_EVENTS_PAGE_SIZE, calling `onChunk` for
+ * each page so the caller can persist and update progress incrementally.
+ *
+ * Replaces the old Solana `getSignaturesForAddress` / log-parsing approach.
+ */
 async function fetchLogsAdaptive(
   _publicClient: PublicClient,
-  _announcerAddress: string,
+  announcerAddress: string,
   fromBlock: bigint,
-  _toBlock: bigint,
+  toBlock: bigint,
   _cluster: StellarNetwork,
   onChunk: (from: bigint, to: bigint, logs: unknown[]) => Promise<void>
 ): Promise<void> {
-  // Stellar event backfill needs a Soroban event indexer. The old implementation
-  // used Solana transaction-log APIs and returned stubbed data through legacyTxShim.
-  await onChunk(fromBlock, fromBlock, []);
+  const rpcUrls = getRpcUrls();
+  const server = new StellarRpc.Server(rpcUrls[0], {
+    allowHttp: rpcUrls[0].startsWith("http://"),
+  });
+
+  const startLedger = Number(fromBlock);
+  const endLedger = Number(toBlock);
+
+  if (startLedger > endLedger) {
+    await onChunk(fromBlock, toBlock, []);
+    return;
+  }
+
+  let cursor: string | undefined;
+  let currentStart = startLedger;
+
+  while (currentStart <= endLedger) {
+    const chunkEnd = Math.min(currentStart + SOROBAN_EVENTS_PAGE_SIZE - 1, endLedger);
+
+    const response = await server.getEvents({
+      startLedger: currentStart,
+      endLedger: chunkEnd,
+      filters: [
+        {
+          type: "contract",
+          contractIds: [announcerAddress],
+        },
+      ],
+      limit: SOROBAN_EVENTS_PAGE_SIZE,
+      ...(cursor ? { cursor } : {}),
+    });
+
+    const events = response.events ?? [];
+    const logs = events
+      .map((event) => {
+        const args = parseSorobanAnnouncementEvent(event);
+        if (!args) return null;
+        return {
+          transactionSignature: event.txHash,
+          logIndex: 0,
+          slot: event.ledger,
+          args,
+        };
+      })
+      .filter(Boolean);
+
+    await onChunk(BigInt(currentStart), BigInt(chunkEnd), logs);
+
+    // Advance: if we got a full page there may be more events in this ledger range.
+    if (events.length === SOROBAN_EVENTS_PAGE_SIZE && events[events.length - 1]) {
+      cursor = events[events.length - 1].pagingToken;
+      // Keep currentStart the same to continue paginating within the range.
+    } else {
+      cursor = undefined;
+      currentStart = chunkEnd + 1;
+    }
+  }
 }
 
 async function checkWatchlistBalances(

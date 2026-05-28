@@ -87,6 +87,11 @@ export function RegistrationView() {
               {address.slice(0, 6)}…{address.slice(-4)}
             </span>
             .
+            <p className="mt-2 text-xs text-amber-400/80">
+              ⚠ Re-registering rotates your meta-address. Senders who cached your old
+              meta-address will not be able to reach you until they refresh. Historical
+              entries are preserved on-chain for recovery.
+            </p>
           </div>
         )}
         {!checking && registered === false && (

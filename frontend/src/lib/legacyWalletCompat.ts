@@ -1,21 +1,16 @@
 /**
  * Wallet hook compatibility for legacy UI components pending full Soroban port.
+ *
+ * NOTE: publicKey is a plain Stellar address string (G…). Do NOT wrap it in
+ * an object with .toBase58() — use the string value directly.
  */
 
 import { useWallet as useStellarWallet } from "../hooks/useWallet";
 
 export function useWallet() {
   const w = useStellarWallet();
-  const pk = w.publicKey;
   return {
     ...w,
-    publicKey: pk
-      ? {
-          toBase58: () => pk,
-          toBytes: () => new Uint8Array(32),
-          toBuffer: () => Buffer.alloc(32),
-        }
-      : null,
     sendTransaction: async (tx: { toXDR?: () => string }) => {
       if (tx?.toXDR && w.signTransaction) {
         const xdr = tx.toXDR();

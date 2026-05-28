@@ -1,5 +1,8 @@
 /**
  * Minimal transaction types for legacy UI components pending full Soroban port.
+ *
+ * NOTE: Stellar contract IDs are plain strings (C… Strkey). Do NOT call
+ * .toBase58() on them — use the string value directly.
  */
 
 const G_NULL = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
@@ -9,7 +12,8 @@ export class PublicKey {
   constructor(key: string) {
     this.key = key;
   }
-  toBase58(): string {
+  /** @deprecated Stellar contract IDs are plain strings. Use the string value directly. */
+  toString(): string {
     return this.key;
   }
   toBuffer(): Buffer {
