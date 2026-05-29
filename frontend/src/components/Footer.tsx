@@ -22,6 +22,12 @@ export function Footer() {
         >
           Disclaimer
         </Link>
+        <Link
+          to="/threat-model"
+          className="hover:text-sol-purple transition-colors"
+        >
+          Threat model
+        </Link>
       </nav>
       <p className="font-mono text-mist/60">
         © 2026 Opaque Protocol. Stellar stealth and reputation stack.

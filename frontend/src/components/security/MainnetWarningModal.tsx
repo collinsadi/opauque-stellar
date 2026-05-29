@@ -1,4 +1,6 @@
 import React, { useState } from "react";
+import { Link } from "react-router-dom";
+import { MAINNET_PRIVACY_WARNINGS, THREAT_MODEL_ROUTE } from "../../lib/privacyThreatModel";
 import { useSecurityStore } from "../../store/securityStore";
 
 export const MainnetWarningModal: React.FC = () => {
@@ -21,6 +23,26 @@ export const MainnetWarningModal: React.FC = () => {
           You are connecting to the Stellar Mainnet. Transactions here are irreversible.
           Account creation and network reserves will consume real funds (XLM).
         </p>
+
+        <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm">
+          <p className="font-semibold text-amber-900 mb-2">Privacy limits on mainnet</p>
+          <ul className="list-disc pl-4 space-y-1 text-amber-950/90">
+            {MAINNET_PRIVACY_WARNINGS.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+          <p className="mt-2">
+            <Link
+              to={THREAT_MODEL_ROUTE}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-amber-900 underline hover:text-amber-950"
+            >
+              Full privacy threat model
+            </Link>
+          </p>
+        </div>
+
         <div className="mb-6 flex items-center space-x-2">
           <input
             type="checkbox"

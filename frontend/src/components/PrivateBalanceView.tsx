@@ -47,6 +47,8 @@ import { secp256k1 } from "@noble/curves/secp256k1";
 import { getNativeToken } from "../lib/tokens";
 import type { TokenInfo } from "../lib/tokens";
 import { ExplorerLink } from "./ExplorerLink";
+import { PrivacyWarningCallout } from "./PrivacyWarningCallout";
+import { SCANNER_PRIVACY_WARNING } from "../lib/privacyThreatModel";
 import {
   ghostAnnouncementEntryKey,
   useGhostAnnouncementStore,
@@ -834,6 +836,8 @@ export function PrivateBalanceView() {
             </button>
           </div>
         </div>
+
+        <PrivacyWarningCallout message={SCANNER_PRIVACY_WARNING} className="mt-4" />
 
         {/* Scanning status */}
         <div
