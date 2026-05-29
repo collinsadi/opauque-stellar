@@ -174,6 +174,14 @@ See [`frontend/.env.example`](frontend/.env.example) and [`deployments/README.md
 
 ---
 
+## Policies
+
+- [Abuse & sanctions response](docs/ABUSE_AND_SANCTIONS_POLICY.md) — reporting, blocking limits, privacy guarantees
+- [Security reporting](SECURITY.md) — vulnerability disclosure
+- [Disclaimer](DISCLAIMER.md) — experimental software and privacy limits
+
+---
+
 ## Cryptographic stack
 
 | Layer | Primitive | Purpose |
