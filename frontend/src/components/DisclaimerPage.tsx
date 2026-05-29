@@ -31,6 +31,27 @@ export function DisclaimerPage() {
           jurisdiction.
         </p>
       </section>
+
+      <section>
+        <h2 className="text-white font-medium text-base mb-2">Mainnet Production Use</h2>
+        <p>
+          Mainnet deployments involve <strong className="text-neutral-200">real funds</strong>.
+          Smart contracts and the frontend are experimental and have not undergone a formal
+          production security audit. Account reserves, network fees, and failed transactions
+          consume real XLM irreversibly. Do not use mainnet privacy payments unless you
+          accept these risks and have completed your own legal and technical review.
+        </p>
+      </section>
+
+      <section>
+        <h2 className="text-white font-medium text-base mb-2">Sanctions and Counterparty Risk</h2>
+        <p>
+          Opaque is non-custodial and does not screen senders, recipients, or payment-link
+          counterparties against sanctions lists or other compliance databases. You are
+          solely responsible for ensuring your mainnet use complies with applicable sanctions
+          and counterparty due-diligence requirements.
+        </p>
+      </section>
     </LegalPageLayout>
   );
 }
