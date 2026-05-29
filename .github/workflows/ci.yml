@@ -31,6 +31,22 @@ jobs:
           fi
           echo "No legacy devnet JSON config in frontend/src/contracts"
 
+      - name: Verify lockfiles required in CI
+        run: |
+          if [ ! -f Cargo.lock ]; then
+            echo "Cargo.lock is required"
+            exit 1
+          fi
+          if [ ! -f package-lock.json ]; then
+            echo "package-lock.json is required"
+            exit 1
+          fi
+          if [ ! -f frontend/package-lock.json ]; then
+            echo "frontend/package-lock.json is required"
+            exit 1
+          fi
+          echo "All required lockfiles present"
+
   supply-chain:
     name: Supply chain integrity
     runs-on: ubuntu-latest
