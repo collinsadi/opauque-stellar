@@ -33,6 +33,12 @@ import {
   u64ToScVal,
 } from "../lib/stellar";
 import { deployedAddresses } from "../contracts/deployedAddresses";
+import {
+  decodePaymentLink,
+  isOpaquePaymentLink,
+  type PaymentLink,
+  type PaymentLinkError,
+} from "../lib/paymentLink";
 
 function isDirectMetaAddress(s: string): boolean {
   const t = s.trim().startsWith("0x") ? s.trim() : "0x" + s.trim();
@@ -51,7 +57,7 @@ function formatRecipientDisplay(id: string): string {
   return trimmed;
 }
 
-type ResolveStatus = "idle" | "resolving" | "found" | "not_found";
+type ResolveStatus = "idle" | "resolving" | "found" | "not_found" | "network_mismatch" | "invalid_link";
 
 export function PayPage() {
   const { identifier } = useParams<{ identifier: string }>();
@@ -69,6 +75,7 @@ export function PayPage() {
   const [sending, setSending] = useState(false);
   const [activeBalance, setActiveBalance] = useState<bigint | null>(null);
   const [_balanceLoading, setBalanceLoading] = useState(false);
+  const [decodedPaymentLink, setDecodedPaymentLink] = useState<PaymentLink | null>(null);
   const address = publicKey;
 
   useEffect(() => {
@@ -81,9 +88,38 @@ export function PayPage() {
     setDisplayName(id);
     setResolveStatus("resolving");
     setResolvedMeta(null);
+    setDecodedPaymentLink(null);
     let cancelled = false;
     (async () => {
       try {
+        // Check if it's an opaque payment link
+        if (isOpaquePaymentLink(id)) {
+          const result = decodePaymentLink(id, cluster);
+          if ("error" in result) {
+            if (!cancelled) {
+              if (result.error.type === "NETWORK_MISMATCH") {
+                setResolveStatus("network_mismatch");
+                setError(result.error.message);
+              } else {
+                setResolveStatus("invalid_link");
+                setError(result.error.message);
+              }
+            }
+            return;
+          }
+          const link = result.link;
+          setDecodedPaymentLink(link);
+          setDisplayName(link.metaAddress);
+          setResolvedMeta(link.metaAddress as Hex);
+          // Pre-fill amount if specified in the link
+          if (link.params.amount && !amount) {
+            setAmount(link.params.amount);
+          }
+          if (!cancelled) setResolveStatus("found");
+          return;
+        }
+
+        // Handle ENS names
         if (isEnsName(id)) {
           const controller = await resolveEnsToAddress(id);
           if (cancelled || !controller) {
@@ -98,6 +134,7 @@ export function PayPage() {
             setResolveStatus("found");
           }
         } else {
+          // Handle direct meta-address
           const with0x = id.startsWith("0x") ? id : "0x" + id;
           if (isDirectMetaAddress(with0x)) {
             setResolvedMeta(with0x as Hex);
@@ -111,7 +148,7 @@ export function PayPage() {
     return () => {
       cancelled = true;
     };
-  }, [identifier]);
+  }, [identifier, cluster]);
 
   useEffect(() => {
     if (!address) {
@@ -225,6 +262,50 @@ export function PayPage() {
           <p className="text-mist text-sm mb-6">
             Could not resolve a registered stealth meta-address for this
             identifier.
+          </p>
+          <button
+            type="button"
+            onClick={() => navigate("/")}
+            className="text-indigo-400 underline"
+          >
+            Back home
+          </button>
+        </div>
+      </motion.div>
+    );
+  }
+
+  if (resolveStatus === "network_mismatch") {
+    return (
+      <motion.div className="min-h-screen bg-ink-950 text-white flex flex-col items-center justify-center p-6">
+        <div className="w-full max-w-md rounded-2xl border border-amber-500/40 bg-amber-500/10 p-6 text-center">
+          <h1 className="font-display text-2xl font-bold text-amber-200 mb-2">
+            Network Mismatch
+          </h1>
+          <p className="text-amber-200/80 text-sm mb-6">
+            {error || "This payment link is for a different Stellar network."}
+          </p>
+          <button
+            type="button"
+            onClick={() => navigate("/")}
+            className="text-indigo-400 underline"
+          >
+            Back home
+          </button>
+        </div>
+      </motion.div>
+    );
+  }
+
+  if (resolveStatus === "invalid_link") {
+    return (
+      <motion.div className="min-h-screen bg-ink-950 text-white flex flex-col items-center justify-center p-6">
+        <div className="w-full max-w-md rounded-2xl border border-red-500/40 bg-red-500/10 p-6 text-center">
+          <h1 className="font-display text-2xl font-bold text-red-200 mb-2">
+            Invalid Payment Link
+          </h1>
+          <p className="text-red-200/80 text-sm mb-6">
+            {error || "This payment link is not valid."}
           </p>
           <button
             type="button"
