@@ -16,6 +16,7 @@ import { getAnnouncementsForCluster } from "../lib/opaqueCache";
 import { getCluster } from "../lib/chain";
 import { fetchLatestValidMerkleRoot, generateReputationProof } from "../lib/reputationProver";
 import { getExplorerTxUrl } from "../lib/explorer";
+import { getDemoVerifierUrl } from "../lib/featureFlags";
 
 // @ts-expect-error snarkjs has no bundled types
 import * as snarkjs from "snarkjs";
@@ -508,6 +509,16 @@ export function ProofGeneratorModal({ trait, onClose }: ProofGeneratorModalProps
                   Submit On-Chain
                 </button>
               </div>
+              {getDemoVerifierUrl() && (
+                <a
+                  href={getDemoVerifierUrl()!}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block text-center text-xs text-sol-purple hover:underline"
+                >
+                  Open demo verifier ↗
+                </a>
+              )}
             </div>
           )}
 

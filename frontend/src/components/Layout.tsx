@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, type ReactNode } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { TestnetBanner } from "./TestnetBanner";
+import { isTabNavVisible } from "../lib/tabAccess";
 
 export type Tab =
   | "dashboard"
@@ -136,7 +137,7 @@ function DesktopNav({
                   {([
                     { id: "balance" as Tab, label: "Private balance" },
                     { id: "history" as Tab, label: "Transaction history" },
-                    { id: "manage" as Tab, label: "Manage" },
+                    ...(isTabNavVisible("manage") ? [{ id: "manage" as Tab, label: "Manage" }] : []),
                     { id: "profile" as Tab, label: "Profile" },
                   ]).map((item) => (
                     <button
@@ -171,7 +172,7 @@ const mobileTabs: { id: Tab; label: string; icon: string }[] = [
   { id: "reputation", label: "My Traits", icon: "✦" },
   { id: "manage", label: "Manage", icon: "◈" },
   { id: "profile", label: "Profile", icon: "⚙" },
-];
+].filter((item) => isTabNavVisible(item.id));
 
 function MobileNav({ tab, onTabChange }: Pick<LayoutProps, "tab" | "onTabChange">) {
   return (
@@ -213,7 +214,7 @@ export function Layout({
   onConnect,
   onDisconnect,
   children,
-  protocolLog: _protocolLog,
+  protocolLog,
 }: LayoutProps) {
   return (
     <div className="min-h-dvh flex flex-col bg-ink-950 bg-grid-fade bg-size-grid">
@@ -256,6 +257,8 @@ export function Layout({
 
       {/* ── Mobile nav ── */}
       <MobileNav tab={tab} onTabChange={onTabChange} />
+
+      {protocolLog}
     </div>
   );
 }

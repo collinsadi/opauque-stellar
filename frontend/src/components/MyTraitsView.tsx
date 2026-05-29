@@ -24,6 +24,8 @@ import {
   hexPubkeyToBase58,
 } from "../lib/programs";
 import { ProofGeneratorModal } from "./ProofGeneratorModal";
+import { FeatureDisabledNotice } from "./FeatureDisabledNotice";
+import { getFeatureFlags } from "../lib/featureFlags";
 
 // =============================================================================
 // Constants
@@ -108,9 +110,11 @@ function StatusBadge({ isValid, isLegacy }: { isValid: boolean; isLegacy?: boole
 function TraitCard({
   trait,
   onProve,
+  readOnly,
 }: {
   trait: V2DiscoveredTrait;
   onProve: (trait: V2DiscoveredTrait) => void;
+  readOnly?: boolean;
 }) {
   const issuerBase58 = hexPubkeyToBase58(trait.issuer);
   const issuerShort = `${issuerBase58.slice(0, 6)}…${issuerBase58.slice(-4)}`;
@@ -152,7 +156,7 @@ function TraitCard({
         )}
       </div>
 
-      {trait.isV2 && trait.isValid && trait.issuerAuthorized && !trait.chainDiscoveryOnly && (
+      {trait.isV2 && trait.isValid && trait.issuerAuthorized && !trait.chainDiscoveryOnly && !readOnly && (
         <button
           type="button"
           onClick={() => onProve(trait)}
@@ -160,6 +164,9 @@ function TraitCard({
         >
           Generate ZK Proof ▶
         </button>
+      )}
+      {readOnly && trait.isV2 && trait.isValid && trait.issuerAuthorized && !trait.chainDiscoveryOnly && (
+        <p className="text-xs text-mist/70 italic">Proof generation disabled on this deployment.</p>
       )}
       {trait.isV2 && trait.chainDiscoveryOnly && (
         <p className="text-xs text-mist">
@@ -177,9 +184,10 @@ function TraitCard({
 
 interface MyTraitsViewProps {
   onNavigate?: (tab: Tab) => void;
+  readOnly?: boolean;
 }
 
-export function MyTraitsView({ onNavigate }: MyTraitsViewProps = {}) {
+export function MyTraitsView({ onNavigate, readOnly = false }: MyTraitsViewProps = {}) {
   const discoveredTraitsMap = useSchemaStore((s) => s.discoveredTraits);
   const schemaMap = useSchemaStore((s) => s.schemas);
   const setDiscoveredTraits = useSchemaStore((s) => s.setDiscoveredTraits);
@@ -362,6 +370,9 @@ export function MyTraitsView({ onNavigate }: MyTraitsViewProps = {}) {
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-8 space-y-8">
+      {readOnly && (
+        <FeatureDisabledNotice feature="reputationProofs" readOnly />
+      )}
       {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <div>
@@ -434,7 +445,7 @@ export function MyTraitsView({ onNavigate }: MyTraitsViewProps = {}) {
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {pagedTraits.map((trait) => (
-              <TraitCard key={trait.attestationUid} trait={trait} onProve={setActiveProofTrait} />
+              <TraitCard key={trait.attestationUid} trait={trait} onProve={setActiveProofTrait} readOnly={readOnly} />
             ))}
           </div>
           <PaginationControls
@@ -485,7 +496,7 @@ export function MyTraitsView({ onNavigate }: MyTraitsViewProps = {}) {
       )}
 
       {/* Proof generator modal */}
-      {activeProofTrait && (
+      {activeProofTrait && getFeatureFlags().reputationProofs && (
         <ProofGeneratorModal
           trait={activeProofTrait}
           onClose={() => setActiveProofTrait(null)}

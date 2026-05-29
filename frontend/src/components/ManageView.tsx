@@ -22,6 +22,7 @@ import type { Tab } from "./Layout";
 import { ModalShell } from "./ModalShell";
 import { AdminPanel } from "./AdminPanel";
 import { ContractVersionPanelConnected } from "./ContractVersionPanel";
+import { FeatureDisabledNotice } from "./FeatureDisabledNotice";
 
 // =============================================================================
 // Constants
@@ -127,9 +128,10 @@ function PaginationControls({
 interface SchemaCardProps {
   schema: SchemaV2;
   onAction: (msg: string, isError?: boolean) => void;
+  readOnly?: boolean;
 }
 
-function SchemaCard({ schema, onAction }: SchemaCardProps) {
+function SchemaCard({ schema, onAction, readOnly = false }: SchemaCardProps) {
   const uid = useId();
 
   const [delegateInput, setDelegateInput] = useState("");
@@ -190,7 +192,7 @@ function SchemaCard({ schema, onAction }: SchemaCardProps) {
                   <span className="text-xs font-mono text-white">{shortAddr(d)}</span>
                   <button
                     type="button"
-                    disabled={isBusy || schema.deprecated}
+                    disabled={isBusy || schema.deprecated || readOnly}
                     onClick={() => handleRemoveDelegate(d)}
                     className="text-xs text-red-400 hover:text-red-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
@@ -202,7 +204,7 @@ function SchemaCard({ schema, onAction }: SchemaCardProps) {
           )}
 
           {/* Add delegate */}
-          {!schema.deprecated && (
+          {!schema.deprecated && !readOnly && (
             <div className="flex gap-2 pt-1">
               <input
                 id={`${uid}-delegate`}
@@ -292,9 +294,10 @@ function SchemaCard({ schema, onAction }: SchemaCardProps) {
 interface AttestationCardProps {
   att: ManagedAttestation;
   onAction: (msg: string, isError?: boolean) => void;
+  readOnly?: boolean;
 }
 
-function AttestationCard({ att, onAction }: AttestationCardProps) {
+function AttestationCard({ att, onAction, readOnly = false }: AttestationCardProps) {
   const [revoking, setRevoking] = useState(false);
   const [confirmRevokeOpen, setConfirmRevokeOpen] = useState(false);
 
@@ -346,7 +349,7 @@ function AttestationCard({ att, onAction }: AttestationCardProps) {
           )}
         </div>
 
-        {att.isRevocable && !att.isRevoked && !att.isExpired && (
+        {att.isRevocable && !att.isRevoked && !att.isExpired && !readOnly && (
           <button
             type="button"
             onClick={() => setConfirmRevokeOpen(true)}
@@ -406,9 +409,10 @@ function AttestationCard({ att, onAction }: AttestationCardProps) {
 
 interface ManageViewProps {
   onNavigate?: (tab: Tab) => void;
+  readOnly?: boolean;
 }
 
-export function ManageView({ onNavigate }: ManageViewProps = {}) {
+export function ManageView({ onNavigate, readOnly = false }: ManageViewProps = {}) {
   const { address: walletAddress, publicKey, connection } = useWallet();
   const schemaMap = useSchemaStore((s) => s.schemas);
 
@@ -515,6 +519,7 @@ export function ManageView({ onNavigate }: ManageViewProps = {}) {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
+      {readOnly && <FeatureDisabledNotice feature="schemaManagement" readOnly />}
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
@@ -524,7 +529,7 @@ export function ManageView({ onNavigate }: ManageViewProps = {}) {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {onNavigate && (
+          {onNavigate && !readOnly && (
             <button
               type="button"
               onClick={() => onNavigate("attest")}
@@ -551,7 +556,7 @@ export function ManageView({ onNavigate }: ManageViewProps = {}) {
 
       {/* Section tabs */}
       <div className="flex flex-wrap gap-2">
-        {(["schemas", "attestations", "admin"] as const).map((s) => (
+        {(["schemas", "attestations", ...(readOnly ? [] : ["admin" as const])] as const).map((s) => (
           <button
             key={s}
             type="button"
@@ -590,7 +595,7 @@ export function ManageView({ onNavigate }: ManageViewProps = {}) {
               <p className="text-sm text-mist max-w-xs mx-auto">
                 You haven't created any schemas. Create one in Schema Studio.
               </p>
-              {onNavigate && (
+              {onNavigate && !readOnly && (
                 <button
                   type="button"
                   onClick={() => onNavigate("schemas")}
@@ -604,7 +609,7 @@ export function ManageView({ onNavigate }: ManageViewProps = {}) {
             <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {pagedSchemas.map((schema) => (
-                  <SchemaCard key={schema.schemaId} schema={schema} onAction={showToast} />
+                  <SchemaCard key={schema.schemaId} schema={schema} onAction={showToast} readOnly={readOnly} />
                 ))}
               </div>
               <PaginationControls
@@ -698,6 +703,7 @@ export function ManageView({ onNavigate }: ManageViewProps = {}) {
                   <AttestationCard
                     key={att.uidHex}
                     att={att}
+                    readOnly={readOnly}
                     onAction={(msg, isError) => {
                       showToast(msg, isError);
                       if (!isError) void load(); // refresh after successful revoke
