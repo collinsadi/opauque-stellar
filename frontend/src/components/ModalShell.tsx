@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { useEffect, useId, type ReactNode } from "react";
+import { useFocusTrap } from "../lib/a11y/useFocusTrap";
 
 type ModalShellProps = {
   open: boolean;
@@ -22,6 +23,21 @@ export function ModalShell({
   maxWidthClassName = "max-w-md",
   contentClassName = "",
 }: ModalShellProps) {
+  // #109: focus trap + restore. Hook is no-op when `open` is false.
+  const containerRef = useFocusTrap(open);
+  const titleId = useId();
+  const descId = useId();
+
+  // #109: Esc closes the modal — standard dialog behaviour.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
   if (!open) return null;
 
   return (
@@ -29,9 +45,13 @@ export function ModalShell({
       className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-ink-950/70 backdrop-blur-md"
       role="dialog"
       aria-modal="true"
+      aria-labelledby={title != null ? titleId : undefined}
+      aria-describedby={description != null ? descId : undefined}
       onClick={() => closeOnBackdrop && onClose()}
     >
       <div
+        ref={containerRef}
+        tabIndex={-1}
         className={`w-full ${maxWidthClassName} overflow-hidden rounded-2xl border border-ink-700 bg-ink-900/95 shadow-2xl backdrop-blur-lg ${contentClassName}`}
         onClick={(e) => e.stopPropagation()}
       >
@@ -40,12 +60,17 @@ export function ModalShell({
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
                 {title != null ? (
-                  <h3 className="font-display text-base font-bold text-white">
+                  <h3
+                    id={titleId}
+                    className="font-display text-base font-bold text-white"
+                  >
                     {title}
                   </h3>
                 ) : null}
                 {description != null ? (
-                  <div className="mt-1 text-sm text-mist">{description}</div>
+                  <div id={descId} className="mt-1 text-sm text-mist">
+                    {description}
+                  </div>
                 ) : null}
               </div>
               <button

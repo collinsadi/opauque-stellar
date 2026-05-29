@@ -64,7 +64,12 @@ export type UseScannerResult = {
   progress: ScanProgress;
   /** Native balance per ghost/watchlist address (manual scan). Use for displaying/claiming manual receives. */
   ghostBalances: Record<string, bigint>;
-  /** Token balances per address (reserved for future use). */
+  // #111: opaque-mainnet-v1 is XLM-only. Asset / token balances are
+  // explicitly out of v1 scope (see TOKEN_SUPPORT_V1.md); the field
+  // below was previously marked "reserved for future use" but the
+  // shape stays empty in v1. Keeping the key (always `{}`) so
+  // downstream consumers don't have to fork their types on v1 vs the
+  // multi-asset follow-up.
   ghostTokenBalances: Record<string, Record<string, bigint>>;
   /** Whether we are in "back-fill" (cache was empty, scanning from START_BLOCK) */
   isBackfilling: boolean;
