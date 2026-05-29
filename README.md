@@ -171,6 +171,7 @@ See [`frontend/.env.example`](frontend/.env.example) and [`deployments/README.md
 - `VITE_STELLAR_RPC_URL` / `VITE_STELLAR_HORIZON_URL` (optional; manifest defaults)
 - **Canonical contract IDs** — [`deployments/v1/testnet.json`](deployments/v1/testnet.json) / [`deployments/v1/mainnet.json`](deployments/v1/mainnet.json)
 - Release evidence — [`RELEASE_NOTES.md`](RELEASE_NOTES.md)
+- Mainnet security audit — [`docs/security/MAINNET_AUDIT_REPORT.md`](docs/security/MAINNET_AUDIT_REPORT.md) (signoff required before deploy)
 
 ---
 

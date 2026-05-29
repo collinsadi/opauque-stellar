@@ -31,6 +31,7 @@ Each network manifest records:
 5. Record verification output: `node scripts/verify-deployment-manifest.mjs --network testnet > /tmp/verify.txt` and paste into `verification.output`.
 6. Set `artifacts.frontend.buildCommit` to the git SHA used for the release frontend build.
 7. Verify: `node scripts/verify-deployment-manifest.mjs --network testnet --strict`
+8. Mainnet only: complete [security audit signoff](../docs/security/MAINNET_AUDIT_SIGNOFF.md) and run `npm run verify:security-audit` before setting `deploymentStatus: deployed`.
 
 ## Frontend / CI
 

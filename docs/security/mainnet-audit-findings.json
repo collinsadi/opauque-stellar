@@ -1,0 +1,202 @@
+{
+  "schemaVersion": "1.0.0",
+  "release": "v1",
+  "reviewType": "internal_structured_review",
+  "reviewStarted": "2026-05-29",
+  "reviewCompleted": "2026-05-29",
+  "signoffStatus": "blocked",
+  "signoffDocument": "docs/security/MAINNET_AUDIT_SIGNOFF.md",
+  "reportDocument": "docs/security/MAINNET_AUDIT_REPORT.md",
+  "scopeDocument": "docs/security/MAINNET_AUDIT_SCOPE.md",
+  "auditors": [
+    {
+      "role": "Protocol security review",
+      "team": "Opaque core team",
+      "method": "Structured manual review against scope §2"
+    }
+  ],
+  "summary": {
+    "total": 16,
+    "blockingOpen": 4,
+    "remediated": 9,
+    "acceptedRisk": 3
+  },
+  "findings": [
+    {
+      "id": "SEC-001",
+      "title": "No independent third-party security audit",
+      "component": "all",
+      "severity": "critical",
+      "triage": "blocking",
+      "status": "open",
+      "description": "Privacy and fund-handling code has not been reviewed by an independent auditor. Internal review does not substitute for external validation before mainnet real funds.",
+      "mitigation": "Commission third-party audit of contracts, circuits, scanner, and frontend key handling; attach report to signoff.",
+      "tracking": null
+    },
+    {
+      "id": "SEC-002",
+      "title": "Groth16 trusted setup uses development ceremony artifacts",
+      "component": "circuits",
+      "severity": "critical",
+      "triage": "blocking",
+      "status": "open",
+      "description": "In-repo zkey files derive from Hermez Phase 1 PTAU with project-specific Phase 2. circuits/README states these are for development only.",
+      "mitigation": "Run production multi-party ceremony; update artifact hashes and contract embedded VK.",
+      "tracking": "circuits/README.md"
+    },
+    {
+      "id": "SEC-003",
+      "title": "Soroban contracts lack formal verification",
+      "component": "contracts",
+      "severity": "high",
+      "triage": "blocking",
+      "status": "open",
+      "description": "Smart contracts are unit-tested but not formally verified. Admin paths, nullifier growth, and upgrade authority require audit scrutiny.",
+      "mitigation": "Complete external contract audit; expand unit/integration tests for admin and pause paths.",
+      "tracking": null
+    },
+    {
+      "id": "SEC-004",
+      "title": "Mainnet multisig governance not yet deployed",
+      "component": "ops",
+      "severity": "high",
+      "triage": "blocking",
+      "status": "open",
+      "description": "mainnet.json shows deploymentStatus not_deployed; admin/multisig accounts unset. Single-key admin is unacceptable for mainnet.",
+      "mitigation": "Deploy with multisig per AdminPanel runbook; record accounts in manifest before production traffic.",
+      "tracking": "deployments/v1/mainnet.json"
+    },
+    {
+      "id": "SEC-101",
+      "title": "Ghost ephemeral keys stored plaintext at rest",
+      "component": "frontend",
+      "severity": "high",
+      "triage": "blocking",
+      "status": "remediated",
+      "description": "Historical risk: ghost private keys in localStorage without encryption.",
+      "mitigation": "AES-256-GCM + PBKDF2 (600k iter) encryption in ghostCrypto.ts.",
+      "tracking": "docs/GHOST_THREAT_MODEL.md"
+    },
+    {
+      "id": "SEC-102",
+      "title": "Master viewing/spending keys persisted in browser storage",
+      "component": "frontend",
+      "severity": "critical",
+      "triage": "blocking",
+      "status": "remediated",
+      "description": "Master keys must never persist across sessions.",
+      "mitigation": "KeysContext keeps masterKeys in memory only; cleared on logout.",
+      "tracking": "frontend/src/context/KeysContext.tsx"
+    },
+    {
+      "id": "SEC-103",
+      "title": "WASM / circuit artifact drift undetected in CI",
+      "component": "ops",
+      "severity": "medium",
+      "triage": "blocking",
+      "status": "remediated",
+      "description": "Undetected artifact substitution could ship malicious scanner or circuit builds.",
+      "mitigation": "SHA-256 pins in artifacts/manifest.json; CI verify-artifact-manifest and deployment manifest checks.",
+      "tracking": "artifacts/manifest.json, .github/workflows/ci.yml"
+    },
+    {
+      "id": "SEC-104",
+      "title": "Malformed announcement public keys accepted",
+      "component": "scanner",
+      "severity": "medium",
+      "triage": "blocking",
+      "status": "remediated",
+      "description": "Invalid secp256k1 keys could cause scanner crashes or spurious matches.",
+      "mitigation": "Compressed prefix validation in scanner and stealth-announcer (#53).",
+      "tracking": "#53"
+    },
+    {
+      "id": "SEC-105",
+      "title": "Unsupported announcement event versions processed incorrectly",
+      "component": "scanner",
+      "severity": "medium",
+      "triage": "blocking",
+      "status": "remediated",
+      "description": "Schema drift could miss or mis-parse announcements.",
+      "mitigation": "Event version filtering with telemetry (#50).",
+      "tracking": "#50"
+    },
+    {
+      "id": "SEC-106",
+      "title": "Wallet network mismatch allows wrong-network signing",
+      "component": "frontend",
+      "severity": "high",
+      "triage": "blocking",
+      "status": "remediated",
+      "description": "User could sign mainnet txs while UI expects testnet or vice versa.",
+      "mitigation": "NetworkValidationService + NetworkMismatchModal before sign.",
+      "tracking": "frontend/src/services/networkValidation.ts"
+    },
+    {
+      "id": "SEC-107",
+      "title": "Registration setup signature replay across contexts",
+      "component": "frontend",
+      "severity": "medium",
+      "triage": "blocking",
+      "status": "remediated",
+      "description": "Setup signatures could be replayed without domain separation.",
+      "mitigation": "Domain-separated signing messages in stealth.ts.",
+      "tracking": "frontend/src/lib/stealth.ts"
+    },
+    {
+      "id": "SEC-108",
+      "title": "No emergency response for compromised reputation root",
+      "component": "contracts",
+      "severity": "high",
+      "triage": "blocking",
+      "status": "remediated",
+      "description": "Compromised root publisher could authorize false claims.",
+      "mitigation": "Multisig freeze policy, UI blocks, and incident runbook (#85).",
+      "tracking": "#85"
+    },
+    {
+      "id": "SEC-109",
+      "title": "Legacy devnet/Solana config could reach production builds",
+      "component": "ops",
+      "severity": "medium",
+      "triage": "blocking",
+      "status": "remediated",
+      "description": "Stale address JSON or devnet cluster refs could misconfigure mainnet.",
+      "mitigation": "Manifest-only contract IDs; CI rejects legacy JSON patterns.",
+      "tracking": "scripts/verify-deployment-manifest.mjs"
+    },
+    {
+      "id": "SEC-201",
+      "title": "Decrypted keys exposed in browser memory while app is open",
+      "component": "frontend",
+      "severity": "medium",
+      "triage": "accepted_risk",
+      "status": "accepted_risk",
+      "description": "Extensions or DevTools can inspect JS heap; fundamental browser limitation.",
+      "mitigation": "Document in GHOST_THREAT_MODEL; clearGhostPassword on logout; minimize decrypt window.",
+      "tracking": "docs/GHOST_THREAT_MODEL.md"
+    },
+    {
+      "id": "SEC-202",
+      "title": "XSS at password entry bypasses ghost encryption",
+      "component": "frontend",
+      "severity": "high",
+      "triage": "accepted_risk",
+      "status": "accepted_risk",
+      "description": "Active XSS can capture password before encryption applies.",
+      "mitigation": "CSP, input sanitization, extension hygiene; documented residual risk.",
+      "tracking": "docs/GHOST_THREAT_MODEL.md"
+    },
+    {
+      "id": "SEC-203",
+      "title": "On-chain metadata enables timing and amount linkage",
+      "component": "protocol",
+      "severity": "medium",
+      "triage": "accepted_risk",
+      "status": "accepted_risk",
+      "description": "Stealth addresses do not hide amounts, fees, or fee-payer identity.",
+      "mitigation": "User education; threat model documentation; no v1 protocol hiding.",
+      "tracking": "DISCLAIMER.md"
+    }
+  ]
+}

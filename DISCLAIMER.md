@@ -31,7 +31,7 @@ Nothing here is financial, legal, or tax advice. Comply with applicable laws in 
 
 ## Testnet Only
 
-Default configuration targets **Stellar testnet**. Test XLM has no monetary value. Do not send mainnet funds to experimental deployments until you have completed your own security review.
+Default configuration targets **Stellar testnet**. Test XLM has no monetary value. Do not send mainnet funds until the [mainnet security audit](docs/security/MAINNET_AUDIT_SIGNOFF.md) is approved and blocking findings are resolved.
 
 ## No Warranty
 

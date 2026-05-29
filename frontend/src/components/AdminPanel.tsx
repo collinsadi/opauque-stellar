@@ -370,6 +370,7 @@ function MultisigGuide() {
 
         <p className="font-semibold text-white mt-2">Deployment runbook</p>
         <ol className="list-decimal list-inside space-y-1">
+          <li>Complete mainnet security audit signoff (docs/security/MAINNET_AUDIT_SIGNOFF.md).</li>
           <li>Deploy contracts — initial admin is the deployer key.</li>
           <li>Create the multisig admin account as above.</li>
           <li>Call transfer_admin(multisig_account) from the deployer key.</li>
