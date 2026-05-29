@@ -3,6 +3,15 @@ use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, 
 
 /// Stealth Address Announcer — emits events when funds are sent to a stealth address.
 /// scheme_id 1 = secp256k1; metadata[0] = view tag.
+///
+/// Supported schemes (v1):
+/// - 1: secp256k1; stealth identifier is a 20-byte raw identifier (e.g., RIPEMD160 output).
+///
+/// Note: the contract validates binary payloads only. Higher-level encodings (hex/base58)
+/// must be decoded by the caller into the raw byte representation prior to calling this
+/// contract. Scanners MUST interpret stealth_address as a raw 20-byte identifier for
+/// scheme 1; this on-chain validation enforces that invariant so scanners and the
+/// contract remain perfectly aligned.
 #[contract]
 pub struct StealthAnnouncer;
 
@@ -30,7 +39,17 @@ pub enum AnnouncerError {
     MetadataMissingViewTag = 2,
     /// Key is 33 bytes but first byte is not 0x02 or 0x03 (compressed secp256k1 prefix).
     InvalidKeyPrefix = 3,
+    /// Unsupported or unrecognised scheme id (only 1 is supported in v1).
+    UnsupportedSchemeId = 4,
+    /// Stealth address does not match required length for the scheme.
+    InvalidStealthAddressLength = 5,
+    /// Stealth address encoding/format is invalid for the scheme (e.g., hex string bytes passed instead of raw bytes).
+    InvalidStealthAddressEncoding = 6,
 }
+
+// Registry/config for supported schemes. Keep as a simple allowlist so adding future
+// schemes requires only updating this list (and associated validation logic for that scheme).
+const SUPPORTED_SCHEMES: [u64; 1] = [1u64];
 
 fn log_key(caller: &Address, log_id: &Bytes) -> (Symbol, Address, Bytes) {
     (
@@ -51,7 +70,7 @@ impl StealthAnnouncer {
         metadata: Bytes,
     ) -> Result<(), AnnouncerError> {
         caller.require_auth();
-        Self::validate(&ephemeral_pub_key, &metadata)?;
+        Self::validate(scheme_id, &stealth_address, &ephemeral_pub_key, &metadata)?;
         env.events().publish(
             (Symbol::new(&env, "Announcement"), EVENT_VERSION),
             (scheme_id, stealth_address, caller, ephemeral_pub_key, metadata),
@@ -69,7 +88,7 @@ impl StealthAnnouncer {
         log_id: Bytes,
     ) -> Result<(), AnnouncerError> {
         caller.require_auth();
-        Self::validate(&ephemeral_pub_key, &metadata)?;
+        Self::validate(scheme_id, &stealth_address, &ephemeral_pub_key, &metadata)?;
         let ledger = env.ledger().sequence();
         let log = AnnouncementLog {
             scheme_id: scheme_id,
@@ -90,19 +109,66 @@ impl StealthAnnouncer {
         Ok(())
     }
 
-    fn validate(ephemeral_pub_key: &Bytes, metadata: &Bytes) -> Result<(), AnnouncerError> {
+    /// Validate incoming announcement parameters.
+    ///
+    /// This enforces that the on-chain representation of stealth addresses exactly
+    /// matches what off-chain scanners expect. For scheme 1 (secp256k1) the
+    /// stealth identifier MUST be exactly 20 bytes (raw). The contract does not
+    /// attempt to parse textual encodings (hex/base58); callers must supply the
+    /// raw bytes. Passing encoded ASCII (e.g. hex string) will typically have the
+    /// wrong length and be rejected.
+    fn validate(
+        scheme_id: u64,
+        stealth_address: &Bytes,
+        ephemeral_pub_key: &Bytes,
+        metadata: &Bytes,
+    ) -> Result<(), AnnouncerError> {
+        // Scheme allowlist check — reject unsupported schemes early so they never
+        // appear in events or storage. Update SUPPORTED_SCHEMES when adding new schemes.
+        let mut supported = false;
+        for s in SUPPORTED_SCHEMES.iter() {
+            if *s == scheme_id {
+                supported = true;
+                break;
+            }
+        }
+        if !supported {
+            return Err(AnnouncerError::UnsupportedSchemeId);
+        }
+
+        // Scheme-specific stealth address validation.
+        match scheme_id {
+            // Scheme 1: secp256k1. Stealth identifier is a 20-byte raw identifier
+            // (e.g., RIPEMD160(pubkey)). Scanners expect exactly 20 bytes.
+            1 => {
+                if stealth_address.len() != 20 {
+                    return Err(AnnouncerError::InvalidStealthAddressLength);
+                }
+                // Encoding validation: on-chain we validate the raw bytes length only.
+                // Textual encodings (hex/base58) are the responsibility of the caller.
+                // If the caller passes ASCII hex bytes (40 bytes) or other encodings,
+                // they will be rejected above by length mismatch. This ensures contract
+                // validation exactly matches scanner expectations (raw 20-byte input).
+            }
+            // Future schemes may add bespoke validation here.
+            _ => return Err(AnnouncerError::UnsupportedSchemeId),
+        }
+
+        // Ephemeral key validation (unchanged): must be compressed secp256k1 pubkey
+        // 33 bytes, starting with 0x02 or 0x03.
         if ephemeral_pub_key.len() != 33 {
             return Err(AnnouncerError::InvalidEphemeralKey);
         }
-        // Compressed secp256k1 points must start with 0x02 (even Y) or 0x03 (odd Y).
-        // 0x04 is uncompressed and all other prefixes are invalid curve points.
         match ephemeral_pub_key.get(0) {
             Some(0x02) | Some(0x03) => {}
             _ => return Err(AnnouncerError::InvalidKeyPrefix),
         }
+
+        // Metadata must be non-empty and contain the view tag as first byte.
         if metadata.is_empty() {
             return Err(AnnouncerError::MetadataMissingViewTag);
         }
+
         Ok(())
     }
 }
@@ -149,6 +215,32 @@ mod test {
         bytes
     }
 
+    fn stealth_address_short(env: &Env) -> Bytes {
+        let mut bytes = Bytes::new(env);
+        for _ in 0..19 {
+            bytes.push_back(0xabu8);
+        }
+        bytes
+    }
+
+    fn stealth_address_long(env: &Env) -> Bytes {
+        let mut bytes = Bytes::new(env);
+        for _ in 0..21 {
+            bytes.push_back(0xabu8);
+        }
+        bytes
+    }
+
+    fn stealth_address_hex_like(env: &Env) -> Bytes {
+        // Simulate a caller passing ASCII hex bytes (e.g., "aabb..."), which would
+        // typically be length 40 when representing 20 bytes as hex characters.
+        let mut bytes = Bytes::new(env);
+        for _ in 0..40 {
+            bytes.push_back(0x61u8); // 'a'
+        }
+        bytes
+    }
+
     #[test]
     fn test_announce_success() {
         let Setup { env, client, caller } = setup();
@@ -162,6 +254,60 @@ mod test {
         let events = env.events().all();
         let has_announcement = events.iter().any(|e| e.0 == client.address);
         assert!(has_announcement);
+    }
+
+    #[test]
+    fn test_announce_rejects_stealth_too_short() {
+        let Setup { env: _env, client, caller } = setup();
+        let result = client.try_announce(
+            &caller,
+            &1u64,
+            &stealth_address_short(&client.env),
+            &valid_ephemeral_key(&client.env),
+            &valid_metadata(&client.env),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_announce_rejects_stealth_too_long() {
+        let Setup { env: _env, client, caller } = setup();
+        let result = client.try_announce(
+            &caller,
+            &1u64,
+            &stealth_address_long(&client.env),
+            &valid_ephemeral_key(&client.env),
+            &valid_metadata(&client.env),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_announce_rejects_malformed_encoding() {
+        let Setup { env: _env, client, caller } = setup();
+        // Passing ASCII-hex-like bytes (40 bytes) should be rejected by length
+        // validation for scheme 1 and thus considered a malformed encoding.
+        let result = client.try_announce(
+            &caller,
+            &1u64,
+            &stealth_address_hex_like(&client.env),
+            &valid_ephemeral_key(&client.env),
+            &valid_metadata(&client.env),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_announce_rejects_unsupported_scheme_id() {
+        let Setup { env: _env, client, caller } = setup();
+        let result = client.try_announce(
+            &caller,
+            &99u64,
+            &stealth_address(&client.env),
+            &valid_ephemeral_key(&client.env),
+            &valid_metadata(&client.env),
+        );
+        assert!(result.is_err());
     }
 
     #[test]
@@ -270,8 +416,8 @@ mod test {
         client.announce(&caller, &1u64, &addr, &ephem, &meta);
         assert_eq!(env.events().all().len(), 1);
 
-        client.announce(&caller, &2u64, &addr, &ephem, &meta);
-        assert_eq!(env.events().all().len(), 1);
+        let result = client.try_announce(&caller, &2u64, &addr, &ephem, &meta);
+        assert!(result.is_err());
     }
 
     // -------------------------------------------------------------------------
