@@ -121,8 +121,11 @@ jobs:
         run: curl -fsSL https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
 
       - name: Build scanner WASM
-        run: wasm-pack build --target web --out-dir ../frontend/public/pkg
-        working-directory: scanner
+        run: npm run build:scanner
+        working-directory: .
+
+      - name: Verify scanner WASM hash
+        run: node scripts/verify-artifact-manifest.mjs --scanner --strict
 
       - name: Run scanner unit tests
         run: cargo test
@@ -165,6 +168,12 @@ jobs:
         run: |
           eval "$(node scripts/export-manifest-env.mjs testnet)"
           node scripts/verify-deployment-manifest.mjs --network testnet
+          node scripts/verify-artifact-manifest.mjs --scanner --strict
+
+      - name: Fetch circuit artifacts
+        working-directory: ..
+        run: npm run fetch:circuits
+        continue-on-error: true
 
       - name: Lint
         run: npm run lint
@@ -178,6 +187,7 @@ jobs:
       - name: Build frontend
         env:
           VITE_STELLAR_NETWORK: testnet
+          SKIP_FRONTEND_PREBUILD: "1"
         run: npm run build
 
       - name: Compute frontend bundle metadata

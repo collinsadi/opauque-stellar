@@ -397,6 +397,15 @@ export function MyTraitsView({ onNavigate }: MyTraitsViewProps = {}) {
               "Rescan"
             )}
           </button>
+{scanner.progress.phase === "error" && scanner.progress.error?.includes("Ledger gap detected") && (
+  <button
+    type="button"
+    onClick={() => void scanner.retrySync()}
+    className="rounded-xl bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-500 transition-colors"
+  >
+    Full Rescan
+  </button>
+)}
         </div>
       </div>
 

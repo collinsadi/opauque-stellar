@@ -11,7 +11,7 @@ import { useWallet } from "../hooks/useWallet";
 import {
   fieldDefsToString,
   prepareRegisterSchema,
-  SCHEMA_RENT_LAMPORTS,
+  SCHEMA_RENT_STROOPS,
   type FieldDef,
   type FieldType,
 } from "../lib/schema";
@@ -24,16 +24,48 @@ import { useSchemaStore } from "../store/schemaStore";
 // Constants
 // =============================================================================
 
-const FIELD_TYPES: FieldType[] = ["bool", "u8", "u16", "u32", "u64", "string", "pubkey"];
+const FIELD_TYPES: FieldType[] = [
+  "bool",
+  "u8",
+  "u16",
+  "u32",
+  "u64",
+  "string",
+  "pubkey",
+];
 
 type ResolverType = "none" | "whitelist" | "payment" | "nft" | "custom";
 
-const RESOLVER_OPTIONS: { value: ResolverType; label: string; description: string }[] = [
-  { value: "none", label: "No resolver", description: "Anyone with authority can attest" },
-  { value: "whitelist", label: "Whitelist resolver", description: "Only approved wallets can issue" },
-  { value: "payment", label: "Payment resolver", description: "Issuers pay a fee per attestation" },
-  { value: "nft", label: "NFT Gate resolver", description: "Recipient must hold a collection NFT" },
-  { value: "custom", label: "Custom address", description: "Provide your own resolver program ID" },
+const RESOLVER_OPTIONS: {
+  value: ResolverType;
+  label: string;
+  description: string;
+}[] = [
+  {
+    value: "none",
+    label: "No resolver",
+    description: "Anyone with authority can attest",
+  },
+  {
+    value: "whitelist",
+    label: "Whitelist resolver",
+    description: "Only approved wallets can issue",
+  },
+  {
+    value: "payment",
+    label: "Payment resolver",
+    description: "Issuers pay a fee per attestation",
+  },
+  {
+    value: "nft",
+    label: "NFT Gate resolver",
+    description: "Recipient must hold a collection NFT",
+  },
+  {
+    value: "custom",
+    label: "Custom address",
+    description: "Provide your own resolver program ID",
+  },
 ];
 
 // =============================================================================
@@ -63,7 +95,11 @@ export function SchemaStudio() {
   const nameValid = name.trim().length > 0 && name.length <= 64;
   const fieldDefsValid = fieldDefsString.length <= 256;
   const canSubmit =
-    walletAddress != null && publicKey != null && nameValid && fieldDefsValid && !isSubmitting;
+    walletAddress != null &&
+    publicKey != null &&
+    nameValid &&
+    fieldDefsValid &&
+    !isSubmitting;
 
   const addField = () => {
     setFields((prev) => [
@@ -74,7 +110,7 @@ export function SchemaStudio() {
 
   const updateField = (id: string, update: Partial<FieldDef>) => {
     setFields((prev) =>
-      prev.map((f) => (f.id === id ? { ...f, ...update } : f))
+      prev.map((f) => (f.id === id ? { ...f, ...update } : f)),
     );
   };
 
@@ -92,7 +128,9 @@ export function SchemaStudio() {
       const authority = publicKey;
       const trimmedName = name.trim();
       const resolverAddr =
-        resolverType === "custom" && customResolver ? customResolver.trim() : null;
+        resolverType === "custom" && customResolver
+          ? customResolver.trim()
+          : null;
       let expiryLedger = 0;
       if (hasExpiry) {
         if (!expiryDateTime) {
@@ -111,7 +149,8 @@ export function SchemaStudio() {
         expiryLedger = latest.sequence + Math.max(1, ledgersUntilExpiry);
       }
 
-      const { schemaId, schemaKey } = await prepareRegisterSchema(authority, trimmedName);
+      const { schemaId, schemaKey, canonicalFieldDefs } =
+        await prepareRegisterSchema(authority, trimmedName, fieldDefsString);
 
       if (!signTransaction) throw new Error("Wallet cannot sign transactions.");
 
@@ -119,7 +158,7 @@ export function SchemaStudio() {
         authority,
         schemaId,
         name: trimmedName,
-        fieldDefinitions: fieldDefsString,
+        fieldDefinitions: canonicalFieldDefs,
         revocable,
         resolver: resolverAddr,
         schemaExpiryLedger: expiryLedger,
@@ -135,7 +174,7 @@ export function SchemaStudio() {
         resolver: resolverAddr ?? "",
         revocable,
         name: trimmedName,
-        fieldDefinitions: fieldDefsString,
+        fieldDefinitions: canonicalFieldDefs,
         version: 1,
         delegates: [],
         createdAt: Date.now(),
@@ -156,8 +195,18 @@ export function SchemaStudio() {
     return (
       <div className="flex flex-col items-center justify-center gap-6 py-12 px-4 text-center">
         <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center">
-          <svg className="w-6 h-6 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          <svg
+            className="w-6 h-6 text-green-400"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M5 13l4 4L19 7"
+            />
           </svg>
         </div>
         <div>
@@ -196,13 +245,17 @@ export function SchemaStudio() {
       <div>
         <h1 className="text-2xl font-bold text-white">Schema Studio</h1>
         <p className="text-mist text-sm mt-1">
-          Define the template for a class of attestations and control who can issue them.
+          Define the template for a class of attestations and control who can
+          issue them.
         </p>
       </div>
 
       {/* Schema Name */}
       <section className="space-y-2">
-        <label htmlFor={`${uid}-name`} className="block text-sm font-medium text-white">
+        <label
+          htmlFor={`${uid}-name`}
+          className="block text-sm font-medium text-white"
+        >
           Schema Name <span className="text-red-400">*</span>
         </label>
         <input
@@ -239,16 +292,22 @@ export function SchemaStudio() {
                 type="text"
                 placeholder="field name"
                 value={field.name}
-                onChange={(e) => updateField(field.id, { name: e.target.value })}
+                onChange={(e) =>
+                  updateField(field.id, { name: e.target.value })
+                }
                 className="flex-1 rounded-xl border border-ink-700 bg-ink-900 px-3 py-2.5 text-white placeholder-ink-500 focus:outline-none focus:border-sol-purple text-sm"
               />
               <select
                 value={field.type}
-                onChange={(e) => updateField(field.id, { type: e.target.value as FieldType })}
+                onChange={(e) =>
+                  updateField(field.id, { type: e.target.value as FieldType })
+                }
                 className="rounded-xl border border-ink-700 bg-ink-900 px-3 py-2.5 text-white focus:outline-none focus:border-sol-purple text-sm"
               >
                 {FIELD_TYPES.map((t) => (
-                  <option key={t} value={t}>{t}</option>
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
                 ))}
               </select>
               <button
@@ -270,7 +329,9 @@ export function SchemaStudio() {
           </p>
         )}
         {!fieldDefsValid && (
-          <p className="text-xs text-red-400">Field definitions exceed 256 characters.</p>
+          <p className="text-xs text-red-400">
+            Field definitions exceed 256 characters.
+          </p>
         )}
       </section>
 
@@ -281,7 +342,9 @@ export function SchemaStudio() {
           <label className="flex items-center justify-between px-4 py-3 cursor-pointer">
             <div>
               <span className="text-sm text-white">Revocable</span>
-              <p className="text-xs text-mist mt-0.5">Allow attestations to be revoked by the authority</p>
+              <p className="text-xs text-mist mt-0.5">
+                Allow attestations to be revoked by the authority
+              </p>
             </div>
             <input
               type="checkbox"
@@ -293,7 +356,9 @@ export function SchemaStudio() {
           <label className="flex items-center justify-between px-4 py-3 cursor-pointer">
             <div>
               <span className="text-sm text-white">Schema Expiry</span>
-              <p className="text-xs text-mist mt-0.5">Pick date & time — no new attestations after that moment</p>
+              <p className="text-xs text-mist mt-0.5">
+                Pick date & time — no new attestations after that moment
+              </p>
             </div>
             <input
               type="checkbox"
@@ -313,7 +378,8 @@ export function SchemaStudio() {
               className="w-full rounded-xl border border-ink-700 bg-ink-900 px-4 py-3 text-white focus:outline-none focus:border-sol-purple text-sm"
             />
             <p className="text-xs text-mist">
-              Converted to a ledger sequence at submit time (~5s per ledger on testnet).
+              Converted to a ledger sequence at submit time (~5s per ledger on
+              testnet).
             </p>
           </div>
         )}
@@ -341,7 +407,9 @@ export function SchemaStudio() {
                 className="mt-0.5 accent-sol-purple"
               />
               <div>
-                <span className="text-sm font-medium text-white">{opt.label}</span>
+                <span className="text-sm font-medium text-white">
+                  {opt.label}
+                </span>
                 <p className="text-xs text-mist mt-0.5">{opt.description}</p>
               </div>
             </label>
@@ -360,7 +428,8 @@ export function SchemaStudio() {
 
       {/* Cost estimate */}
       <p className="text-xs text-mist">
-        Estimated reserve: ~{(Number(SCHEMA_RENT_LAMPORTS) / 1e7).toFixed(4)} XLM (Soroban storage)
+        Estimated reserve: ~{(Number(SCHEMA_RENT_LAMPORTS) / 1e7).toFixed(4)}{" "}
+        XLM (Soroban storage)
       </p>
 
       {error && (
@@ -386,7 +455,9 @@ export function SchemaStudio() {
       </button>
 
       {!walletAddress && (
-        <p className="text-center text-xs text-mist">Connect your wallet to register a schema.</p>
+        <p className="text-center text-xs text-mist">
+          Connect your wallet to register a schema.
+        </p>
       )}
     </div>
   );

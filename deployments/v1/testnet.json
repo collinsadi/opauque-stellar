@@ -51,8 +51,23 @@
     "circuits": {
       "v2": {
         "r1csHash": null,
-        "verificationKeyHash": null
+        "verificationKeyHash": "24d0fe6a5ef1174ab616a5d39df846442af7a7818962b0ed346586bb1eb74b47",
+        "witnessWasmHash": "0fdc435cc602b4ab0c2e5fa41533901f876a158657f41183022d93eb76297a05",
+        "zkeyHash": "5a4545c179818742dbbd8efd73f9dbfd8b8f0427145c07c1bf37fff44a350897",
+        "contractVkHash": "8cd3043dcd8b97b11828cda7fbdf8e919c7d727fe05e7f62a20110bcb2dcfce6",
+        "zkeyHashBinding": "5a4545c179818742dbbd8efd73f9dbfd8b8f0427145c07c1bf37fff44a350897"
+      },
+      "v1": {
+        "witnessWasmHash": "48308a1097217d50bebe859d1cdab52da51dcc8ba2aa959eb7198f9a734d8913",
+        "zkeyHash": "4fc1d57377b43435853a70dcca374dc9f878e49a410adf53b479ed5edee78a42",
+        "r1csHash": null,
+        "verificationKeyHash": null,
+        "contractVkHash": "db96564b4e1668bbd8455f4d0f4ecb5544b8358e19449380e44307b78b70b4d7",
+        "zkeyHashBinding": "4fc1d57377b43435853a70dcca374dc9f878e49a410adf53b479ed5edee78a42"
       }
+    },
+    "scanner": {
+      "wasmHash": "2bbc00491df10a5bdbd53457274903188b40eadb259de5edae8f2994490932c2"
     }
   },
   "verification": {

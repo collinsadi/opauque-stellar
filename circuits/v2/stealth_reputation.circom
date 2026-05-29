@@ -18,7 +18,9 @@ pragma circom 2.1.6;
 // Private inputs:
 //   stealth_pk          BN254 field element of the stealth private key scalar
 //   schema_id           Schema identifier packed from [u8; 32] → BN254 field element
-//   issuer_pk_x         Issuer's BabyJubJub x-coordinate (from schema_pda.authority)
+//   issuer_pk_x         Issuer's Ed25519 public key (32 bytes) as BN254 field element.
+//                       Canonical encoding: big-endian 256-bit integer (0x-hex format).
+//                       See ISSUER_ENCODING.md for specification.
 //   trait_data_hash     Poseidon hash of the ABI-encoded attestation data fields
 //   nonce               Random secret preventing leaf enumeration across sessions
 //   merkle_path[20]     Sibling hashes along the Merkle inclusion path

@@ -116,13 +116,22 @@ stellar contract build
 # Deploy to testnet and note contract IDs
 ```
 
-### 3. Build scanner (WASM)
+### 3. Build scanner (WASM) and circuit artifacts
+
+Scanner WASM is built automatically before `frontend` builds. You can also run steps manually:
 
 ```bash
-cd scanner
-wasm-pack build --target web --out-dir ../frontend/public/pkg
-cd ..
+# Scanner (DKSAP / announcement filter)
+npm run build:scanner
+
+# Circuit zkey + witness WASM (from GitHub release when published)
+npm run fetch:circuits
+
+# Verify pinned SHA-256 hashes
+npm run verify:artifacts
 ```
+
+See [`artifacts/README.md`](artifacts/README.md) for the artifact source of truth, release retrieval, and VK↔zkey binding.
 
 ### 4. Frontend
 
@@ -136,14 +145,20 @@ npm run dev
 
 Open `http://localhost:5173`, connect Freighter on testnet.
 
-### 5. Circuits (optional)
+### 5. Circuits (optional — developers changing ZK logic)
 
-Only if you change the attestation circuit:
+Source circuits and reproducible scripts live under `circuits/`. Large artifacts are **not** committed; fetch release assets or rebuild locally:
 
 ```bash
-cd circuits/v2
-npm install
-npm run build
+# Fetch audited zkey + witness WASM (when release is published)
+npm run fetch:circuits
+
+# Recompile from source (requires circom + ptau — see circuits/README.md)
+cd circuits && npm install && npm run build
+cd circuits/v2 && npm install && npm run build
+
+# Regression tests (deterministic fixtures)
+npm run test:circuits
 ```
 
 ---

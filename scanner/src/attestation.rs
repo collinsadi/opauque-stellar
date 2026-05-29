@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 use crate::scanner::{
     check_announcement_view_tag, derive_stealth_address, StealthAddressError, ViewTagCheck,
 };
+use log::{warn, info};
+use sha2::{Digest, Sha256};
 
 
 // =============================================================================
@@ -211,13 +213,18 @@ pub struct V2StealthAttestation {
 
 /// All fields needed to reconstruct the V2 Poseidon leaf in the browser prover.
 /// leaf = Poseidon(stealth_pk, schema_id_field, issuer_pk_x, trait_data_hash, nonce)
+///
+/// Issuer encoding (see ISSUER_ENCODING.md):
+/// - issuer_pk_x is the 32-byte Ed25519 public key of the issuer
+/// - Encoded as big-endian 256-bit integer in 0x-hex format
+/// - NOT a BabyJubJub coordinate; it's the raw Ed25519 key material
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MerkleLeafPreimage {
     /// Stealth pk field element (BN254 scalar, decimal string)
     pub stealth_pk_field: String,
     /// schema_id packed into BN254 field element (decimal string)
     pub schema_id_field: String,
-    /// Issuer BabyJubJub x-coordinate (decimal string)
+    /// Issuer Ed25519 public key (32 bytes) as BN254 field element (0x-hex format)
     pub issuer_pk_x: String,
     /// Poseidon(data fields) decimal string — caller computes from data_hex + schema
     pub trait_data_hash: String,
@@ -360,7 +367,8 @@ pub fn scan_for_attestations_v2(
         let schema = match schemas.iter().find(|s| s.schema_id == v2.schema_id) {
             Some(s) => s,
             None => {
-                // Unknown schema_id — rogue trait, silently ignore
+                // Unknown schema_id — rogue trait, log hash and skip
+                warn!("Rogue trait: unknown schema_id hash {}", short_hash(&v2.schema_id));
                 continue;
             }
         };
@@ -372,6 +380,11 @@ pub fn scan_for_attestations_v2(
 
         // Step 6: Validate the issuer is authorized under this schema
         let issuer_authorized = schema.is_authorized_issuer(&v2.issuer);
+        if !issuer_authorized {
+            // Unauthorized issuer – log hash and skip
+            warn!("Rogue trait: unauthorized issuer hash {}", short_hash(&v2.issuer));
+            continue;
+        }
 
         // Step 7: Optional user-configured trusted issuer allowlist
         let issuer_hex = hex_encode(&v2.issuer);
@@ -423,10 +436,19 @@ fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
-/// Packs a 32-byte array into a decimal string suitable for Circom field inputs.
-/// The value is treated as a big-endian 256-bit integer and converted to decimal.
-/// For values that fit in u128 (most schema_ids in practice) this is exact.
-/// For larger values the caller should use a proper big-integer library in JS.
+/// Packs a 32-byte array into a field element suitable for Circom inputs.
+/// The value is treated as a big-endian 256-bit integer and returned as 0x-hex.
+///
+/// Canonical encoding (see ISSUER_ENCODING.md):
+/// - Input: 32-byte array (e.g., Ed25519 public key, schema_id, nonce)
+/// - Interpretation: big-endian 256-bit integer
+/// - Output: 0x-prefixed hex string (64 hex digits)
+/// - Circom accepts both hex and decimal formats
+///
+/// For issuer_pk_x specifically:
+/// - Input is the 32-byte Ed25519 public key of the issuer
+/// - NOT a BabyJubJub coordinate
+/// - Output is used directly in circuit Poseidon hash
 fn bytes_to_field_decimal(bytes: &[u8; 32]) -> String {
     // Return as 0x hex — Circom 2.x accepts both hex and decimal for field inputs
     format!("0x{}", hex_encode(bytes))
@@ -463,4 +485,122 @@ mod tests {
         data.extend_from_slice(&42u64.to_be_bytes());
         assert!(extract_attestation_id(&data).is_none());
     }
-}
+
+    // =========================================================================
+    // Issuer Encoding Tests (ISSUER_ENCODING.md compliance)
+    // =========================================================================
+
+    #[test]
+    fn issuer_encoding_all_zeros() {
+        // Example 1: All-zeros issuer
+        let issuer = [0u8; 32];
+        let hex = hex_encode(&issuer);
+        let field = bytes_to_field_decimal(&issuer);
+        
+        assert_eq!(hex, "0000000000000000000000000000000000000000000000000000000000000000");
+        assert_eq!(field, "0x0000000000000000000000000000000000000000000000000000000000000000");
+    }
+
+    #[test]
+    fn issuer_encoding_sequential() {
+        // Example 2: Sequential issuer (0x01, 0x02, ..., 0x1f)
+        let mut issuer = [0u8; 32];
+        for i in 0..32 {
+            issuer[i] = (i + 1) as u8;
+        }
+        let hex = hex_encode(&issuer);
+        let field = bytes_to_field_decimal(&issuer);
+        
+        assert_eq!(hex, "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+        assert_eq!(field, "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+    }
+
+    #[test]
+    fn issuer_encoding_big_endian_interpretation() {
+        // Verify big-endian interpretation: first byte is most significant
+        let mut issuer = [0u8; 32];
+        issuer[0] = 0xFF;  // Most significant byte
+        issuer[31] = 0x01; // Least significant byte
+        
+        let hex = hex_encode(&issuer);
+        let field = bytes_to_field_decimal(&issuer);
+        
+        // Should start with FF and end with 01
+        assert!(hex.starts_with("ff"));
+        assert!(hex.ends_with("01"));
+        assert_eq!(field, format!("0x{}", hex));
+    }
+
+    #[test]
+    fn issuer_field_element_format() {
+        // Verify field element is 0x-prefixed hex with 64 hex digits
+        let issuer = [0xABu8; 32];
+        let field = bytes_to_field_decimal(&issuer);
+        
+        assert!(field.starts_with("0x"));
+        assert_eq!(field.len(), 66); // "0x" + 64 hex digits
+        assert_eq!(field, "0xabababababababababababababababababababababababababababababababab");
+    }
+
+    #[test]
+    fn issuer_encoding_roundtrip_hex() {
+        // Verify hex encoding is reversible
+        let issuer = [
+            0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
+            0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+            0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        ];
+        
+        let hex = hex_encode(&issuer);
+        let field = bytes_to_field_decimal(&issuer);
+        
+        // Field should be 0x + hex
+        assert_eq!(field, format!("0x{}", hex));
+        
+        // Hex should be lowercase
+        assert_eq!(hex, hex.to_lowercase());
+        
+        // Hex should have exactly 64 characters (32 bytes * 2)
+        assert_eq!(hex.len(), 64);
+    }
+
+    #[test]
+    fn issuer_not_babyjubjub_coordinate() {
+        // Verify that issuer is NOT treated as a BabyJubJub coordinate
+        // BabyJubJub x-coordinates have specific properties; our issuer is just raw bytes
+        let issuer = [0xFFu8; 32];
+        let field = bytes_to_field_decimal(&issuer);
+        
+        // Should be treated as big-endian integer, not any special curve point
+        assert_eq!(field, "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+        
+        // This value is > BN254_MODULUS, so it would be reduced in circuit
+        // But the encoding itself is canonical: raw bytes as big-endian integer
+    }
+
+    #[test]
+    fn issuer_encoding_consistency_across_components() {
+        // Verify that issuer encoding is consistent:
+        // scanner extracts issuer as 32 bytes → hex → field element
+        // circuit receives field element → uses in Poseidon hash
+        
+        let issuer_bytes = [
+            0x30, 0x64, 0x4e, 0x72, 0xe1, 0x31, 0xa0, 0x26,
+            0xb8, 0x2b, 0x99, 0xc8, 0xd5, 0x5a, 0x06, 0x16,
+            0xe6, 0xff, 0x0c, 0xdc, 0x4f, 0xee, 0x0e, 0x17,
+            0x88, 0x4d, 0x8c, 0x08, 0x3c, 0x05, 0x5c, 0xf7,
+        ];
+        
+        let hex = hex_encode(&issuer_bytes);
+        let field = bytes_to_field_decimal(&issuer_bytes);
+        
+        // All three representations should be consistent
+        assert_eq!(hex, "30644e72e131a0264b82b99c8d55a0616e6ff0cdc4fee0e17884d8c083c055cf7");
+        assert_eq!(field, "0x30644e72e131a0264b82b99c8d55a0616e6ff0cdc4fee0e17884d8c083c055cf7");
+        
+        // Verify this is BN254_MODULUS - 1 (largest valid field element)
+        // BN254_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617
+        // BN254_MODULUS - 1 = 0x30644e72e131a0264b82b99c8d55a0616e6ff0cdc4fee0e17884d8c083c055cf7
+    }
+

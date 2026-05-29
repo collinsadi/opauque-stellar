@@ -5,6 +5,12 @@
   "scripts": {
     "verify:deployment": "node scripts/verify-deployment-manifest.mjs",
     "verify:deployment:strict": "node scripts/verify-deployment-manifest.mjs --strict",
-    "update:manifest-wasm": "node scripts/update-manifest-wasm-hashes.mjs"
+    "update:manifest-wasm": "node scripts/update-manifest-wasm-hashes.mjs",
+    "build:scanner": "node scripts/build-scanner-wasm.mjs",
+    "fetch:circuits": "node scripts/fetch-circuit-artifacts.mjs",
+    "verify:artifacts": "node scripts/verify-artifact-manifest.mjs",
+    "update:artifacts": "node scripts/update-artifact-manifest.mjs --sync-deployments --embedded-vk",
+    "prepare:frontend": "node scripts/prepare-frontend-artifacts.mjs",
+    "test:circuits": "npm run test:regression --prefix circuits"
   }
 }

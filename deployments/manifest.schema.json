@@ -95,21 +95,18 @@
             "repository": { "type": "string" }
           }
         },
+        "scanner": {
+          "type": "object",
+          "properties": {
+            "wasmHash": { "type": ["string", "null"], "pattern": "^(|[a-f0-9]{64})$" }
+          }
+        },
         "circuits": {
           "type": "object",
-          "required": ["v2"],
+          "required": ["v1", "v2"],
           "properties": {
-            "v2": {
-              "type": "object",
-              "required": ["r1csHash", "verificationKeyHash"],
-              "properties": {
-                "r1csHash": { "type": ["string", "null"], "pattern": "^(|[a-f0-9]{64})$" },
-                "verificationKeyHash": {
-                  "type": ["string", "null"],
-                  "pattern": "^(|[a-f0-9]{64})$"
-                }
-              }
-            }
+            "v1": { "$ref": "#/$defs/circuitArtifactRecord" },
+            "v2": { "$ref": "#/$defs/circuitArtifactRecord" }
           }
         }
       }
@@ -124,6 +121,26 @@
     }
   },
   "$defs": {
+    "circuitArtifactRecord": {
+      "type": "object",
+      "required": [
+        "witnessWasmHash",
+        "zkeyHash",
+        "r1csHash",
+        "verificationKeyHash",
+        "contractVkHash",
+        "zkeyHashBinding"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "witnessWasmHash": { "type": ["string", "null"], "pattern": "^(|[a-f0-9]{64})$" },
+        "zkeyHash": { "type": ["string", "null"], "pattern": "^(|[a-f0-9]{64})$" },
+        "r1csHash": { "type": ["string", "null"], "pattern": "^(|[a-f0-9]{64})$" },
+        "verificationKeyHash": { "type": ["string", "null"], "pattern": "^(|[a-f0-9]{64})$" },
+        "contractVkHash": { "type": ["string", "null"], "pattern": "^(|[a-f0-9]{64})$" },
+        "zkeyHashBinding": { "type": ["string", "null"], "pattern": "^(|[a-f0-9]{64})$" }
+      }
+    },
     "contractRecord": {
       "type": "object",
       "required": ["id", "wasmHash"],

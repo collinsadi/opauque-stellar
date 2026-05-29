@@ -2,7 +2,7 @@
  * Soroban contract invocation helpers for Schema Registry, Attestation Engine, Groth16.
  */
 
-import { nativeToScVal } from "@stellar/stellar-sdk";
+import { nativeToScVal, StrKey } from "@stellar/stellar-sdk";
 import { deployedAddresses } from "../contracts/deployedAddresses";
 import { bytesToScVal, invokeContractMethod } from "./stellar";
 import type { SignTxFn } from "./stellar";
@@ -23,16 +23,20 @@ export async function invokeRegisterSchema(opts: {
   name: string;
   fieldDefinitions: string;
   revocable: boolean;
+  version?: number;
   resolver: string | null;
   schemaExpiryLedger: number;
   signTransaction: SignTxFn;
 }): Promise<string> {
+  const authorityKey = StrKey.decodeEd25519PublicKey(opts.authority);
   const args = [
     nativeToScVal(opts.authority, { type: "address" }),
+    nativeToScVal(Buffer.from(authorityKey), { type: "bytes" }),
     nativeToScVal(Buffer.from(opts.schemaId), { type: "bytes" }),
     nativeToScVal(opts.name, { type: "string" }),
     nativeToScVal(opts.fieldDefinitions, { type: "string" }),
     nativeToScVal(opts.revocable, { type: "bool" }),
+    nativeToScVal(opts.version ?? 1, { type: "u32" }),
     opts.resolver
       ? nativeToScVal(opts.resolver, { type: "address" })
       : nativeToScVal(null, { type: "address" }),
@@ -63,7 +67,6 @@ export async function invokeAttest(opts: {
     args: [
       nativeToScVal(opts.issuer, { type: "address" }),
       nativeToScVal(Buffer.from(opts.schemaId), { type: "bytes" }),
-      nativeToScVal(SCHEMA_REGISTRY_CONTRACT_ID, { type: "address" }),
       nativeToScVal(Buffer.from(opts.stealthAddressHash), { type: "bytes" }),
       bytesToScVal(opts.data),
       nativeToScVal(opts.expirationLedger, { type: "u32" }),

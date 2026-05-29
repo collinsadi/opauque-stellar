@@ -1,0 +1,94 @@
+{
+  "schemaVersion": "1.0.0",
+  "release": "v1",
+  "description": "Canonical SHA-256 fingerprints for audited build artifacts. Update with scripts/update-artifact-manifest.mjs after rebuilding.",
+  "scanner": {
+    "buildCommand": "wasm-pack build --target web --out-dir ../frontend/public/pkg",
+    "buildCwd": "scanner",
+    "files": {
+      "cryptography_bg.wasm": {
+        "path": "frontend/public/pkg/cryptography_bg.wasm",
+        "sha256": "2bbc00491df10a5bdbd53457274903188b40eadb259de5edae8f2994490932c2"
+      },
+      "cryptography.js": {
+        "path": "frontend/public/pkg/cryptography.js",
+        "sha256": "5ffc4bc6cc4eb62b629d3157bd286cb82e9ce3991972f691b33cf9f8029e599f"
+      }
+    }
+  },
+  "circuits": {
+    "v1": {
+      "source": "circuits/stealth_attestation.circom",
+      "frontend": {
+        "witnessWasm": {
+          "path": "frontend/public/circuits/stealth_attestation_js/stealth_attestation.wasm",
+          "sha256": "48308a1097217d50bebe859d1cdab52da51dcc8ba2aa959eb7198f9a734d8913"
+        },
+        "zkey": {
+          "path": "frontend/public/circuits/sa_final.zkey",
+          "sha256": "4fc1d57377b43435853a70dcca374dc9f878e49a410adf53b479ed5edee78a42"
+        }
+      },
+      "build": {
+        "r1cs": {
+          "path": "circuits/build/stealth_attestation.r1cs",
+          "sha256": null
+        },
+        "verificationKey": {
+          "path": "circuits/build/verification_key.json",
+          "sha256": null
+        }
+      },
+      "contractVk": {
+        "groth16Verifier": "contracts/groth16-verifier/src/lib.rs",
+        "constantsPrefix": "VK_",
+        "embeddedVkHash": "db96564b4e1668bbd8455f4d0f4ecb5544b8358e19449380e44307b78b70b4d7",
+        "zkeyHash": "4fc1d57377b43435853a70dcca374dc9f878e49a410adf53b479ed5edee78a42"
+      }
+    },
+    "v2": {
+      "source": "circuits/v2/stealth_reputation.circom",
+      "frontend": {
+        "witnessWasm": {
+          "path": "frontend/public/circuits/v2/stealth_reputation.wasm",
+          "sha256": "0fdc435cc602b4ab0c2e5fa41533901f876a158657f41183022d93eb76297a05"
+        },
+        "zkey": {
+          "path": "frontend/public/circuits/v2/stealth_reputation_final.zkey",
+          "sha256": "5a4545c179818742dbbd8efd73f9dbfd8b8f0427145c07c1bf37fff44a350897"
+        }
+      },
+      "build": {
+        "r1cs": {
+          "path": "circuits/v2/build/stealth_reputation.r1cs",
+          "sha256": null
+        },
+        "verificationKey": {
+          "path": "circuits/v2/build/verification_key.json",
+          "sha256": null
+        }
+      },
+      "contractVk": {
+        "groth16Verifier": "contracts/groth16-verifier/src/lib.rs",
+        "constantsPrefix": "VK_*_V2",
+        "embeddedVkHash": "8cd3043dcd8b97b11828cda7fbdf8e919c7d727fe05e7f62a20110bcb2dcfce6",
+        "zkeyHash": "5a4545c179818742dbbd8efd73f9dbfd8b8f0427145c07c1bf37fff44a350897",
+        "referenceVerificationKey": {
+          "path": "demo/public/circuits/v2/verification_key.json",
+          "sha256": "24d0fe6a5ef1174ab616a5d39df846442af7a7818962b0ed346586bb1eb74b47"
+        }
+      }
+    }
+  },
+  "releaseAssets": {
+    "repository": "collinsadi/opauque-stellar",
+    "tag": "v1-circuit-artifacts",
+    "baseUrl": "https://github.com/collinsadi/opauque-stellar/releases/download/v1-circuit-artifacts",
+    "files": {
+      "v1_zkey": "sa_final.zkey",
+      "v1_witness_wasm": "stealth_attestation.wasm",
+      "v2_zkey": "stealth_reputation_final.zkey",
+      "v2_witness_wasm": "stealth_reputation.wasm"
+    }
+  }
+}

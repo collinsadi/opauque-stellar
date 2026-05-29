@@ -1,47 +1,31 @@
 /**
  * Attestation Engine V2 — client-side interaction layer
- *
- * Types and helpers for the attestation_engine_v2 Soroban contract.
- * Handles attest and revoke instruction construction, and client-side
- * attestation account deserialization.
  */
 
 import { z } from "zod";
 import { ATTESTATION_ENGINE_V2_CONTRACT_ID } from "./schema";
+import {
+  decodeAttestationData as decodeCanonicalAttestationData,
+  encodeAttestationData as encodeCanonicalAttestationData,
+} from "./schemaEncoding";
+import type { FieldDef } from "./schema";
 
 /** @deprecated */
 export const ATTESTATION_ENGINE_V2_PROGRAM_ID = ATTESTATION_ENGINE_V2_CONTRACT_ID;
 
-// =============================================================================
-// Types
-// =============================================================================
-
 export interface AttestationV2 {
-  /** On-chain PDA address */
   address: string;
-  /** SHA256(schema_id || stealth_address_hash || ledger_sequence || issuance_sequence) as hex */
   uid: string;
-  /** SchemaPDA address */
   schemaPda: string;
-  /** schema_id as hex (cached from schema for efficient verification) */
   schemaId: string;
-  /** Issuer wallet pubkey (base58) */
   issuer: string;
-  /** Privacy-preserving stealth address hash as hex */
   stealthAddressHash: string;
-  /** ABI-encoded attestation data as hex */
   dataHex: string;
-  /** Slot when the attestation was created */
   createdAt: number;
-  /** 0 = no expiry */
   expirationSlot: number;
-  /** 0 = not revoked; non-zero = revocation slot */
   revocationSlot: number;
-  /** Optional reference UID as hex (zeros = none) */
   refUid: string;
-  /** Contract-managed per-schema/per-stealth sequence included in UID derivation */
   issuanceSequence?: number;
-  /** Derived: is the attestation currently valid? */
   isValid: boolean;
 }
 
@@ -49,17 +33,11 @@ export interface AttestationFormData {
   schemaId: string;
   schemaPda: string;
   stealthAddressHash: string;
-  /** Encoded field values in order matching schema.fieldDefinitions */
   fieldValues: Record<string, string>;
   expirationSlot: number;
   refUid: string;
 }
 
-// =============================================================================
-// PDA derivation
-// =============================================================================
-
-/** Derives a deterministic attestation storage key (Soroban has no PDAs). */
 export async function deriveAttestationPDA(
   schemaId: Uint8Array,
   issuer: string,
@@ -72,64 +50,31 @@ export async function deriveAttestationPDA(
   return [`${issuer}:${id.slice(0, 64)}`, 0];
 }
 
-// =============================================================================
-// Data encoding
-// =============================================================================
-
-/** ABI-encodes field values for storage in the attestation data field */
+/** Encodes field values in canonical schema order (typed binary layout). */
 export function encodeAttestationData(
   fieldValues: Record<string, string>,
-  fieldDefs: { name: string; type: string }[]
+  fieldDefs: FieldDef[] | { name: string; type: string }[],
 ): Uint8Array {
-  // Simple length-prefixed encoding: for each field in order,
-  // encode value as UTF-8 bytes with a 4-byte little-endian length prefix.
-  const parts: Uint8Array[] = [];
-  const enc = new TextEncoder();
-
-  for (const field of fieldDefs) {
-    const value = fieldValues[field.name] ?? "";
-    const encoded = enc.encode(value);
-    const lenBuf = new Uint8Array(4);
-    new DataView(lenBuf.buffer).setUint32(0, encoded.length, true);
-    parts.push(lenBuf);
-    parts.push(encoded);
-  }
-
-  const total = parts.reduce((acc, p) => acc + p.length, 0);
-  const result = new Uint8Array(total);
-  let offset = 0;
-  for (const part of parts) {
-    result.set(part, offset);
-    offset += part.length;
-  }
-  return result;
+  const defs: FieldDef[] = fieldDefs.map((f, i) => ({
+    id: "id" in f ? f.id : String(i),
+    name: f.name,
+    type: f.type as FieldDef["type"],
+  }));
+  return encodeCanonicalAttestationData(fieldValues, defs);
 }
 
-/** Decodes attestation data back to a field-value map given the schema field_definitions */
+/** Decodes canonical attestation bytes using schema field definitions. */
 export function decodeAttestationData(
   dataHex: string,
-  fieldDefs: { name: string; type: string }[]
+  fieldDefs: FieldDef[] | { name: string; type: string }[],
 ): Record<string, string> {
-  const bytes = hexToBytes(dataHex);
-  const dec = new TextDecoder();
-  const result: Record<string, string> = {};
-  let offset = 0;
-
-  for (const field of fieldDefs) {
-    if (offset + 4 > bytes.length) break;
-    const len = new DataView(bytes.buffer, offset, 4).getUint32(0, true);
-    offset += 4;
-    if (offset + len > bytes.length) break;
-    result[field.name] = dec.decode(bytes.slice(offset, offset + len));
-    offset += len;
-  }
-
-  return result;
+  const defs: FieldDef[] = fieldDefs.map((f, i) => ({
+    id: "id" in f ? f.id : String(i),
+    name: f.name,
+    type: f.type as FieldDef["type"],
+  }));
+  return decodeCanonicalAttestationData(hexToBytes(dataHex), defs);
 }
-
-// =============================================================================
-// Zod schemas
-// =============================================================================
 
 export const AttestationV2Schema = z.object({
   address: z.string(),
@@ -149,10 +94,6 @@ export const AttestationV2Schema = z.object({
 
 export const AttestationV2ArraySchema = z.array(AttestationV2Schema);
 
-// =============================================================================
-// Helpers
-// =============================================================================
-
 function hexToBytes(hex: string): Uint8Array {
   const clean = hex.replace(/^0x/, "");
   const bytes = new Uint8Array(clean.length / 2);
@@ -168,17 +109,14 @@ export function bytesToHex(bytes: Uint8Array): string {
     .join("");
 }
 
-/** Returns true if an attestation UID is a zero-value (no reference) */
 export function isZeroUid(uid: string): boolean {
   return uid.replace(/^0x/, "").replace(/0/g, "") === "";
 }
 
-/** Formats a slot number as a human-readable distance from now (approximate) */
 export function formatSlotDistance(slot: number, currentSlot: number): string {
   if (slot === 0) return "Never";
   const diff = slot - currentSlot;
   if (diff <= 0) return "Expired";
-  // ~5s per ledger on Stellar testnet
   const seconds = diff * 0.4;
   if (seconds < 60) return `~${Math.round(seconds)}s`;
   if (seconds < 3600) return `~${Math.round(seconds / 60)}m`;

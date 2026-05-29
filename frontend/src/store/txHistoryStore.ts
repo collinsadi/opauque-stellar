@@ -20,7 +20,7 @@ export type TxHistoryEntry = {
   cluster: string;
   kind: TxHistoryKind;
   counterparty: string;
-  amountLamports: string;
+  amountStroops: string;
   tokenSymbol: string;
   tokenAddress: Address | null;
   amount: string;
@@ -65,19 +65,24 @@ export const useTxHistoryStore = create<TxHistoryState>()(
           const cluster = entry.cluster;
           const list = state.byChain[cluster] ?? [];
           if (entry.txHash) {
-            const existingByTxHash = new Set(list.filter((e) => e.txHash).map((e) => e.txHash!));
+            const existingByTxHash = new Set(
+              list.filter((e) => e.txHash).map((e) => e.txHash!),
+            );
             if (existingByTxHash.has(entry.txHash)) return state;
           }
           const newEntry: TxHistoryEntry = {
             ...entry,
-            tokenSymbol: entry.tokenSymbol ?? "SOL",
+            tokenSymbol: entry.tokenSymbol ?? "XLM",
             tokenAddress: entry.tokenAddress ?? null,
             amount: entry.amount ?? "",
             id: `tx-${cluster}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
             timestamp: Date.now(),
           };
           const next = [newEntry, ...list];
-          const trimmed = next.length > MAX_ITEMS_PER_CLUSTER ? next.slice(0, MAX_ITEMS_PER_CLUSTER) : next;
+          const trimmed =
+            next.length > MAX_ITEMS_PER_CLUSTER
+              ? next.slice(0, MAX_ITEMS_PER_CLUSTER)
+              : next;
           return {
             byChain: { ...state.byChain, [cluster]: trimmed },
           };
@@ -103,6 +108,6 @@ export const useTxHistoryStore = create<TxHistoryState>()(
       onRehydrateStorage: () => (_state, _err) => {
         hasRehydratedRef.current = true;
       },
-    }
-  )
+    },
+  ),
 );

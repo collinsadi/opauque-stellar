@@ -12,10 +12,6 @@ export class PublicKey {
   constructor(key: string) {
     this.key = key;
   }
-  /** @deprecated Stellar contract IDs are plain strings. Use the string value directly. */
-  toString(): string {
-    return this.key;
-  }
   toBuffer(): Buffer {
     return Buffer.alloc(32);
   }

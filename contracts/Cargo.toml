@@ -5,6 +5,7 @@ members = [
     "stealth-announcer",
     "groth16-verifier",
     "reputation-verifier",
+    "opaque-schema-core",
     "schema-registry",
     "attestation-engine-v2",
 ]

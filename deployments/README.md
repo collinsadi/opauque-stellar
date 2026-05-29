@@ -18,6 +18,7 @@ Each network manifest records:
 - **Network**: `network`, `networkPassphrase`, optional `rpcUrl` / `horizonUrl`
 - **On-chain**: `contracts.*.id`, `deploymentLedger`, `deployedAt`
 - **Artifacts**: `contracts.*.wasmHash` (SHA-256 hex of built WASM)
+- **Scanner / circuits**: `artifacts.scanner.wasmHash`, `artifacts.circuits.v1|v2.*` (witness WASM, zkey, contract VK hashes)
 - **Governance**: `deployer`, `admin`, `multisig`
 - **Reproducibility**: `verification.command` / `verification.output`, `artifacts.frontend.buildCommit`, `artifacts.circuits.v2.*` hashes
 

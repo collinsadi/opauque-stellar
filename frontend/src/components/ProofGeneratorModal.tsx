@@ -14,9 +14,12 @@ import { useOpaqueWasm } from "../hooks/useOpaqueWasm";
 import { useKeys } from "../context/KeysContext";
 import { getAnnouncementsForCluster } from "../lib/opaqueCache";
 import { getCluster } from "../lib/chain";
+import { fetchLatestValidMerkleRoot, generateReputationProof } from "../lib/reputationProver";
 import { getExplorerTxUrl } from "../lib/explorer";
+
 // @ts-expect-error snarkjs has no bundled types
 import * as snarkjs from "snarkjs";
+
 
 import { buildPoseidon } from "circomlibjs";
 
@@ -228,22 +231,23 @@ export function ProofGeneratorModal({ trait, onClose }: ProofGeneratorModalProps
 
       const masterKeys = getMasterKeys();
 
-      // ── Build complete circuit witness ─────────────────────────────────────
-      const circuitInputs = await buildCircuitInputs(
-        trait,
-        externalNullifier,
-        wasm as {
-          reconstruct_signing_key_wasm: (a: Uint8Array, b: Uint8Array, c: Uint8Array) => Uint8Array;
-        },
-        masterKeys,
+      // Reconstruct stealth private key bytes for proof generation
+      const stealthPrivKeyBytes = wasm.reconstruct_signing_key_wasm(
+        masterKeys.spendPrivKey,
+        masterKeys.viewPrivKey,
         ephemeralPubKeyBytes
       );
 
-      // ── Generate the Groth16 proof ─────────────────────────────────────────
-      const { proof: snarkProof, publicSignals } = await snarkjs.groth16.fullProve(
-        circuitInputs,
-        V2_CIRCUIT_WASM_PATH,
-        V2_ZKEY_PATH
+      // Use unified helper to generate proof and public signals
+      const proofData = await generateReputationProof(
+        wasm,
+        trait,
+        "",
+        stealthPrivKeyBytes,
+        externalNullifier,
+        (stage, percent) => {
+          // Optional: map progress stages to UI steps if needed
+        }
       );
 
       const generatedProof: GeneratedProof = {
@@ -314,9 +318,23 @@ export function ProofGeneratorModal({ trait, onClose }: ProofGeneratorModalProps
       proofC.set(bigIntToBytes32BE(piC[0]), 0);
       proofC.set(bigIntToBytes32BE(piC[1]), 32);
 
-      const merkleRoot = bigIntToBytes32BE(
-        stringToBigInt(proof.publicSignals[0])
-      );
+      // Fetch the latest on-chain Merkle root and validate against proof
+      const fetchedRootBytes = await fetchLatestValidMerkleRoot(publicKey);
+      // Convert fetched bytes to bigint for comparison
+      const fetchedRootBigInt = (() => {
+        let v = 0n;
+        for (const b of fetchedRootBytes) {
+          v = (v << 8n) + BigInt(b);
+        }
+        return v;
+      })();
+      const proofRootBigInt = stringToBigInt(proof.publicSignals[0]);
+      if (fetchedRootBigInt !== proofRootBigInt) {
+        setError("Merkle root mismatch: proof does not correspond to current on-chain root.");
+        setStep("error");
+        return;
+      }
+      const merkleRoot = fetchedRootBytes;
       const attestationId = bigIntToBytes32BE(
         stringToBigInt(proof.publicSignals[1])
       );

@@ -31,5 +31,5 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src", "../deployments/**/*.ts", "../deployments/v1/*.json", "public/pkg/**/*.d.ts"]
+  "include": ["src", "../deployments/**/*.ts", "../deployments/v1/*.json", "../artifacts/manifest.json", "public/pkg/**/*.d.ts"]
 }

@@ -25,6 +25,8 @@ import { useKeys } from "../context/KeysContext";
 import { getConfigForCluster } from "../contracts/contract-config";
 import { useScanner } from "../hooks/useScanner";
 import { useWallet } from "../hooks/useWallet";
+import { useFreezeStatus } from "../hooks/useFreezeStatus";
+import { FREEZE_STATUS_COPY } from "../lib/freezePolicy";
 
 const ICONS: Record<string, string> = {
   code: "</> ",
@@ -61,7 +63,8 @@ export function ReputationDashboardView({ onBack }: ReputationDashboardViewProps
   const { isSetup, getMasterKeys } = useKeys();
   const cluster = getCluster();
   const currentConfig = getConfigForCluster(cluster);
-  const { connection } = useWallet();
+  const { connection, publicKey } = useWallet();
+  const { status: freezeStatus, isLoading: freezeLoading } = useFreezeStatus(publicKey);
   const scanner = useScanner({
     cluster,
     publicClient: connection,
@@ -138,6 +141,9 @@ export function ReputationDashboardView({ onBack }: ReputationDashboardViewProps
     }
   }, [wasmReady, wasm, isSetup, getMasterKeys, scanner.announcements]);
 
+  const isFrozen = freezeStatus === "frozen";
+  const freezeCopy = FREEZE_STATUS_COPY[freezeStatus];
+
   return (
     <div className="w-full">
       <div className="mb-8 flex flex-wrap items-end justify-between gap-3">
@@ -167,6 +173,21 @@ export function ReputationDashboardView({ onBack }: ReputationDashboardViewProps
           Issue trait
         </button>
       </div>
+
+      {/* Freeze / stale status banner (#85) */}
+      {!freezeLoading && freezeStatus !== "active" && freezeStatus !== "unknown" && (
+        <div
+          role="alert"
+          className={`mb-6 rounded-xl border px-4 py-3 text-sm ${
+            isFrozen
+              ? "border-red-500/40 bg-red-950/40 text-red-300"
+              : "border-amber-500/30 bg-amber-950/30 text-amber-300"
+          }`}
+        >
+          <p className="font-semibold mb-0.5">{freezeCopy.title}</p>
+          <p className="text-xs opacity-80">{freezeCopy.detail}</p>
+        </div>
+      )}
 
       {/* Discovered traits */}
       {discoveredTraits.length > 0 && (
@@ -204,10 +225,14 @@ export function ReputationDashboardView({ onBack }: ReputationDashboardViewProps
                     <button
                       type="button"
                       onClick={() => handleProveTrait(trait)}
-                      disabled={proofState.stage !== "idle" && proofState.stage !== "error" && proofState.stage !== "verified"}
+                      disabled={
+                        isFrozen ||
+                        (proofState.stage !== "idle" && proofState.stage !== "error" && proofState.stage !== "verified")
+                      }
+                      title={isFrozen ? "Proof generation is disabled while the root is frozen" : undefined}
                       className="mt-4 w-full rounded-xl bg-sol-gradient px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
-                      Prove
+                      {isFrozen ? "Frozen" : "Prove"}
                     </button>
                   </div>
                 </div>

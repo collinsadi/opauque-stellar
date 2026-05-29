@@ -31,10 +31,79 @@ jobs:
           fi
           echo "No legacy devnet JSON config in frontend/src/contracts"
 
+  scanner:
+    name: Build scanner WASM
+    runs-on: ubuntu-latest
+    needs: verify-deployment-manifest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-scanner-ci-${{ hashFiles('scanner/Cargo.lock') }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl -fsSL https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+
+      - name: Build scanner WASM
+        run: npm run build:scanner
+
+      - name: Verify scanner artifact hashes
+        run: node scripts/verify-artifact-manifest.mjs --scanner --strict
+
+      - name: Upload scanner WASM
+        uses: actions/upload-artifact@v4
+        with:
+          name: scanner-wasm
+          path: frontend/public/pkg/
+          retention-days: 7
+
+  circuit-regression:
+    name: Circuit regression (heavy)
+    runs-on: ubuntu-latest
+    needs: verify-deployment-manifest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Circom
+        run: |
+          curl -Ls https://github.com/iden3/circom/releases/download/v2.1.9/circom-linux-amd64 -o /usr/local/bin/circom
+          chmod +x /usr/local/bin/circom
+          circom --version
+
+      - name: Install circuit dependencies
+        run: |
+          npm ci
+          npm ci --prefix circuits/v2
+        working-directory: circuits
+
+      - name: Fetch circuit release artifacts
+        run: npm run fetch:circuits
+        continue-on-error: true
+
+      - name: Run circuit regression tests
+        run: npm run test:circuits
+
+      - name: Verify artifact manifest (circuits + VK binding)
+        run: node scripts/verify-artifact-manifest.mjs --circuits --vk-binding
+        continue-on-error: true
+
   frontend:
     name: Frontend build
     runs-on: ubuntu-latest
-    needs: verify-deployment-manifest
+    needs: [verify-deployment-manifest, scanner]
     defaults:
       run:
         working-directory: frontend
@@ -47,8 +116,18 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: scanner-wasm
+          path: frontend/public/pkg/
+
       - name: Install dependencies
         run: npm ci
+
+      - name: Fetch circuit artifacts
+        working-directory: ..
+        run: npm run fetch:circuits
+        continue-on-error: true
 
       - name: Verify frontend env matches manifest
         working-directory: ..
@@ -56,6 +135,10 @@ jobs:
           eval "$(node scripts/export-manifest-env.mjs testnet)"
           node scripts/verify-deployment-manifest.mjs --network testnet
           cd frontend && npm run verify:deployment
+
+      - name: Verify scanner WASM hashes
+        working-directory: ..
+        run: node scripts/verify-artifact-manifest.mjs --scanner --strict
 
       - name: Lint
         run: npm run lint
@@ -66,6 +149,7 @@ jobs:
       - name: Typecheck and build
         env:
           VITE_STELLAR_NETWORK: testnet
+          SKIP_FRONTEND_PREBUILD: "1"
         run: npm run build
 
       - name: Run unit tests

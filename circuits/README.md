@@ -85,7 +85,7 @@ npm run prove
 npm run verify
 ```
 
-In the frontend, proof generation happens entirely in-browser via snarkjs, using the WASM witness generator and the final zkey hosted at `opaque.cash`.
+In the frontend, proof generation happens entirely in-browser via snarkjs, using the WASM witness generator and the final zkey verified against [`artifacts/manifest.json`](../artifacts/manifest.json). Fetch release assets with `npm run fetch:circuits` (see [`artifacts/README.md`](../artifacts/README.md)).
 
 ## Build Artifacts
 

@@ -20,6 +20,10 @@ import { useRegistrationStatus } from "./hooks/useRegistrationStatus";
 import { useVaultStore } from "./store/vaultStore";
 import { useGhostAddressStore, useGhostAddressPersistence } from "./store/ghostAddressStore";
 import { getExplorerTxUrl } from "./lib/explorer";
+import { MainnetSafetyBanner } from "./components/security/MainnetSafetyBanner";
+import { MainnetWarningModal } from "./components/security/MainnetWarningModal";
+import { NetworkMismatchModal } from "./components/security/NetworkMismatchModal";
+import { SecuritySettings } from "./pages/settings/SecuritySettings";
 
 const SchemaStudio = lazy(() => import("./components/SchemaStudio").then((m) => ({ default: m.SchemaStudio })));
 const AttestationManager = lazy(() => import("./components/AttestationManager").then((m) => ({ default: m.AttestationManager })));
@@ -112,6 +116,7 @@ function AppContent() {
     if (tab === "schemas") return <Suspense fallback={<LazyFallback />}><SchemaStudio /></Suspense>;
     if (tab === "attest") return <Suspense fallback={<LazyFallback />}><AttestationManager onNavigate={setTab} /></Suspense>;
     if (tab === "manage") return <Suspense fallback={<LazyFallback />}><ManageView onNavigate={setTab} /></Suspense>;
+    if (tab === "security" as any) return <SecuritySettings />;
     return null;
   };
 
@@ -230,6 +235,9 @@ export default function App() {
     <KeysProvider>
       <ProtocolLogProvider>
         <ToastProvider>
+          <MainnetSafetyBanner />
+          <MainnetWarningModal />
+          <NetworkMismatchModal />
           <AppContent />
           <ToastLayer />
         </ToastProvider>

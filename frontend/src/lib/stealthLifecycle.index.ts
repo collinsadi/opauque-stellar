@@ -10,7 +10,7 @@ export {
   executeGhostOnchainAnnouncement,
   withdrawFromGhostAddress,
   executeStealthWithdrawal,
-  formatSol,
+  formatXlm,
   type StealthLifecycleWasm,
   type ScanStatus,
   type ScanningProgress,

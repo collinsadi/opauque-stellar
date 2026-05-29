@@ -11,6 +11,12 @@ export function useWallet() {
   const w = useStellarWallet();
   return {
     ...w,
+    publicKey: pk
+      ? {
+          toBytes: () => new Uint8Array(32),
+          toBuffer: () => Buffer.alloc(32),
+        }
+      : null,
     sendTransaction: async (tx: { toXDR?: () => string }) => {
       if (tx?.toXDR && w.signTransaction) {
         const xdr = tx.toXDR();

@@ -17,11 +17,19 @@ import {
 } from "@stellar/stellar-sdk";
 import { getHorizonUrls, getNetworkPassphrase, getRpcUrls } from "./chain";
 import { recordContractCall, recordRpcError } from "./monitoring";
+import { parseHorizonBalanceToStroops } from "./decimalParser";
+import { simulateAndDecode, type SimulationResult } from "./sorobanErrors";
 
 export function getSorobanServer(): rpc.Server {
   const urls = getRpcUrls();
-  const servers = urls.map((url) => new rpc.Server(url, { allowHttp: url.startsWith("http://") }));
-  return withReadFallback(servers, "Soroban RPC", new Set(["sendTransaction"])) as rpc.Server;
+  const servers = urls.map(
+    (url) => new rpc.Server(url, { allowHttp: url.startsWith("http://") }),
+  );
+  return withReadFallback(
+    servers,
+    "Soroban RPC",
+    new Set(["sendTransaction"]),
+  ) as rpc.Server;
 }
 
 export function getHorizonServer(): Horizon.Server {
@@ -51,6 +59,8 @@ export type SignTxFn = (xdr: string) => Promise<string>;
 
 const READ_TIMEOUT_MS = 12_000;
 const READ_RETRIES_PER_PROVIDER = 2;
+const TX_POLL_TIMEOUT_MS = 60_000; // 60 seconds max polling
+const TX_POLL_INTERVAL_MS = 1_000; // 1 second between polls
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -61,17 +71,29 @@ function isRetryableReadError(err: unknown): boolean {
     typeof err === "object" && err !== null && "response" in err
       ? (err as { response?: { status?: number } }).response?.status
       : undefined;
-  if (status === 429 || status === 408 || status === 500 || status === 502 || status === 503 || status === 504) {
+  if (
+    status === 429 ||
+    status === 408 ||
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  ) {
     return true;
   }
   const message = err instanceof Error ? err.message : String(err);
-  return /timeout|timed out|rate.?limit|too many requests|network|fetch/i.test(message);
+  return /timeout|timed out|rate.?limit|too many requests|network|fetch/i.test(
+    message,
+  );
 }
 
 async function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label} timed out after ${READ_TIMEOUT_MS}ms`)), READ_TIMEOUT_MS);
+    timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${READ_TIMEOUT_MS}ms`)),
+      READ_TIMEOUT_MS,
+    );
   });
   try {
     return await Promise.race([promise, timeout]);
@@ -93,7 +115,10 @@ function withReadFallback<T extends object>(
       const value = Reflect.get(target, prop, receiver);
       if (typeof prop !== "string" || typeof value !== "function") return value;
       return (...args: unknown[]) => {
-        if (noRetryMethods.has(prop) || (retryMethods && !retryMethods.has(prop))) {
+        if (
+          noRetryMethods.has(prop) ||
+          (retryMethods && !retryMethods.has(prop))
+        ) {
           return value.apply(target, args);
         }
         return (async () => {
@@ -101,9 +126,16 @@ function withReadFallback<T extends object>(
           for (const provider of providers) {
             const fn = Reflect.get(provider, prop);
             if (typeof fn !== "function") continue;
-            for (let attempt = 0; attempt < READ_RETRIES_PER_PROVIDER; attempt += 1) {
+            for (
+              let attempt = 0;
+              attempt < READ_RETRIES_PER_PROVIDER;
+              attempt += 1
+            ) {
               try {
-                return await withTimeout(Promise.resolve(fn.apply(provider, args)), `${label}.${prop}`);
+                return await withTimeout(
+                  Promise.resolve(fn.apply(provider, args)),
+                  `${label}.${prop}`,
+                );
               } catch (err) {
                 lastError = err;
                 if (!isRetryableReadError(err)) throw err;
@@ -113,11 +145,41 @@ function withReadFallback<T extends object>(
               }
             }
           }
-          throw lastError instanceof Error ? lastError : new Error(`${label}.${prop} failed`);
+          throw lastError instanceof Error
+            ? lastError
+            : new Error(`${label}.${prop} failed`);
         })();
       };
     },
   });
+}
+
+/**
+ * Poll for transaction status with bounded timeout.
+ * @returns Transaction response when status is no longer NOT_FOUND
+ * @throws Error if polling times out or transaction fails
+ */
+async function pollTransactionStatus(
+  server: rpc.Server,
+  txHash: string,
+  timeoutMs: number = TX_POLL_TIMEOUT_MS,
+): Promise<rpc.Api.GetTransactionResponse> {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeoutMs) {
+    const txResponse = await server.getTransaction(txHash);
+
+    if (txResponse.status !== "NOT_FOUND") {
+      return txResponse;
+    }
+
+    await new Promise((r) => setTimeout(r, TX_POLL_INTERVAL_MS));
+  }
+
+  throw new Error(
+    `Transaction polling timed out after ${timeoutMs}ms. Hash: ${txHash}. ` +
+      `Check status manually or retry later.`,
+  );
 }
 
 export async function invokeContractMethod(opts: {
@@ -126,6 +188,7 @@ export async function invokeContractMethod(opts: {
   method: string;
   args: xdr.ScVal[];
   signTransaction: SignTxFn;
+  simulate?: boolean;
 }): Promise<string> {
   const startTime = Date.now();
   const server = getSorobanServer();
@@ -141,19 +204,28 @@ export async function invokeContractMethod(opts: {
       .setTimeout(180)
       .build();
     tx = await server.prepareTransaction(tx);
+
+    // Simulate if requested
+    if (opts.simulate !== false) {
+      const simResult = await simulateAndDecode(server, tx);
+      if (!simResult.success) {
+        throw new Error(`Simulation failed: ${simResult.error}`);
+      }
+    }
+
     const signedXdr = await opts.signTransaction(tx.toXDR());
     const signed = TransactionBuilder.fromXDR(signedXdr, passphrase);
     const send = await server.sendTransaction(signed);
     if (send.status === "ERROR") {
       throw new Error(`Transaction failed: ${JSON.stringify(send)}`);
     }
-    let txResponse = await server.getTransaction(send.hash);
-    while (txResponse.status === "NOT_FOUND") {
-      await new Promise((r) => setTimeout(r, 1000));
-      txResponse = await server.getTransaction(send.hash);
-    }
+
+    const txResponse = await pollTransactionStatus(server, send.hash);
+
     if (txResponse.status !== "SUCCESS") {
-      throw new Error(`Transaction ${send.status}: ${JSON.stringify(txResponse)}`);
+      throw new Error(
+        `Transaction ${send.status}: ${JSON.stringify(txResponse)}`,
+      );
     }
     recordContractCall({
       contractId: opts.contractId,
@@ -201,7 +273,7 @@ export type NativeWithdrawalQuote = {
 type HorizonAccountLike = Awaited<ReturnType<Horizon.Server["loadAccount"]>>;
 
 function balanceToStroops(balance: string | undefined): bigint {
-  return BigInt(Math.round(parseFloat(balance ?? "0") * 1e7));
+  return parseHorizonBalanceToStroops(balance);
 }
 
 function horizonInt(value: unknown): bigint {
@@ -210,7 +282,10 @@ function horizonInt(value: unknown): bigint {
   return 0n;
 }
 
-async function getLatestLedgerRules(): Promise<{ baseFeeStroops: bigint; baseReserveStroops: bigint }> {
+async function getLatestLedgerRules(): Promise<{
+  baseFeeStroops: bigint;
+  baseReserveStroops: bigint;
+}> {
   for (const url of getHorizonUrls()) {
     const server = new Horizon.Server(url);
     for (let attempt = 0; attempt < READ_RETRIES_PER_PROVIDER; attempt += 1) {
@@ -220,29 +295,41 @@ async function getLatestLedgerRules(): Promise<{ baseFeeStroops: bigint; baseRes
           "Horizon.ledgers",
         );
         const record = latest.records[0] as
-          | { base_fee_in_stroops?: number | string; base_reserve_in_stroops?: number | string }
+          | {
+              base_fee_in_stroops?: number | string;
+              base_reserve_in_stroops?: number | string;
+            }
           | undefined;
         return {
-          baseFeeStroops: horizonInt(record?.base_fee_in_stroops) || BigInt(BASE_FEE),
-          baseReserveStroops: horizonInt(record?.base_reserve_in_stroops) || 5_000_000n,
+          baseFeeStroops:
+            horizonInt(record?.base_fee_in_stroops) || BigInt(BASE_FEE),
+          baseReserveStroops:
+            horizonInt(record?.base_reserve_in_stroops) || 5_000_000n,
         };
       } catch (err) {
         if (!isRetryableReadError(err)) break;
-        if (attempt + 1 < READ_RETRIES_PER_PROVIDER) await sleep(350 * (attempt + 1));
+        if (attempt + 1 < READ_RETRIES_PER_PROVIDER)
+          await sleep(350 * (attempt + 1));
       }
     }
   }
   return { baseFeeStroops: BigInt(BASE_FEE), baseReserveStroops: 5_000_000n };
 }
 
-function minimumBalanceForAccount(account: HorizonAccountLike, baseReserveStroops: bigint): bigint {
+function minimumBalanceForAccount(
+  account: HorizonAccountLike,
+  baseReserveStroops: bigint,
+): bigint {
   const raw = account as unknown as {
     subentry_count?: number | string;
     num_sponsoring?: number | string;
     num_sponsored?: number | string;
   };
   const reserveUnits =
-    2n + horizonInt(raw.subentry_count) + horizonInt(raw.num_sponsoring) - horizonInt(raw.num_sponsored);
+    2n +
+    horizonInt(raw.subentry_count) +
+    horizonInt(raw.num_sponsoring) -
+    horizonInt(raw.num_sponsored);
   return (reserveUnits > 0n ? reserveUnits : 0n) * baseReserveStroops;
 }
 
@@ -256,14 +343,22 @@ export async function getNativeWithdrawalQuote(opts: {
     getLatestLedgerRules(),
   ]);
   const native = sourceAccount.balances.find((b) => b.asset_type === "native");
-  const balanceStroops = balanceToStroops((native as { balance?: string } | undefined)?.balance);
+  const balanceStroops = balanceToStroops(
+    (native as { balance?: string } | undefined)?.balance,
+  );
   const destinationExists = await accountExists(opts.destination);
-  const minimumBalanceStroops = minimumBalanceForAccount(sourceAccount, ledgerRules.baseReserveStroops);
+  const minimumBalanceStroops = minimumBalanceForAccount(
+    sourceAccount,
+    ledgerRules.baseReserveStroops,
+  );
   const feeStroops = ledgerRules.baseFeeStroops;
   const retainedStroops = minimumBalanceStroops + feeStroops;
-  const availableStroops = balanceStroops > retainedStroops ? balanceStroops - retainedStroops : 0n;
+  const availableStroops =
+    balanceStroops > retainedStroops ? balanceStroops - retainedStroops : 0n;
   const spendableStroops =
-    !destinationExists && availableStroops < NEW_ACCOUNT_MIN_RESERVE_STROOPS ? 0n : availableStroops;
+    !destinationExists && availableStroops < NEW_ACCOUNT_MIN_RESERVE_STROOPS
+      ? 0n
+      : availableStroops;
   return {
     balanceStroops,
     feeStroops,
@@ -288,11 +383,14 @@ export async function buildNativeTransferOperation(opts: {
   amountStroops: bigint;
   destinationExists?: boolean;
 }): Promise<xdr.Operation> {
-  const destExists = opts.destinationExists ?? (await accountExists(opts.destination));
+  const destExists =
+    opts.destinationExists ?? (await accountExists(opts.destination));
 
   if (!destExists) {
     if (opts.amountStroops < NEW_ACCOUNT_MIN_RESERVE_STROOPS) {
-      throw new Error("Destination account does not exist; create-account requires at least 1 XLM.");
+      throw new Error(
+        "Destination account does not exist; create-account requires at least 1 XLM.",
+      );
     }
     return Operation.createAccount({
       destination: opts.destination,
@@ -317,7 +415,9 @@ export async function sendNativePayment(opts: {
 }): Promise<string> {
   const horizon = getHorizonServer();
   const passphrase = getNetworkPassphrase();
-  const sourceAccount = await horizon.loadAccount(opts.sourceKeypair.publicKey());
+  const sourceAccount = await horizon.loadAccount(
+    opts.sourceKeypair.publicKey(),
+  );
 
   const builder = new TransactionBuilder(sourceAccount, {
     fee: (opts.feeStroops ?? BigInt(BASE_FEE)).toString(),
@@ -351,6 +451,7 @@ export async function invokeContractWithKeypair(opts: {
   contractId: string;
   method: string;
   args: xdr.ScVal[];
+  simulate?: boolean;
 }): Promise<string> {
   const startTime = Date.now();
   const server = getSorobanServer();
@@ -366,16 +467,23 @@ export async function invokeContractWithKeypair(opts: {
       .setTimeout(180)
       .build();
     tx = await server.prepareTransaction(tx);
+
+    // Simulate if requested
+    if (opts.simulate !== false) {
+      const simResult = await simulateAndDecode(server, tx);
+      if (!simResult.success) {
+        throw new Error(`Simulation failed: ${simResult.error}`);
+      }
+    }
+
     tx.sign(opts.keypair);
     const send = await server.sendTransaction(tx);
     if (send.status === "ERROR") {
       throw new Error(`Transaction failed: ${JSON.stringify(send)}`);
     }
-    let txResponse = await server.getTransaction(send.hash);
-    while (txResponse.status === "NOT_FOUND") {
-      await new Promise((r) => setTimeout(r, 1000));
-      txResponse = await server.getTransaction(send.hash);
-    }
+
+    const txResponse = await pollTransactionStatus(server, send.hash);
+
     if (txResponse.status !== "SUCCESS") {
       throw new Error(`Transaction failed: ${JSON.stringify(txResponse)}`);
     }
@@ -398,11 +506,7 @@ export async function invokeContractWithKeypair(opts: {
   }
 }
 
-export function formatXlm(stroops: bigint): string {
-  const xlm = Number(stroops) / 1e7;
-  return xlm.toFixed(7).replace(/\.?0+$/, "");
-}
-
-export function parseXlmToStroops(val: string): bigint {
-  return BigInt(Math.round(parseFloat(val) * 1e7));
-}
+export {
+  formatStroopsToXlm as formatXlm,
+  parseXlmToStroops,
+} from "./decimalParser";

@@ -11,7 +11,12 @@ import {
   TransactionBuilder,
   nativeToScVal,
 } from "@stellar/stellar-sdk";
-import { hexToBytes, formatSol, computeStealthAddressAndViewTag, type Hex } from "../lib/stealth";
+import {
+  hexToBytes,
+  formatXlm,
+  computeStealthAddressAndViewTag,
+  type Hex,
+} from "../lib/stealth";
 import { getCluster, getNetworkPassphrase } from "../lib/chain";
 import { resolveMetaAddress } from "../lib/registry";
 import { isEnsName, resolveEnsToAddress } from "../lib/ens";
@@ -19,12 +24,21 @@ import { getConfigForCluster } from "../contracts/contract-config";
 import { SCHEME_ID_SECP256K1 } from "../lib/contracts";
 import { getExplorerTxUrl } from "../lib/explorer";
 import { useWallet } from "../hooks/useWallet";
-import { bytesToScVal, buildNativeTransferOperation, getHorizonServer, getSorobanServer, parseXlmToStroops, u64ToScVal } from "../lib/stellar";
+import {
+  bytesToScVal,
+  buildNativeTransferOperation,
+  getHorizonServer,
+  getSorobanServer,
+  parseXlmToStroops,
+  u64ToScVal,
+} from "../lib/stellar";
 import { deployedAddresses } from "../contracts/deployedAddresses";
 
 function isDirectMetaAddress(s: string): boolean {
   const t = s.trim().startsWith("0x") ? s.trim() : "0x" + s.trim();
-  return t.length === 2 + 66 * 2 && (t.startsWith("0x02") || t.startsWith("0x03"));
+  return (
+    t.length === 2 + 66 * 2 && (t.startsWith("0x02") || t.startsWith("0x03"))
+  );
 }
 
 function formatRecipientDisplay(id: string): string {
@@ -42,7 +56,8 @@ type ResolveStatus = "idle" | "resolving" | "found" | "not_found";
 export function PayPage() {
   const { identifier } = useParams<{ identifier: string }>();
   const navigate = useNavigate();
-  const { publicKey, connect, connecting, signTransaction, connected } = useWallet();
+  const { publicKey, connect, connecting, signTransaction, connected } =
+    useWallet();
   const cluster = getCluster();
   const config = getConfigForCluster(cluster);
   const [resolveStatus, setResolveStatus] = useState<ResolveStatus>("idle");
@@ -110,7 +125,9 @@ export function PayPage() {
         const account = await getHorizonServer().loadAccount(address);
         const native = account.balances.find((b) => b.asset_type === "native");
         const stroops = BigInt(
-          Math.round(parseFloat((native as { balance: string })?.balance ?? "0") * 1e7),
+          Math.round(
+            parseFloat((native as { balance: string })?.balance ?? "0") * 1e7,
+          ),
         );
         if (!cancelled) setActiveBalance(stroops);
       } catch {
@@ -143,15 +160,20 @@ export function PayPage() {
   const handleSendPrivately = async () => {
     setError(null);
     setTxHash(null);
-    if (!config || !resolvedMeta || !address || !signTransaction || !connected) return;
+    if (!config || !resolvedMeta || !address || !signTransaction || !connected)
+      return;
     if (inputStroops == null || inputStroops <= 0n) {
       setError("Enter a valid amount.");
       return;
     }
     setSending(true);
     try {
-      const { stealthAddress, stealthStellarAddress, ephemeralPubKey, metadata } =
-        computeStealthAddressAndViewTag(resolvedMeta);
+      const {
+        stealthAddress,
+        stealthStellarAddress,
+        ephemeralPubKey,
+        metadata,
+      } = computeStealthAddressAndViewTag(resolvedMeta);
       const passphrase = getNetworkPassphrase();
       const source = await getHorizonServer().loadAccount(address);
       const announcer = new Contract(deployedAddresses.stealthAnnouncer);
@@ -197,11 +219,18 @@ export function PayPage() {
     return (
       <motion.div className="min-h-screen bg-ink-950 text-white flex flex-col items-center justify-center p-6">
         <div className="w-full max-w-md rounded-2xl border border-ink-700 bg-ink-900/30 p-6 text-center">
-          <h1 className="font-display text-2xl font-bold text-white mb-2">User Not Found</h1>
+          <h1 className="font-display text-2xl font-bold text-white mb-2">
+            User Not Found
+          </h1>
           <p className="text-mist text-sm mb-6">
-            Could not resolve a registered stealth meta-address for this identifier.
+            Could not resolve a registered stealth meta-address for this
+            identifier.
           </p>
-          <button type="button" onClick={() => navigate("/")} className="text-indigo-400 underline">
+          <button
+            type="button"
+            onClick={() => navigate("/")}
+            className="text-indigo-400 underline"
+          >
             Back home
           </button>
         </div>
@@ -213,8 +242,12 @@ export function PayPage() {
     <motion.div className="min-h-screen bg-ink-950 text-white flex flex-col items-center justify-center p-6">
       <div className="w-full max-w-md rounded-2xl border border-ink-700 bg-ink-900/30 p-6 shadow-2xl">
         <h1 className="font-display text-xl font-bold mb-1">Pay privately</h1>
-        <p className="text-sm text-mist mb-4">To {formatRecipientDisplay(displayName)}</p>
-        {resolveStatus === "resolving" && <p className="text-sm text-mist">Resolving…</p>}
+        <p className="text-sm text-mist mb-4">
+          To {formatRecipientDisplay(displayName)}
+        </p>
+        {resolveStatus === "resolving" && (
+          <p className="text-sm text-mist">Resolving…</p>
+        )}
         {resolveStatus === "found" && (
           <>
             <input
@@ -246,13 +279,19 @@ export function PayPage() {
             {error && <p className="text-red-400 text-sm mt-2">{error}</p>}
             {txHash && (
               <p className="text-emerald-400 text-sm mt-2">
-                <a href={getExplorerTxUrl(txHash)} target="_blank" rel="noreferrer">
+                <a
+                  href={getExplorerTxUrl(txHash)}
+                  target="_blank"
+                  rel="noreferrer"
+                >
                   View transaction
                 </a>
               </p>
             )}
             {maxSendableBalance != null && connected && (
-              <p className="text-xs text-mist mt-2">Balance: {formatSol(maxSendableBalance)} XLM</p>
+              <p className="text-xs text-mist mt-2">
+                Balance: {formatSol(maxSendableBalance)} XLM
+              </p>
             )}
           </>
         )}

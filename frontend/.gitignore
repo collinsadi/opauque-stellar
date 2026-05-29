@@ -24,3 +24,6 @@ dist-ssr
 *.sw?
 
 .env
+
+# Large ZK artifacts — fetch via npm run fetch:circuits (see artifacts/README.md)
+public/circuits/

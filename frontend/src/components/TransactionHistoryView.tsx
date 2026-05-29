@@ -2,13 +2,15 @@ import { getCluster } from "../lib/chain";
 import { getExplorerTxUrl } from "../lib/explorer";
 import { useTxHistoryStore } from "../store/txHistoryStore";
 import type { TxHistoryEntry } from "../store/txHistoryStore";
-import { formatSol } from "../lib/stealth";
+import { formatXlm } from "../lib/stealth";
 import { useWallet } from "../hooks/useWallet";
 
 function formatDate(ts: number): string {
   try {
     const d = new Date(ts);
-    return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
+    return Number.isNaN(d.getTime())
+      ? "—"
+      : d.toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
   } catch {
     return "—";
   }
@@ -16,11 +18,16 @@ function formatDate(ts: number): string {
 
 function typeLabel(kind: TxHistoryEntry["kind"]): string {
   switch (kind) {
-    case "sent": return "Sent";
-    case "received": return "Received";
-    case "ghost": return "Manual";
-    case "trait": return "Trait";
-    default: return String(kind);
+    case "sent":
+      return "Sent";
+    case "received":
+      return "Received";
+    case "ghost":
+      return "Manual";
+    case "trait":
+      return "Trait";
+    default:
+      return String(kind);
   }
 }
 
@@ -45,16 +52,47 @@ function normalizeEntry(raw: unknown, index: number): TxHistoryEntry | null {
   const o = raw as Record<string, unknown>;
   const id = typeof o.id === "string" ? o.id : `tx-fallback-${index}`;
   const cluster = typeof o.cluster === "string" ? o.cluster : getCluster();
-  const kind = o.kind === "sent" || o.kind === "received" || o.kind === "ghost" || o.kind === "trait" ? o.kind : "sent";
-  const counterparty = typeof o.counterparty === "string" ? o.counterparty : "—";
-  const amountLamports = typeof o.amountLamports === "string" ? o.amountLamports : "0";
+  const kind =
+    o.kind === "sent" ||
+    o.kind === "received" ||
+    o.kind === "ghost" ||
+    o.kind === "trait"
+      ? o.kind
+      : "sent";
+  const counterparty =
+    typeof o.counterparty === "string" ? o.counterparty : "—";
+  const amountStroops =
+    typeof o.amountStroops === "string"
+      ? o.amountStroops
+      : typeof o.amountLamports === "string"
+        ? o.amountLamports
+        : "0";
   const txHash = typeof o.txHash === "string" ? o.txHash : undefined;
-  const stealthAddress = typeof o.stealthAddress === "string" ? o.stealthAddress : undefined;
+  const stealthAddress =
+    typeof o.stealthAddress === "string" ? o.stealthAddress : undefined;
   const timestamp = typeof o.timestamp === "number" ? o.timestamp : Date.now();
-  const tokenSymbol = typeof o.tokenSymbol === "string" ? o.tokenSymbol : "SOL";
-  const tokenAddress = o.tokenAddress != null && typeof o.tokenAddress === "string" ? (o.tokenAddress as TxHistoryEntry["tokenAddress"]) : null;
-  const amount = typeof o.amount === "string" && o.amount !== "" ? o.amount : formatSol(BigInt(amountLamports || "0"));
-  return { id, cluster, kind, counterparty, amountLamports, tokenSymbol, tokenAddress, amount, txHash, stealthAddress, timestamp };
+  const tokenSymbol = typeof o.tokenSymbol === "string" ? o.tokenSymbol : "XLM";
+  const tokenAddress =
+    o.tokenAddress != null && typeof o.tokenAddress === "string"
+      ? (o.tokenAddress as TxHistoryEntry["tokenAddress"])
+      : null;
+  const amount =
+    typeof o.amount === "string" && o.amount !== ""
+      ? o.amount
+      : formatXlm(BigInt(amountStroops || "0"));
+  return {
+    id,
+    cluster,
+    kind,
+    counterparty,
+    amountStroops,
+    tokenSymbol,
+    tokenAddress,
+    amount,
+    txHash,
+    stealthAddress,
+    timestamp,
+  };
 }
 
 export function TransactionHistoryView() {
@@ -76,7 +114,10 @@ export function TransactionHistoryView() {
   const safeEntries = Array.isArray(entries) ? entries : [];
 
   const handleClear = () => {
-    if (typeof window !== "undefined" && window.confirm("Clear all transaction history? This cannot be undone.")) {
+    if (
+      typeof window !== "undefined" &&
+      window.confirm("Clear all transaction history? This cannot be undone.")
+    ) {
       clear();
     }
   };
@@ -86,16 +127,22 @@ export function TransactionHistoryView() {
       <div className="mb-8">
         <h2 className="font-display text-2xl font-bold text-white">History</h2>
         <p className="mt-1 text-sm text-mist">
-          Last 50 transactions on this network, including private sends, withdrawals, and traits.
+          Last 50 transactions on this network, including private sends,
+          withdrawals, and traits.
         </p>
       </div>
 
       {!safeEntries?.length ? (
         <div className="rounded-3xl border border-ink-700 bg-ink-900/25 p-10 text-center">
-          <div className="text-3xl mb-3" aria-hidden>◈</div>
-          <h3 className="font-display text-lg font-bold text-white mb-1">No history yet</h3>
+          <div className="text-3xl mb-3" aria-hidden>
+            ◈
+          </div>
+          <h3 className="font-display text-lg font-bold text-white mb-1">
+            No history yet
+          </h3>
           <p className="text-sm text-mist max-w-sm mx-auto">
-            When you send privately, withdraw from stealth addresses, or issue traits, entries will appear here.
+            When you send privately, withdraw from stealth addresses, or issue
+            traits, entries will appear here.
           </p>
         </div>
       ) : (
@@ -126,7 +173,10 @@ export function TransactionHistoryView() {
                   <span className="text-mist/70 text-xs shrink-0">
                     {statusFor(tx)}
                   </span>
-                  <span className="text-mist text-xs truncate min-w-0 ml-auto" title={tx.counterparty ?? ""}>
+                  <span
+                    className="text-mist text-xs truncate min-w-0 ml-auto"
+                    title={tx.counterparty ?? ""}
+                  >
                     {tx.counterparty ?? "—"}
                   </span>
                 </div>
@@ -137,25 +187,28 @@ export function TransactionHistoryView() {
                   ) : (
                     <>
                       <TokenBadge symbol={tx.tokenSymbol} />
-                      <span className="font-mono text-sm">{tx.amount} {tx.tokenSymbol}</span>
+                      <span className="font-mono text-sm">
+                        {tx.amount} {tx.tokenSymbol}
+                      </span>
                     </>
                   )}
                 </div>
 
-                {tx.txHash && (() => {
-                  const explorerUrl = getExplorerTxUrl(tx.txHash);
-                  return explorerUrl ? (
-                    <a
-                      href={explorerUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mt-3 inline-flex items-center gap-1 text-xs text-mist/80 hover:text-white transition-colors"
-                      title={tx.txHash}
-                    >
-                      View on explorer ↗
-                    </a>
-                  ) : null;
-                })()}
+                {tx.txHash &&
+                  (() => {
+                    const explorerUrl = getExplorerTxUrl(tx.txHash);
+                    return explorerUrl ? (
+                      <a
+                        href={explorerUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-3 inline-flex items-center gap-1 text-xs text-mist/80 hover:text-white transition-colors"
+                        title={tx.txHash}
+                      >
+                        View on explorer ↗
+                      </a>
+                    ) : null;
+                  })()}
               </li>
             ))}
           </ul>

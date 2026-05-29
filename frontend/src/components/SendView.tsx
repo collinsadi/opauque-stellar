@@ -6,14 +6,25 @@ import {
   TransactionBuilder,
   nativeToScVal,
 } from "@stellar/stellar-sdk";
-import { computeStealthAddressAndViewTag, formatSol, hexToBytes } from "../lib/stealth";
+import {
+  computeStealthAddressAndViewTag,
+  formatXlm,
+  hexToBytes,
+} from "../lib/stealth";
 import { getNetworkPassphrase, getNetwork } from "../lib/chain";
 import { getExplorerTxUrl } from "../lib/explorer";
 import { useKeys } from "../context/KeysContext";
 import { useWallet } from "../hooks/useWallet";
 import { getConfigForCluster } from "../contracts/contract-config";
 import { SCHEME_ID_SECP256K1 } from "../lib/contracts";
-import { bytesToScVal, buildNativeTransferOperation, getHorizonServer, getSorobanServer, parseXlmToStroops, u64ToScVal } from "../lib/stellar";
+import {
+  bytesToScVal,
+  buildNativeTransferOperation,
+  getHorizonServer,
+  getSorobanServer,
+  parseXlmToStroops,
+  u64ToScVal,
+} from "../lib/stellar";
 import { deployedAddresses } from "../contracts/deployedAddresses";
 import { ProtocolStepper } from "./ProtocolStepper";
 import type { ProtocolStep } from "./ProtocolStepper";
@@ -23,7 +34,10 @@ import { useTxHistoryStore } from "../store/txHistoryStore";
 const STROOP_FEE_BUFFER = 100_000n;
 const isMetaAddress = (value: string): boolean => {
   const normalized = value.startsWith("0x") ? value : `0x${value}`;
-  return normalized.length === 2 + 66 * 2 && (normalized.startsWith("0x02") || normalized.startsWith("0x03"));
+  return (
+    normalized.length === 2 + 66 * 2 &&
+    (normalized.startsWith("0x02") || normalized.startsWith("0x03"))
+  );
 };
 
 export function SendView() {
@@ -56,7 +70,9 @@ export function SendView() {
         const account = await getHorizonServer().loadAccount(address);
         const native = account.balances.find((b) => b.asset_type === "native");
         const stroops = BigInt(
-          Math.round(parseFloat((native as { balance: string })?.balance ?? "0") * 1e7),
+          Math.round(
+            parseFloat((native as { balance: string })?.balance ?? "0") * 1e7,
+          ),
         );
         if (!cancelled) setActiveBalance(stroops);
       } catch {
@@ -72,7 +88,9 @@ export function SendView() {
 
   const maxSendableBalance = useMemo(() => {
     if (activeBalance == null) return null;
-    return activeBalance > STROOP_FEE_BUFFER ? activeBalance - STROOP_FEE_BUFFER : 0n;
+    return activeBalance > STROOP_FEE_BUFFER
+      ? activeBalance - STROOP_FEE_BUFFER
+      : 0n;
   }, [activeBalance]);
 
   const inputStroops = useMemo(() => {
@@ -87,13 +105,13 @@ export function SendView() {
 
   const isInsufficientBalance = Boolean(
     maxSendableBalance != null &&
-      inputStroops != null &&
-      inputStroops > 0n &&
-      inputStroops > maxSendableBalance,
+    inputStroops != null &&
+    inputStroops > 0n &&
+    inputStroops > maxSendableBalance,
   );
 
   const formattedMaxBalance =
-    maxSendableBalance != null ? formatSol(maxSendableBalance) : null;
+    maxSendableBalance != null ? formatXlm(maxSendableBalance) : null;
 
   const handleMaxAmount = () => {
     if (maxSendableBalance == null || maxSendableBalance === 0n) return;
@@ -132,16 +150,28 @@ export function SendView() {
     setSending(true);
     setSteps([]);
 
-    const addStep = (status: ProtocolStep["status"], label: string, detail?: string) => {
+    const addStep = (
+      status: ProtocolStep["status"],
+      label: string,
+      detail?: string,
+    ) => {
       const id = `step-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       setSteps((prev) => prev.concat([{ id, status, label, detail }]));
     };
 
     try {
       addStep("wait", "Deriving stealth destination…");
-      const { stealthAddress, stealthStellarAddress, ephemeralPubKey, metadata } =
-        computeStealthAddressAndViewTag(recipientMeta as `0x${string}`);
-      addStep("ok", "Derived one-time stealth Stellar account.", stealthStellarAddress);
+      const {
+        stealthAddress,
+        stealthStellarAddress,
+        ephemeralPubKey,
+        metadata,
+      } = computeStealthAddressAndViewTag(recipientMeta as `0x${string}`);
+      addStep(
+        "ok",
+        "Derived one-time stealth Stellar account.",
+        stealthStellarAddress,
+      );
 
       addStep("wait", "Building payment + announcement…");
       const passphrase = getNetworkPassphrase();
@@ -197,11 +227,14 @@ export function SendView() {
       pushTx({
         cluster: network,
         kind: "sent",
-        counterparty: stealthStellarAddress.slice(0, 6) + "…" + stealthStellarAddress.slice(-4),
-        amountLamports: value.toString(),
+        counterparty:
+          stealthStellarAddress.slice(0, 6) +
+          "…" +
+          stealthStellarAddress.slice(-4),
+        amountStroops: value.toString(),
         tokenSymbol: "XLM",
         tokenAddress: null,
-        amount: formatSol(value),
+        amount: formatXlm(value),
         txHash: send.hash,
       });
     } catch (e) {
@@ -210,7 +243,9 @@ export function SendView() {
       setSteps((prev) => {
         if (prev.length === 0) return prev;
         const last = prev[prev.length - 1];
-        return prev.slice(0, -1).concat([{ ...last, status: "error" as const, detail: msg }]);
+        return prev
+          .slice(0, -1)
+          .concat([{ ...last, status: "error" as const, detail: msg }]);
       });
       logPush("ui", `Send failed: ${msg}`);
     } finally {
@@ -230,12 +265,15 @@ export function SendView() {
     <motion.div className="card max-w-lg mx-auto">
       <h2 className="text-lg font-semibold text-white mb-1">Send XLM</h2>
       <p className="text-sm text-neutral-500 mb-6">
-        Send XLM to a stealth meta-address. The app derives a one-time Stellar account and publishes a Soroban announcement.
+        Send XLM to a stealth meta-address. The app derives a one-time Stellar
+        account and publishes a Soroban announcement.
       </p>
 
       <motion.div className="space-y-4">
         <div>
-          <label className="block text-sm text-neutral-400 mb-1">Recipient meta-address</label>
+          <label className="block text-sm text-neutral-400 mb-1">
+            Recipient meta-address
+          </label>
           <input
             type="text"
             value={recipient}
@@ -245,7 +283,9 @@ export function SendView() {
           />
         </div>
         <div>
-          <label className="block text-sm text-neutral-400 mb-1">Amount (XLM)</label>
+          <label className="block text-sm text-neutral-400 mb-1">
+            Amount (XLM)
+          </label>
           <div className="flex gap-2">
             <input
               type="text"
@@ -266,7 +306,9 @@ export function SendView() {
           {balanceLoading ? (
             <p className="text-xs text-neutral-500 mt-1">Loading balance…</p>
           ) : formattedMaxBalance != null ? (
-            <p className="text-xs text-neutral-500 mt-1">Available: {formattedMaxBalance} XLM</p>
+            <p className="text-xs text-neutral-500 mt-1">
+              Available: {formattedMaxBalance} XLM
+            </p>
           ) : null}
         </div>
 
@@ -274,7 +316,12 @@ export function SendView() {
         {txHash && (
           <p className="text-sm text-emerald-400">
             Sent —{" "}
-            <a href={getExplorerTxUrl(txHash)} target="_blank" rel="noreferrer" className="underline">
+            <a
+              href={getExplorerTxUrl(txHash)}
+              target="_blank"
+              rel="noreferrer"
+              className="underline"
+            >
               view transaction
             </a>
           </p>

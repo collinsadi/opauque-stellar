@@ -16,8 +16,10 @@ import { isClusterSupported } from "./contracts/contract-config.ts";
 import { LandingPage } from "./components/LandingPage.tsx";
 import { BrandingPage } from "./components/BrandingPage.tsx";
 import { StellarWalletProviders } from "./context/StellarWalletProviders.tsx";
+import { logExpectedArtifactHashes } from "./lib/artifactHashes.ts";
 
 console.log("[Opaque] App bootstrapping (Stellar)…");
+logExpectedArtifactHashes();
 
 const network = getConfiguredNetwork();
 if (!isClusterSupported(network)) {

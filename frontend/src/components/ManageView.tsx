@@ -20,6 +20,8 @@ import {
 } from "../lib/programs";
 import type { Tab } from "./Layout";
 import { ModalShell } from "./ModalShell";
+import { AdminPanel } from "./AdminPanel";
+import { ContractVersionPanelConnected } from "./ContractVersionPanel";
 
 // =============================================================================
 // Constants
@@ -413,7 +415,7 @@ export function ManageView({ onNavigate }: ManageViewProps = {}) {
   const [attestations, setAttestations] = useState<ManagedAttestation[]>([]);
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<{ msg: string; isError: boolean } | null>(null);
-  const [section, setSection] = useState<"schemas" | "attestations">("schemas");
+  const [section, setSection] = useState<"schemas" | "attestations" | "admin">("schemas");
   const [recipientSearch, setRecipientSearch] = useState("");
   const [attestationPage, setAttestationPage] = useState(1);
   const [schemaPage, setSchemaPage] = useState(1);
@@ -548,22 +550,24 @@ export function ManageView({ onNavigate }: ManageViewProps = {}) {
       </div>
 
       {/* Section tabs */}
-      <div className="flex gap-2">
-        {(["schemas", "attestations"] as const).map((s) => (
+      <div className="flex flex-wrap gap-2">
+        {(["schemas", "attestations", "admin"] as const).map((s) => (
           <button
             key={s}
             type="button"
             onClick={() => setSection(s)}
-            className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors capitalize flex items-center gap-1.5 ${
+            className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors flex items-center gap-1.5 ${
               section === s
                 ? "bg-sol-purple text-white"
                 : "bg-ink-900 border border-ink-700 text-mist hover:text-white"
             }`}
           >
-            {s === "schemas" ? "My Schemas" : "Attestations Issued"}
-            <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${section === s ? "bg-white/20" : "bg-ink-700"}`}>
-              {s === "schemas" ? mySchemas.length : attestations.length}
-            </span>
+            {s === "schemas" ? "My Schemas" : s === "attestations" ? "Attestations Issued" : "Admin"}
+            {s !== "admin" && (
+              <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${section === s ? "bg-white/20" : "bg-ink-700"}`}>
+                {s === "schemas" ? mySchemas.length : attestations.length}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -710,6 +714,16 @@ export function ManageView({ onNavigate }: ManageViewProps = {}) {
             </div>
           )}
         </>
+      )}
+
+      {/* ── Admin section ── */}
+      {section === "admin" && (
+        <div className="space-y-8">
+          <AdminPanel />
+          <div className="border-t border-ink-800 pt-6">
+            <ContractVersionPanelConnected />
+          </div>
+        </div>
       )}
 
       {/* Toast */}

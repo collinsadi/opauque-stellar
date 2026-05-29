@@ -1,16 +1,18 @@
 {
-  "name": "v2",
+  "name": "opaque-circuits-v2",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "private": true,
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "circom stealth_reputation.circom --r1cs --wasm --sym -o build/",
+    "setup": "snarkjs groth16 setup build/stealth_reputation.r1cs ../pot16_final.ptau build/stealth_reputation_0000.zkey",
+    "contribute": "snarkjs zkey contribute build/stealth_reputation_0000.zkey build/stealth_reputation_final.zkey --name='Opaque V2 Phase 1'",
+    "export-vkey": "snarkjs zkey export verificationkey build/stealth_reputation_final.zkey build/verification_key.json",
+    "test:regression": "node ../test/regression.mjs --version v2"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "dependencies": {
-    "circomlib": "^2.0.5"
+  "devDependencies": {
+    "circomlib": "^2.0.5",
+    "circomlibjs": "^0.1.7",
+    "snarkjs": "^0.7.5"
   }
 }

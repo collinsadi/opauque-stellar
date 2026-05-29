@@ -15,7 +15,7 @@ import { keccak_256 } from "@noble/hashes/sha3";
 import { hkdf } from "@noble/hashes/hkdf";
 import { sha256 } from "@noble/hashes/sha2";
 import { Keypair } from "@stellar/stellar-sdk";
-import { formatXlm } from "./stellar";
+import { formatStroopsToXlm } from "./decimalParser";
 
 const CURVE = secp256k1;
 const DOMAIN = "opaque-cash-v1";
@@ -31,7 +31,9 @@ export type DomainSeparationOpts = {
   purpose: string;
 };
 
-export function buildDomainSeparatedMessage(opts: DomainSeparationOpts): string {
+export function buildDomainSeparatedMessage(
+  opts: DomainSeparationOpts,
+): string {
   return [
     `--- Opaque Protocol Key Derivation ---`,
     `App: Opaque Stellar`,
@@ -66,7 +68,9 @@ export function deriveKeysFromSignature(signatureHex: Hex | string): {
   console.log("🔐 [Opaque] deriveKeysFromSignature");
   const sigBytes =
     typeof signatureHex === "string"
-      ? (signatureHex.startsWith("0x") ? signatureHex.slice(2) : signatureHex)
+      ? signatureHex.startsWith("0x")
+        ? signatureHex.slice(2)
+        : signatureHex
       : signatureHex;
   const sig = typeof sigBytes === "string" ? hexToBytes(sigBytes) : sigBytes;
   const okm = hkdf(sha256, sig, undefined, DOMAIN, 64);
@@ -82,7 +86,7 @@ export function deriveKeysFromSignature(signatureHex: Hex | string): {
  */
 export function keysToStealthMetaAddress(
   viewingKey: Uint8Array,
-  spendingKey: Uint8Array
+  spendingKey: Uint8Array,
 ): { V: Uint8Array; S: Uint8Array; metaAddress: Uint8Array } {
   const V = CURVE.getPublicKey(viewingKey, true);
   const S = CURVE.getPublicKey(spendingKey, true);
@@ -126,7 +130,7 @@ export function parseStealthMetaAddress(metaHex: Hex | string): {
 
 function sharedSecretSender(
   ephemeralPriv: Uint8Array,
-  viewPubKey: Uint8Array
+  viewPubKey: Uint8Array,
 ): Uint8Array {
   const P = CURVE.ProjectivePoint.fromHex(viewPubKey);
   const scalar = bytesToBigInt(ephemeralPriv) % CURVE.CURVE.n;
@@ -151,7 +155,7 @@ function hashSharedSecret(sharedSecret: Uint8Array): {
  */
 function stealthPointAndAddress(
   spendPubKey: Uint8Array,
-  sH: Uint8Array
+  sH: Uint8Array,
 ): { stealthAddress: string; stealthPubKeyUncompressed: Uint8Array } {
   const n = CURVE.CURVE.n;
   const sHBig = bytesToBigInt(sH);
@@ -172,7 +176,7 @@ function stealthPointAndAddress(
  * The stealth address is returned as a hex string for scanner compatibility.
  */
 export function computeStealthAddressAndViewTag(
-  recipientMetaAddressHex: Hex | string
+  recipientMetaAddressHex: Hex | string,
 ): {
   ephemeralPriv: Uint8Array;
   ephemeralPubKey: Uint8Array;
@@ -183,20 +187,28 @@ export function computeStealthAddressAndViewTag(
 } {
   console.log("🔐 [Opaque] computeStealthAddressAndViewTag");
   const { viewPubKey, spendPubKey } = parseStealthMetaAddress(
-    recipientMetaAddressHex as Hex
+    recipientMetaAddressHex as Hex,
   );
   const ephemeralPriv = CURVE.utils.randomPrivateKey();
   const ephemeralPubKey = CURVE.getPublicKey(ephemeralPriv, true);
 
   const shared = sharedSecretSender(ephemeralPriv, viewPubKey);
   const { sH, viewTag } = hashSharedSecret(shared);
-  const { stealthAddress, stealthPubKeyUncompressed } = stealthPointAndAddress(spendPubKey, sH);
-  const stealthStellarAddress = deriveStealthStellarAddress(stealthPubKeyUncompressed);
+  const { stealthAddress, stealthPubKeyUncompressed } = stealthPointAndAddress(
+    spendPubKey,
+    sH,
+  );
+  const stealthStellarAddress = deriveStealthStellarAddress(
+    stealthPubKeyUncompressed,
+  );
 
   const metadata = new Uint8Array(1);
   metadata[0] = viewTag;
 
-  console.log("🔐 [Opaque] Stealth address computed ✅", { stealth: stealthAddress.slice(0, 14) + "…", viewTag });
+  console.log("🔐 [Opaque] Stealth address computed ✅", {
+    stealth: stealthAddress.slice(0, 14) + "…",
+    viewTag,
+  });
   return {
     ephemeralPriv,
     ephemeralPubKey,
@@ -213,14 +225,16 @@ export function computeStealthAddressAndViewTag(
  */
 export function buildGhostAnnouncementPayload(
   recipientMetaAddressHex: Hex | string,
-  ephemeralPrivKeyHex: Hex | string
+  ephemeralPrivKeyHex: Hex | string,
 ): {
   stealthAddress: string;
   ephemeralPubKey: Uint8Array;
   metadata: Uint8Array;
   viewTag: number;
 } {
-  const { viewPubKey, spendPubKey } = parseStealthMetaAddress(recipientMetaAddressHex as Hex);
+  const { viewPubKey, spendPubKey } = parseStealthMetaAddress(
+    recipientMetaAddressHex as Hex,
+  );
   const h = (ephemeralPrivKeyHex as string).startsWith("0x")
     ? (ephemeralPrivKeyHex as string).slice(2)
     : ephemeralPrivKeyHex;
@@ -271,7 +285,9 @@ const ANNOUNCER_SALT = "opaque-announcer-v1";
 /**
  * Deterministic ephemeral scalar for the "Announcer" stealth signer.
  */
-export function deriveAnnouncerEphemeralKey(metaAddressHex: Hex | string): Uint8Array {
+export function deriveAnnouncerEphemeralKey(
+  metaAddressHex: Hex | string,
+): Uint8Array {
   const raw =
     typeof metaAddressHex === "string" && metaAddressHex.startsWith("0x")
       ? metaAddressHex.slice(2)
@@ -291,29 +307,42 @@ export function deriveAnnouncerEphemeralKey(metaAddressHex: Hex | string): Uint8
 }
 
 /** Format stroops as XLM. */
-export function formatSol(stroops: bigint): string {
-  return formatXlm(stroops);
+export function formatXlm(stroops: bigint): string {
+  return formatStroopsToXlm(stroops);
 }
 
-function deriveStealthStellarKeypair(stealthPubKeyUncompressed: Uint8Array): Keypair {
+/** @deprecated Use formatXlm instead */
+export const formatSol = formatXlm;
+
+function deriveStealthStellarKeypair(
+  stealthPubKeyUncompressed: Uint8Array,
+): Keypair {
   const domain = new TextEncoder().encode("opaque-stellar-stealth-v1");
-  const input = new Uint8Array(domain.length + stealthPubKeyUncompressed.length);
+  const input = new Uint8Array(
+    domain.length + stealthPubKeyUncompressed.length,
+  );
   input.set(domain, 0);
   input.set(stealthPubKeyUncompressed, domain.length);
   const seed = sha256(input);
   return Keypair.fromRawEd25519Seed(Buffer.from(seed.slice(0, 32)));
 }
 
-export function deriveStealthStellarAddress(stealthPubKeyUncompressed: Uint8Array): string {
+export function deriveStealthStellarAddress(
+  stealthPubKeyUncompressed: Uint8Array,
+): string {
   return deriveStealthStellarKeypair(stealthPubKeyUncompressed).publicKey();
 }
 
-export function deriveStealthStellarAddressFromStealthPrivKey(stealthPrivKey: Uint8Array): string {
+export function deriveStealthStellarAddressFromStealthPrivKey(
+  stealthPrivKey: Uint8Array,
+): string {
   const stealthPubKeyUncompressed = CURVE.getPublicKey(stealthPrivKey, false);
   return deriveStealthStellarAddress(stealthPubKeyUncompressed);
 }
 
-export function deriveStealthStellarKeypairFromStealthPrivKey(stealthPrivKey: Uint8Array): Keypair {
+export function deriveStealthStellarKeypairFromStealthPrivKey(
+  stealthPrivKey: Uint8Array,
+): Keypair {
   const stealthPubKeyUncompressed = CURVE.getPublicKey(stealthPrivKey, false);
   return deriveStealthStellarKeypair(stealthPubKeyUncompressed);
 }

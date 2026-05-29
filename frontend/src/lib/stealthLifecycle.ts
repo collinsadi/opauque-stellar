@@ -5,16 +5,16 @@
 import { nativeToScVal } from "@stellar/stellar-sdk";
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { useVaultStore } from "../store/vaultStore";
-import { useGhostAddressStore, type GhostEntry } from "../store/ghostAddressStore";
 import {
-  ANNOUNCER_CONTRACT_ID,
-  SCHEME_ID_SECP256K1,
-} from "./contracts";
+  useGhostAddressStore,
+  type GhostEntry,
+} from "../store/ghostAddressStore";
+import { ANNOUNCER_CONTRACT_ID, SCHEME_ID_SECP256K1 } from "./contracts";
 import {
   buildGhostAnnouncementPayload,
   deriveAnnouncerEphemeralKey,
   deriveStealthStellarKeypairFromStealthPrivKey,
-  formatSol,
+  formatXlm,
   type Hex,
   bytesToHex,
   hexToBytes,
@@ -29,7 +29,12 @@ import {
   u64ToScVal,
 } from "./stellar";
 import { deployedAddresses } from "../contracts/deployedAddresses";
-import { recordContractCall, recordScannerSync, recordRpcError } from "./monitoring";
+import {
+  recordContractCall,
+  recordScannerSync,
+  recordRpcError,
+} from "./monitoring";
+import { parseHorizonBalanceToStroops } from "./decimalParser";
 
 export interface StealthLifecycleWasm {
   check_announcement_view_tag_wasm: (
@@ -96,7 +101,8 @@ export class StealthScanner {
     wasm: StealthLifecycleWasm;
     getKeys: () => MasterKeys;
   }) {
-    this.announcerContractId = opts.announcerContractId ?? ANNOUNCER_CONTRACT_ID;
+    this.announcerContractId =
+      opts.announcerContractId ?? ANNOUNCER_CONTRACT_ID;
     this.wasm = opts.wasm;
     this.getKeys = opts.getKeys;
     console.log("👁️ [Opaque] StealthScanner created (Stellar)", {
@@ -123,9 +129,18 @@ export class StealthScanner {
       const server = getSorobanServer();
       const latest = await server.getLatestLedger();
       const start = Math.max(1, latest.sequence - 17_280);
-      await this.fetchEvents(start, latest.sequence, keys.viewPrivKey, keys.spendPubKey);
+      await this.fetchEvents(
+        start,
+        latest.sequence,
+        keys.viewPrivKey,
+        keys.spendPubKey,
+      );
       this.lastLedger = latest.sequence;
-      this.setProgress({ status: "watching", lastProcessedLedger: latest.sequence, error: null });
+      this.setProgress({
+        status: "watching",
+        lastProcessedLedger: latest.sequence,
+        error: null,
+      });
       recordScannerSync({
         success: true,
         durationMs: Date.now() - startTime,
@@ -171,7 +186,12 @@ export class StealthScanner {
       const latest = await server.getLatestLedger();
       if (latest.sequence > this.lastLedger) {
         const eventsStart = this.lastLedger + 1;
-        await this.fetchEvents(eventsStart, latest.sequence, keys.viewPrivKey, keys.spendPubKey);
+        await this.fetchEvents(
+          eventsStart,
+          latest.sequence,
+          keys.viewPrivKey,
+          keys.spendPubKey,
+        );
         this.lastLedger = latest.sequence;
         this.setProgress({ lastProcessedLedger: latest.sequence });
         recordScannerSync({
@@ -184,7 +204,11 @@ export class StealthScanner {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      recordRpcError({ provider: "Soroban RPC", method: "pollOnce", error: msg });
+      recordRpcError({
+        provider: "Soroban RPC",
+        method: "pollOnce",
+        error: msg,
+      });
       this.setProgress({ status: "error", error: msg });
     }
   }
@@ -202,7 +226,9 @@ export class StealthScanner {
       const page = await server.getEvents({
         startLedger,
         endLedger,
-        filters: [{ type: "contract", contractIds: [this.announcerContractId] }],
+        filters: [
+          { type: "contract", contractIds: [this.announcerContractId] },
+        ],
         limit: EVENT_PAGE,
         cursor,
       });
@@ -217,7 +243,12 @@ export class StealthScanner {
   }
 
   private tryParseEvent(
-    ev: { txHash?: string; ledger?: number; value?: unknown; contractId?: unknown },
+    ev: {
+      txHash?: string;
+      ledger?: number;
+      value?: unknown;
+      contractId?: unknown;
+    },
     viewPrivKey: Uint8Array,
     spendPubKey: Uint8Array,
   ): void {
@@ -228,17 +259,25 @@ export class StealthScanner {
       const schemeId = BigInt(String(v.scheme_id ?? v.schemeId ?? 0));
       if (schemeId !== SCHEME_ID_SECP256K1) return;
 
-      const stealthBytes = decodeEventBytes(v.stealth_address ?? v.stealthAddress);
-      const ephemeralPubKey = decodeEventBytes(v.ephemeral_pub_key ?? v.ephemeralPubKey);
+      const stealthBytes = decodeEventBytes(
+        v.stealth_address ?? v.stealthAddress,
+      );
+      const ephemeralPubKey = decodeEventBytes(
+        v.ephemeral_pub_key ?? v.ephemeralPubKey,
+      );
       const metadata = decodeEventBytes(v.metadata);
-      if (!stealthBytes || !ephemeralPubKey || ephemeralPubKey.length !== 33) return;
+      if (!stealthBytes || !ephemeralPubKey || ephemeralPubKey.length !== 33)
+        return;
 
       const viewTag = metadata && metadata.length > 0 ? metadata[0] : 0;
       const stealthAddress = "0x" + bytesToHex(stealthBytes);
 
       if (
-        this.wasm.check_announcement_view_tag_wasm(viewTag, viewPrivKey, ephemeralPubKey) ===
-        "NoMatch"
+        this.wasm.check_announcement_view_tag_wasm(
+          viewTag,
+          viewPrivKey,
+          ephemeralPubKey,
+        ) === "NoMatch"
       ) {
         return;
       }
@@ -269,7 +308,7 @@ export class StealthScanner {
         ephemeralPubKeyHex: ("0x" + bytesToHex(ephemeralPubKey)) as Hex,
         blockNumber: BigInt(ev.ledger ?? 0),
         txHash: ev.txHash ?? "",
-        amountWei: 0n,
+        amountStroops: 0n,
         isSpent: false,
       });
     } catch {
@@ -300,10 +339,12 @@ export async function refreshBalances(): Promise<void> {
     try {
       const account = await horizon.loadAccount(stellarAddr);
       const native = account.balances.find((b) => b.asset_type === "native");
-      const stroops = BigInt(
-        Math.round(parseFloat((native as { balance: string })?.balance ?? "0") * 1e7),
+      const stroops = parseHorizonBalanceToStroops(
+        (native as { balance: string })?.balance,
       );
-      useVaultStore.getState().upsertEntry({ ...entry, amountWei: stroops });
+      useVaultStore
+        .getState()
+        .upsertEntry({ ...entry, amountStroops: stroops });
     } catch {
       // account may not exist yet
     }
@@ -311,7 +352,11 @@ export async function refreshBalances(): Promise<void> {
 }
 
 export type WithdrawalStepTag = "CALC" | "SIGN" | "SEND" | "DONE";
-export type WithdrawalStatus = { tag: WithdrawalStepTag; label: string; detail?: string };
+export type WithdrawalStatus = {
+  tag: WithdrawalStepTag;
+  label: string;
+  detail?: string;
+};
 export type WithdrawalStatusCallback = (status: WithdrawalStatus) => void;
 
 export function deriveStealthPrivateKeyFromGhostEntry(
@@ -345,7 +390,9 @@ export function getAnnouncerAccount(
     ephemeralPubKey,
   );
   const hexKey = ("0x" + bytesToHex(announcerPrivKeyBytes)) as Hex;
-  const keypair = deriveStealthStellarKeypairFromStealthPrivKey(announcerPrivKeyBytes);
+  const keypair = deriveStealthStellarKeypairFromStealthPrivKey(
+    announcerPrivKeyBytes,
+  );
   return { address: keypair.publicKey(), privateKey: hexKey };
 }
 
@@ -372,16 +419,25 @@ export async function executeGhostOnchainAnnouncement(
   ) => onProgress?.({ id, label, status, detail });
 
   report("verify", "Verifying ghost address and ephemeral key…", "wait");
-  const payload = buildGhostAnnouncementPayload(metaAddressHex, ephemeralPrivKeyHex);
+  const payload = buildGhostAnnouncementPayload(
+    metaAddressHex,
+    ephemeralPrivKeyHex,
+  );
   report("verify", "Ghost address matches stored ephemeral key.", "ok");
 
-  const announcerAcc = getAnnouncerAccount(wasm, getMasterKeys(), metaAddressHex);
+  const announcerAcc = getAnnouncerAccount(
+    wasm,
+    getMasterKeys(),
+    metaAddressHex,
+  );
   const announcerKeypair = deriveStealthStellarKeypairFromStealthPrivKey(
     hexToBytes(announcerAcc.privateKey.slice(2)),
   );
 
   const stealthAddrBytes = hexToBytes(
-    ghostStealthAddress.startsWith("0x") ? ghostStealthAddress.slice(2) : ghostStealthAddress,
+    ghostStealthAddress.startsWith("0x")
+      ? ghostStealthAddress.slice(2)
+      : ghostStealthAddress,
   );
 
   report("announce", "Publishing on-chain announcement…", "wait");
@@ -402,7 +458,9 @@ export async function executeGhostOnchainAnnouncement(
   return { announceSignature: hash };
 }
 
-type NativeOrToken = { type: "native" } | { type: "token"; tokenAddress: string };
+type NativeOrToken =
+  | { type: "native" }
+  | { type: "token"; tokenAddress: string };
 
 export async function withdrawFromGhostAddress(
   ghostAddress: string,
@@ -440,12 +498,19 @@ export async function executeStealthWithdrawal(
   onStatus: WithdrawalStatusCallback,
 ): Promise<string> {
   const stealthPrivBytes = hexToBytes(
-    stealthPrivKeyHex.startsWith("0x") ? stealthPrivKeyHex.slice(2) : stealthPrivKeyHex,
+    stealthPrivKeyHex.startsWith("0x")
+      ? stealthPrivKeyHex.slice(2)
+      : stealthPrivKeyHex,
   );
-  const stealthKeypair = deriveStealthStellarKeypairFromStealthPrivKey(stealthPrivBytes);
+  const stealthKeypair =
+    deriveStealthStellarKeypairFromStealthPrivKey(stealthPrivBytes);
   const from = stealthKeypair.publicKey();
 
-  onStatus({ tag: "CALC", label: "Checking stealth balance", detail: from.slice(0, 8) + "…" });
+  onStatus({
+    tag: "CALC",
+    label: "Checking stealth balance",
+    detail: from.slice(0, 8) + "…",
+  });
 
   let quote: Awaited<ReturnType<typeof getNativeWithdrawalQuote>>;
   try {
@@ -459,18 +524,18 @@ export async function executeStealthWithdrawal(
 
   if (quote.spendableStroops <= 0n) {
     throw new Error(
-      `Insufficient balance. Retained ${formatSol(
+      `Insufficient balance. Retained ${formatXlm(
         quote.minimumBalanceStroops,
-      )} XLM reserve and ${formatSol(quote.feeStroops)} XLM fee.`,
+      )} XLM reserve and ${formatXlm(quote.feeStroops)} XLM fee.`,
     );
   }
 
   onStatus({
     tag: "SIGN",
     label: "Sweeping XLM",
-    detail: `${formatSol(quote.spendableStroops)} XLM via ${
+    detail: `${formatXlm(quote.spendableStroops)} XLM via ${
       quote.destinationExists ? "payment" : "create-account"
-    }; retained ${formatSol(quote.minimumBalanceStroops)} reserve + ${formatSol(quote.feeStroops)} fee`,
+    }; retained ${formatXlm(quote.minimumBalanceStroops)} reserve + ${formatXlm(quote.feeStroops)} fee`,
   });
 
   onStatus({ tag: "SEND", label: "Broadcasting payment" });
@@ -486,4 +551,4 @@ export async function executeStealthWithdrawal(
   return hash;
 }
 
-export { formatSol };
+export { formatXlm };

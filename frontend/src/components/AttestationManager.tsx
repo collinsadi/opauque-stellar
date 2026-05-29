@@ -17,10 +17,7 @@ import { getExplorerTxUrl } from "../lib/explorer";
 import { parseFieldDefs } from "../lib/schema";
 import { encodeAttestationData } from "../lib/attestationV2";
 import { computeStealthAddressAndViewTag } from "../lib/stealth";
-import {
-  hexToBytes,
-  invokeAttest,
-} from "../lib/programs";
+import { hexToBytes, invokeAttest } from "../lib/programs";
 import { announceStealthTransfer, SCHEME_ID_SECP256K1 } from "../lib/contracts";
 
 // =============================================================================
@@ -31,8 +28,15 @@ interface AttestationManagerProps {
   onNavigate?: (tab: Tab) => void;
 }
 
-export function AttestationManager({ onNavigate }: AttestationManagerProps = {}) {
-  const { address: walletAddress, publicKey, signTransaction, connection } = useWallet();
+export function AttestationManager({
+  onNavigate,
+}: AttestationManagerProps = {}) {
+  const {
+    address: walletAddress,
+    publicKey,
+    signTransaction,
+    connection,
+  } = useWallet();
   const pushTx = useTxHistoryStore((s) => s.push);
   const cluster = getCluster();
   const isFetchingSchemas = useSchemaStore((s) => s.isFetchingSchemas);
@@ -42,7 +46,7 @@ export function AttestationManager({ onNavigate }: AttestationManagerProps = {})
     return Object.values(schemaMap).filter(
       (s) =>
         !s.deprecated &&
-        (s.authority === walletAddress || s.delegates.includes(walletAddress))
+        (s.authority === walletAddress || s.delegates.includes(walletAddress)),
     );
   }, [schemaMap, walletAddress]);
 
@@ -54,7 +58,9 @@ export function AttestationManager({ onNavigate }: AttestationManagerProps = {})
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [txSig, setTxSig] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [resolvedStealthAddress, setResolvedStealthAddress] = useState<string | null>(null);
+  const [resolvedStealthAddress, setResolvedStealthAddress] = useState<
+    string | null
+  >(null);
 
   const uid = useId();
 
@@ -67,7 +73,9 @@ export function AttestationManager({ onNavigate }: AttestationManagerProps = {})
   }, [schemas, selectedSchemaId]);
 
   const selectedSchema = schemas.find((s) => s.schemaId === selectedSchemaId);
-  const parsedFields = selectedSchema ? parseFieldDefs(selectedSchema.fieldDefinitions) : [];
+  const parsedFields = selectedSchema
+    ? parseFieldDefs(selectedSchema.fieldDefinitions)
+    : [];
 
   const canSubmit =
     walletAddress != null &&
@@ -81,7 +89,7 @@ export function AttestationManager({ onNavigate }: AttestationManagerProps = {})
   };
 
   const resolveStealthAddressHash = (
-    input: string
+    input: string,
   ): {
     stealthHashBytes: Uint8Array;
     stealthAddressHex?: string;
@@ -94,10 +102,16 @@ export function AttestationManager({ onNavigate }: AttestationManagerProps = {})
 
     // Meta-address (66 bytes): derive stealth address and keep ephemeral key for announcement.
     if (bytes.length === 66) {
-      const { stealthAddress, ephemeralPubKey, viewTag } = computeStealthAddressAndViewTag(normalized as `0x${string}`);
+      const { stealthAddress, ephemeralPubKey, viewTag } =
+        computeStealthAddressAndViewTag(normalized as `0x${string}`);
       const stealthAddressBytes = hexToBytes(stealthAddress);
       const stealthHashBytes = keccak_256(stealthAddressBytes);
-      return { stealthHashBytes, stealthAddressHex: stealthAddress, ephemeralPubKey, viewTag };
+      return {
+        stealthHashBytes,
+        stealthAddressHex: stealthAddress,
+        ephemeralPubKey,
+        viewTag,
+      };
     }
 
     // Stealth address (20 bytes): hash directly. No ephemeral key available.
@@ -112,7 +126,7 @@ export function AttestationManager({ onNavigate }: AttestationManagerProps = {})
     }
 
     throw new Error(
-      "Recipient must be a 66-byte meta-address, 20-byte stealth address, or 32-byte precomputed hash."
+      "Recipient must be a 66-byte meta-address, 20-byte stealth address, or 32-byte precomputed hash.",
     );
   };
 
@@ -126,12 +140,13 @@ export function AttestationManager({ onNavigate }: AttestationManagerProps = {})
 
       const schemaIdBytes = hexToBytes(selectedSchema.schemaId);
 
-      const { stealthHashBytes, stealthAddressHex, ephemeralPubKey, viewTag } = resolveStealthAddressHash(recipientInput);
+      const { stealthHashBytes, stealthAddressHex, ephemeralPubKey, viewTag } =
+        resolveStealthAddressHash(recipientInput);
       setResolvedStealthAddress(stealthAddressHex ?? null);
 
       const attestationData = encodeAttestationData(
         fieldValues,
-        parsedFields.map((f) => ({ name: f.name, type: f.type }))
+        parsedFields.map((f) => ({ name: f.name, type: f.type })),
       );
 
       let expirySlotNum = 0;
@@ -169,7 +184,7 @@ export function AttestationManager({ onNavigate }: AttestationManagerProps = {})
         try {
           const metadata = new Uint8Array(2);
           metadata[0] = viewTag;
-          metadata[1] = 0xB2;
+          metadata[1] = 0xb2;
           await announceStealthTransfer({
             sourcePublicKey: issuer,
             schemeId: SCHEME_ID_SECP256K1,
@@ -181,7 +196,10 @@ export function AttestationManager({ onNavigate }: AttestationManagerProps = {})
         } catch (announceErr) {
           // Announcement failure is non-fatal — attestation is still on-chain.
           // The recipient can still discover it if they have the stealth address stored.
-          console.warn("[AttestationManager] Announcement failed (non-fatal):", announceErr);
+          console.warn(
+            "[AttestationManager] Announcement failed (non-fatal):",
+            announceErr,
+          );
         }
       }
 
@@ -193,15 +211,16 @@ export function AttestationManager({ onNavigate }: AttestationManagerProps = {})
           cluster,
           kind: "trait",
           counterparty: recipientInput.trim(),
-          amountLamports: "0",
-          tokenSymbol: "SOL",
+          amountStroops: "0",
+          tokenSymbol: "XLM",
           tokenAddress: null,
           amount: "0",
           txHash: signature,
         });
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Failed to issue attestation";
+      const msg =
+        e instanceof Error ? e.message : "Failed to issue attestation";
       setError(msg);
       console.error("[AttestationManager] Issue attestation failed:", e);
     } finally {
@@ -213,14 +232,25 @@ export function AttestationManager({ onNavigate }: AttestationManagerProps = {})
     return (
       <div className="flex flex-col items-center justify-center gap-6 py-12 px-4 text-center">
         <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center">
-          <svg className="w-6 h-6 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          <svg
+            className="w-6 h-6 text-green-400"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M5 13l4 4L19 7"
+            />
           </svg>
         </div>
         <div>
           <p className="text-white font-semibold text-lg">Attestation issued</p>
           <p className="text-mist text-sm mt-1">
-            The recipient's scanner will detect this attestation on the next scan.
+            The recipient's scanner will detect this attestation on the next
+            scan.
           </p>
           <a
             href={getExplorerTxUrl(txSig)}
@@ -271,7 +301,10 @@ export function AttestationManager({ onNavigate }: AttestationManagerProps = {})
 
       {/* Schema selector */}
       <section className="space-y-2">
-        <label htmlFor={`${uid}-schema`} className="block text-sm font-medium text-white">
+        <label
+          htmlFor={`${uid}-schema`}
+          className="block text-sm font-medium text-white"
+        >
           Schema <span className="text-red-400">*</span>
         </label>
         {isFetchingSchemas ? (
@@ -314,15 +347,22 @@ export function AttestationManager({ onNavigate }: AttestationManagerProps = {})
         )}
         {selectedSchema && (
           <p className="text-xs text-mist font-mono bg-ink-900/50 rounded-lg px-3 py-2 border border-ink-800">
-            Fields: <span className="text-sol-purple">{selectedSchema.fieldDefinitions}</span>
+            Fields:{" "}
+            <span className="text-sol-purple">
+              {selectedSchema.fieldDefinitions}
+            </span>
           </p>
         )}
       </section>
 
       {/* Recipient meta-address / stealth address */}
       <section className="space-y-2">
-        <label htmlFor={`${uid}-hash`} className="block text-sm font-medium text-white">
-          Recipient (Meta-Address or Stealth Address) <span className="text-red-400">*</span>
+        <label
+          htmlFor={`${uid}-hash`}
+          className="block text-sm font-medium text-white"
+        >
+          Recipient (Meta-Address or Stealth Address){" "}
+          <span className="text-red-400">*</span>
         </label>
         <input
           id={`${uid}-hash`}
@@ -333,8 +373,8 @@ export function AttestationManager({ onNavigate }: AttestationManagerProps = {})
           className="w-full rounded-xl border border-ink-700 bg-ink-900 px-4 py-3 text-white placeholder-ink-500 focus:outline-none focus:border-sol-purple text-sm font-mono"
         />
         <p className="text-xs text-mist">
-          If you provide a meta-address, a stealth address is derived first. The attestation stores
-          only keccak256(stealthAddress) on-chain.
+          If you provide a meta-address, a stealth address is derived first. The
+          attestation stores only keccak256(stealthAddress) on-chain.
         </p>
         {resolvedStealthAddress && (
           <p className="text-xs text-mist font-mono bg-ink-900/50 rounded-lg px-3 py-2 border border-ink-800">
@@ -358,7 +398,9 @@ export function AttestationManager({ onNavigate }: AttestationManagerProps = {})
                 {field.type === "bool" ? (
                   <select
                     value={fieldValues[field.name] ?? "true"}
-                    onChange={(e) => handleFieldChange(field.name, e.target.value)}
+                    onChange={(e) =>
+                      handleFieldChange(field.name, e.target.value)
+                    }
                     className="w-full rounded-xl border border-ink-700 bg-ink-900 px-4 py-2.5 text-white focus:outline-none focus:border-sol-purple text-sm"
                   >
                     <option value="true">true</option>
@@ -370,7 +412,9 @@ export function AttestationManager({ onNavigate }: AttestationManagerProps = {})
                     min={0}
                     placeholder={`${field.name} (${field.type})`}
                     value={fieldValues[field.name] ?? ""}
-                    onChange={(e) => handleFieldChange(field.name, e.target.value)}
+                    onChange={(e) =>
+                      handleFieldChange(field.name, e.target.value)
+                    }
                     className="w-full rounded-xl border border-ink-700 bg-ink-900 px-4 py-2.5 text-white placeholder-ink-500 focus:outline-none focus:border-sol-purple text-sm"
                   />
                 )}
@@ -401,7 +445,8 @@ export function AttestationManager({ onNavigate }: AttestationManagerProps = {})
               className="w-full rounded-xl border border-ink-700 bg-ink-900 px-4 py-3 text-white focus:outline-none focus:border-sol-purple text-sm"
             />
             <p className="text-xs text-mist">
-              This is converted to a ledger sequence at submit time (~5s per ledger on testnet).
+              This is converted to a ledger sequence at submit time (~5s per
+              ledger on testnet).
             </p>
           </div>
         )}

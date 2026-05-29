@@ -6,7 +6,12 @@ use wasm_bindgen::prelude::*;
 use js_sys;
 use k256::{ecdsa::SigningKey, PublicKey};
 use alloy_primitives::Address;
+use log::{info, warn};
 use std::str::FromStr;
+
+/// The only event schema version this scanner understands.
+/// Announcements carrying a different version are skipped with a console warning.
+const SUPPORTED_EVENT_VERSION: u32 = 1;
 
 mod scanner;
 mod attestation;
@@ -21,6 +26,7 @@ use scanner::{
 #[wasm_bindgen(start)]
 pub fn init() {
     console_error_panic_hook::set_once();
+    env_logger::init();
 }
 
 // =============================================================================
@@ -39,12 +45,27 @@ fn bytes_to_signing_key(bytes: &[u8]) -> Result<SigningKey, JsValue> {
 }
 
 /// Converts a compressed public key (33 bytes) to PublicKey
-fn bytes_to_public_key(bytes: &[u8]) -> Result<PublicKey, JsValue> {
+/// Validates and decodes a 33-byte compressed secp256k1 public key.
+///
+/// Issue #53: rejects the wrong length, a non-compressed prefix (anything other
+/// than `0x02`/`0x03`), and encodings that do not correspond to an on-curve point.
+/// Returns a stable `&str` error so the logic is unit-testable off-wasm (the
+/// `JsValue` wrapper below is the only wasm-specific part).
+fn parse_compressed_pubkey(bytes: &[u8]) -> Result<PublicKey, &'static str> {
     if bytes.len() != 33 {
-        return Err(JsValue::from_str("PublicKey must be 33 bytes (compressed)"));
+        return Err("PublicKey must be 33 bytes (compressed)");
+    }
+    // Compressed secp256k1 points must start with 0x02 (even Y) or 0x03 (odd Y).
+    match bytes[0] {
+        0x02 | 0x03 => {}
+        _ => return Err("compressed PublicKey must start with 0x02 or 0x03"),
     }
     PublicKey::from_sec1_bytes(bytes)
-        .map_err(|e| JsValue::from_str(&format!("Invalid public key: {}", e)))
+        .map_err(|_| "Invalid public key: not a canonical secp256k1 point")
+}
+
+fn bytes_to_public_key(bytes: &[u8]) -> Result<PublicKey, JsValue> {
+    parse_compressed_pubkey(bytes).map_err(JsValue::from_str)
 }
 
 /// Converts an Address to a hex string
@@ -221,6 +242,19 @@ pub fn scan_attestations_wasm(
 
     let mut announcements = Vec::with_capacity(raw_anns.len());
     for ann in &raw_anns {
+        // Issue #50: skip announcements whose event_version is present but unsupported.
+        if let Some(ver) = ann["eventVersion"].as_u64().map(|v| v as u32) {
+            if ver != SUPPORTED_EVENT_VERSION {
+                #[cfg(target_arch = "wasm32")]
+                web_sys::console::warn_1(
+                    &format!("Skipping announcement with unsupported event_version {ver}; expected {SUPPORTED_EVENT_VERSION}").into(),
+                );
+                #[cfg(not(target_arch = "wasm32"))]
+                eprintln!("Skipping announcement with unsupported event_version {ver}; expected {SUPPORTED_EVENT_VERSION}");
+                continue;
+            }
+        }
+
         let stealth_addr_str = ann["stealthAddress"].as_str().unwrap_or_default();
         let stealth_address = hex_to_address(stealth_addr_str)?;
         let view_tag = ann["viewTag"].as_u64().unwrap_or(0) as u8;
@@ -229,7 +263,21 @@ pub fn scan_attestations_wasm(
         let eph_clean = if eph_hex.starts_with("0x") { &eph_hex[2..] } else { eph_hex };
         let eph_bytes = hex::decode(eph_clean)
             .map_err(|e| JsValue::from_str(&format!("Invalid ephemeral pubkey hex: {}", e)))?;
-        let ephemeral_pubkey = bytes_to_public_key(&eph_bytes)?;
+
+        // Issue #53: skip announcements with an invalid/non-compressed public key
+        // non-fatally so one bad event does not abort the entire scan.
+        let ephemeral_pubkey = match bytes_to_public_key(&eph_bytes) {
+            Ok(pk) => pk,
+            Err(_) => {
+                #[cfg(target_arch = "wasm32")]
+                web_sys::console::warn_1(
+                    &format!("Skipping announcement with invalid ephemeral public key (bad prefix or non-canonical point)").into(),
+                );
+                #[cfg(not(target_arch = "wasm32"))]
+                eprintln!("Skipping announcement with invalid ephemeral public key (bad prefix or non-canonical point)");
+                continue;
+            }
+        };
 
         let meta_hex = ann["metadata"].as_str().unwrap_or_default();
         let meta_clean = if meta_hex.starts_with("0x") { &meta_hex[2..] } else { meta_hex };
@@ -422,6 +470,19 @@ pub fn scan_attestations_v2_wasm(
 
     let mut announcements = Vec::with_capacity(raw_anns.len());
     for ann in &raw_anns {
+        // Issue #50: skip unsupported event schema versions with telemetry.
+        if let Some(ver) = ann["eventVersion"].as_u64().map(|v| v as u32) {
+            if ver != SUPPORTED_EVENT_VERSION {
+                #[cfg(target_arch = "wasm32")]
+                web_sys::console::warn_1(
+                    &format!("Skipping V2 announcement with unsupported event_version {ver}; expected {SUPPORTED_EVENT_VERSION}").into(),
+                );
+                #[cfg(not(target_arch = "wasm32"))]
+                eprintln!("Skipping V2 announcement with unsupported event_version {ver}; expected {SUPPORTED_EVENT_VERSION}");
+                continue;
+            }
+        }
+
         let stealth_addr_str = ann["stealthAddress"].as_str().unwrap_or_default();
         let stealth_address = hex_to_address(stealth_addr_str)?;
         let view_tag = ann["viewTag"].as_u64().unwrap_or(0) as u8;
@@ -429,7 +490,21 @@ pub fn scan_attestations_v2_wasm(
         let eph_clean = if eph_hex.starts_with("0x") { &eph_hex[2..] } else { eph_hex };
         let eph_bytes = hex::decode(eph_clean)
             .map_err(|e| JsValue::from_str(&format!("Invalid ephemeral pubkey: {}", e)))?;
-        let ephemeral_pubkey = bytes_to_public_key(&eph_bytes)?;
+
+        // Issue #53: skip announcements with invalid compressed key non-fatally.
+        let ephemeral_pubkey = match bytes_to_public_key(&eph_bytes) {
+            Ok(pk) => pk,
+            Err(_) => {
+                #[cfg(target_arch = "wasm32")]
+                web_sys::console::warn_1(
+                    &format!("Skipping V2 announcement with invalid ephemeral public key").into(),
+                );
+                #[cfg(not(target_arch = "wasm32"))]
+                eprintln!("Skipping V2 announcement with invalid ephemeral public key");
+                continue;
+            }
+        };
+
         let meta_hex = ann["metadata"].as_str().unwrap_or_default();
         let meta_clean = if meta_hex.starts_with("0x") { &meta_hex[2..] } else { meta_hex };
         let metadata = hex::decode(meta_clean).unwrap_or_default();
@@ -615,4 +690,50 @@ fn bytes_to_decimal_string(bytes: &[u8; 32]) -> String {
     // For field elements, use the hex representation as-is for the circuit
     // (circom accepts both hex and decimal)
     format!("0x{}", bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>())
+}
+
+#[cfg(test)]
+mod pubkey_validation_tests {
+    use super::parse_compressed_pubkey;
+
+    // secp256k1 generator point in compressed form (prefix 0x02 = even Y).
+    const GENERATOR_COMPRESSED: [u8; 33] = [
+        0x02, 0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC, 0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87,
+        0x0B, 0x07, 0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9, 0x59, 0xF2, 0x81, 0x5B, 0x16,
+        0xF8, 0x17, 0x98,
+    ];
+
+    #[test]
+    fn accepts_valid_compressed_key() {
+        assert!(parse_compressed_pubkey(&GENERATOR_COMPRESSED).is_ok());
+    }
+
+    #[test]
+    fn rejects_uncompressed_prefix() {
+        // 0x04 is the uncompressed-point marker — invalid for a 33-byte buffer.
+        let mut key = GENERATOR_COMPRESSED;
+        key[0] = 0x04;
+        assert!(parse_compressed_pubkey(&key).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_prefix() {
+        let mut key = GENERATOR_COMPRESSED;
+        key[0] = 0x00;
+        assert!(parse_compressed_pubkey(&key).is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_point_bytes() {
+        // Valid compressed prefix (0x02) but an x-coordinate (all 0xFF) that is
+        // not a canonical point on the curve — must be rejected, not skipped silently.
+        let mut key = [0xFFu8; 33];
+        key[0] = 0x02;
+        assert!(parse_compressed_pubkey(&key).is_err());
+    }
+
+    #[test]
+    fn rejects_wrong_length() {
+        assert!(parse_compressed_pubkey(&GENERATOR_COMPRESSED[..32]).is_err());
+    }
 }

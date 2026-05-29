@@ -4,6 +4,7 @@ members = [
     "contracts/stealth-announcer",
     "contracts/groth16-verifier",
     "contracts/reputation-verifier",
+    "contracts/opaque-schema-core",
     "contracts/schema-registry",
     "contracts/attestation-engine-v2",
 ]

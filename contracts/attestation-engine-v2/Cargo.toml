@@ -10,6 +10,9 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 soroban-sdk = { workspace = true }
 sha2 = { version = "0.10", default-features = false }
+opaque-schema-core = { path = "../opaque-schema-core", default-features = false }
+schema-registry = { path = "../schema-registry" }
+
 [dev_dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
 schema-registry = { path = "../schema-registry" }
