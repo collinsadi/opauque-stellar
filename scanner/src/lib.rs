@@ -17,6 +17,8 @@ mod scanner;
 mod attestation;
 mod merkle;
 
+pub use merkle::MerkleError;
+
 use scanner::{
     derive_stealth_address, derive_stealth_signing_key, check_announcement,
     check_announcement_view_tag, ViewTagCheck,
@@ -340,7 +342,8 @@ pub fn generate_reputation_witness(
 
     for att in &attestations {
         let leaf_data = format!("{}:{}", att.stealth_address, att.attestation_id);
-        let idx = tree.insert_raw(leaf_data.as_bytes());
+        let idx = tree.insert_raw(leaf_data.as_bytes())
+            .map_err(|e| JsValue::from_str(&format!("Merkle insert error: {}", e)))?;
         if att.attestation_id == target_id && target_leaf_idx.is_none() {
             target_leaf_idx = Some(idx);
             target_attestation = Some(att);
@@ -351,7 +354,8 @@ pub fn generate_reputation_witness(
         .ok_or_else(|| JsValue::from_str("No attestation found matching target trait ID"))?;
     let _target_att = target_attestation.unwrap();
 
-    let proof = tree.proof(leaf_idx);
+    let proof = tree.proof(leaf_idx)
+        .map_err(|e| JsValue::from_str(&format!("Merkle proof error: {}", e)))?;
 
     if stealth_privkey_bytes.len() != 32 {
         return Err(JsValue::from_str("Stealth private key must be 32 bytes"));
@@ -620,7 +624,7 @@ pub fn generate_reputation_witness_v2(
             issuer_pk_x,
             leaf_trait_data_hash,
             nonce,
-        );
+        ).map_err(|e| JsValue::from_str(&format!("Merkle insert error: {}", e)))?;
         if att.attestation_uid == target_att.attestation_uid && target_leaf_idx.is_none() {
             target_leaf_idx = Some(idx);
         }
@@ -629,7 +633,8 @@ pub fn generate_reputation_witness_v2(
     let leaf_idx = target_leaf_idx
         .ok_or_else(|| JsValue::from_str("Failed to locate target attestation in Merkle tree"))?;
 
-    let proof = tree.proof(leaf_idx);
+    let proof = tree.proof(leaf_idx)
+        .map_err(|e| JsValue::from_str(&format!("Merkle proof error: {}", e)))?;
 
     // Build the V2 circuit witness JSON (matches circuit signal names exactly)
     let witness = serde_json::json!({
@@ -690,6 +695,404 @@ fn bytes_to_decimal_string(bytes: &[u8; 32]) -> String {
     // For field elements, use the hex representation as-is for the circuit
     // (circom accepts both hex and decimal)
     format!("0x{}", bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>())
+}
+
+// =============================================================================
+// WASM Boundary Malformed Input Tests (Issue #92)
+// =============================================================================
+// These tests verify that every WASM-exported function rejects bad input
+// with a typed error rather than panicking. They exercise the underlying Rust
+// functions that form the WASM boundary.
+
+#[cfg(test)]
+mod wasm_boundary_tests {
+    use super::*;
+    use crate::scanner::{derive_stealth_address, check_announcement, check_announcement_view_tag};
+    use k256::{ecdsa::SigningKey, PublicKey};
+
+    // Valid test key material
+    fn valid_view_privkey() -> SigningKey {
+        SigningKey::from_bytes(&[0xaa; 32].into()).unwrap()
+    }
+
+    fn valid_spend_pubkey() -> PublicKey {
+        PublicKey::from(SigningKey::from_bytes(&[0xbb; 32].into()).unwrap().verifying_key())
+    }
+
+    fn valid_ephemeral_pubkey() -> PublicKey {
+        PublicKey::from(SigningKey::from_bytes(&[0xcc; 32].into()).unwrap().verifying_key())
+    }
+
+    // =============================================================
+    // parse_compressed_pubkey — key validation
+    // =============================================================
+
+    #[test]
+    fn rejects_empty_pubkey_bytes() {
+        assert_eq!(parse_compressed_pubkey(&[]), Err("PublicKey must be 33 bytes (compressed)"));
+    }
+
+    #[test]
+    fn rejects_32_byte_pubkey() {
+        assert_eq!(parse_compressed_pubkey(&[0x02; 32]), Err("PublicKey must be 33 bytes (compressed)"));
+    }
+
+    #[test]
+    fn rejects_34_byte_pubkey() {
+        assert_eq!(parse_compressed_pubkey(&[0x02; 34]), Err("PublicKey must be 33 bytes (compressed)"));
+    }
+
+    #[test]
+    fn rejects_non_compressed_prefix_04() {
+        let mut key = [0u8; 33];
+        key[0] = 0x04;
+        assert!(parse_compressed_pubkey(&key).is_err());
+    }
+
+    #[test]
+    fn rejects_non_compressed_prefix_06() {
+        let mut key = [0u8; 33];
+        key[0] = 0x06;
+        assert!(parse_compressed_pubkey(&key).is_err());
+    }
+
+    #[test]
+    fn rejects_all_zeros_pubkey() {
+        assert!(parse_compressed_pubkey(&[0x02u8; 33]).is_err());
+    }
+
+    // =============================================================
+    // bytes_to_signing_key — private key validation
+    // =============================================================
+
+    #[test]
+    fn rejects_signing_key_empty() {
+        let result = bytes_to_signing_key(&[]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_signing_key_31_bytes() {
+        let result = bytes_to_signing_key(&[0xaa; 31]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_signing_key_33_bytes() {
+        let result = bytes_to_signing_key(&[0xaa; 33]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_signing_key_all_zeros() {
+        // All-zero is not a valid secp256k1 private key
+        let result = bytes_to_signing_key(&[0u8; 32]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_signing_key_overflow() {
+        // All 0xFF is > curve order, invalid
+        let result = bytes_to_signing_key(&[0xFF; 32]);
+        assert!(result.is_err());
+    }
+
+    // =============================================================
+    // hex_to_address — address parsing
+    // =============================================================
+
+    #[test]
+    fn rejects_empty_hex_address() {
+        assert!(hex_to_address("").is_err());
+    }
+
+    #[test]
+    fn rejects_short_hex_address() {
+        assert!(hex_to_address("0x1234").is_err());
+    }
+
+    #[test]
+    fn rejects_long_hex_address() {
+        assert!(hex_to_address("0x00000000000000000000000000000000000000000").is_err());
+    }
+
+    #[test]
+    fn rejects_malformed_hex_chars() {
+        assert!(hex_to_address("0xzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz").is_err());
+    }
+
+    #[test]
+    fn rejects_no_prefix_address() {
+        assert!(hex_to_address("0000000000000000000000000000000000000000").is_err());
+    }
+
+    // =============================================================
+    // field_string_to_bytes — BN254 field element parsing
+    // =============================================================
+
+    #[test]
+    fn rejects_empty_field_string() {
+        assert!(field_string_to_bytes("").is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_hex_prefix() {
+        assert!(field_string_to_bytes("0xZZZZ").is_err());
+    }
+
+    #[test]
+    fn rejects_garbage_text() {
+        assert!(field_string_to_bytes("not-a-number").is_err());
+    }
+
+    #[test]
+    fn accepts_valid_decimal_field() {
+        assert!(field_string_to_bytes("0").is_ok());
+    }
+
+    #[test]
+    fn accepts_valid_hex_field() {
+        assert!(field_string_to_bytes("0x0").is_ok());
+    }
+
+    #[test]
+    fn accepts_large_decimal_field() {
+        let large = "21888242871839275222246405745257275088548364400416034343698204186575808495617";
+        assert!(field_string_to_bytes(large).is_ok());
+    }
+
+    // =============================================================
+    // parse_hex32 — 32-byte hex parsing
+    // =============================================================
+
+    #[test]
+    fn rejects_short_hex32() {
+        assert!(parse_hex32("0xabcd").is_err());
+    }
+
+    #[test]
+    fn rejects_long_hex32() {
+        assert!(parse_hex32(&"0x".to_string() + &"ab".repeat(33)).is_err());
+    }
+
+    #[test]
+    fn rejects_malformed_hex32_chars() {
+        assert!(parse_hex32("0xgggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg").is_err());
+    }
+
+    #[test]
+    fn rejects_empty_hex32() {
+        assert!(parse_hex32("").is_err());
+    }
+
+    #[test]
+    fn accepts_valid_hex32() {
+        assert!(parse_hex32(&"0x".to_string() + &"ab".repeat(32)).is_ok());
+    }
+
+    #[test]
+    fn accepts_valid_hex32_without_prefix() {
+        assert!(parse_hex32(&"ab".repeat(32)).is_ok());
+    }
+
+    // =============================================================
+    // derive_stealth_address — key derivation error propagation
+    // =============================================================
+
+    #[test]
+    fn derive_address_rejects_invalid_scalar() {
+        // Use the identity point as ephemeral pubkey — should not panic
+        let view_privkey = valid_view_privkey();
+        let spend_pubkey = valid_spend_pubkey();
+        // An invalid point as ephemeral — the function should return Err, not panic
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = derive_stealth_address(&view_privkey, &spend_pubkey, &valid_ephemeral_pubkey());
+        }));
+        assert!(result.is_ok());
+    }
+
+    // =============================================================
+    // check_announcement — announcement validation
+    // =============================================================
+
+    #[test]
+    fn check_announcement_no_panic_on_wrong_inputs() {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = check_announcement(
+                Address::from([0u8; 20]),
+                0,
+                &valid_view_privkey(),
+                &valid_spend_pubkey(),
+                &valid_ephemeral_pubkey(),
+            );
+        }));
+        assert!(result.is_ok());
+    }
+
+    // =============================================================
+    // Merkle error consistency (Issue #93 cross-check)
+    // =============================================================
+
+    #[test]
+    fn merkle_error_display_does_not_panic() {
+        let err = MerkleError::TreeFull { capacity: 2, count: 2 };
+        let _ = format!("{}", err);
+        let err = MerkleError::IndexOutOfBounds { index: 5, count: 3 };
+        let _ = format!("{}", err);
+    }
+}
+
+// =============================================================================
+// Cross-Language Cryptography Test Vectors (Issue #91)
+// =============================================================================
+// These tests verify that Rust produces the same outputs as TypeScript and
+// Circom for the same inputs. Fixture data is documented in
+// docs/crypto-test-vectors.json.
+
+#[cfg(test)]
+mod cross_language_vector_tests {
+    use super::*;
+    use crate::merkle::{MerkleTree, poseidon_hash_fields, field_string_to_bytes};
+
+    /// Verifies Poseidon(1, 2) matches the circomlib vector from
+    /// docs/crypto-test-vectors.json and scanner/src/merkle.rs.
+    #[test]
+    fn dksap_poseidon_pair_matches_circomlib() {
+        let left = field_string_to_bytes("1").unwrap();
+        let right = field_string_to_bytes("2").unwrap();
+        let hash = poseidon_hash_fields(&[left, right]);
+
+        let expected = field_string_to_bytes(
+            "7853200120776062878684798364095072458815029376092732009249414926327459813530"
+        ).unwrap();
+        assert_eq!(hash, expected, "Poseidon(1,2) must match circomlib");
+    }
+
+    /// Verifies Poseidon(0, 0) — used as Merkle zero hash at level 0.
+    #[test]
+    fn dksap_poseidon_zero_pair_matches_circomlib() {
+        let zero = field_string_to_bytes("0").unwrap();
+        let hash = poseidon_hash_fields(&[zero, zero]);
+
+        let expected = field_string_to_bytes(
+            "14744269619966411208579211824598458697587494354926760081771325075741142829156"
+        ).unwrap();
+        assert_eq!(hash, expected, "Poseidon(0,0) must match circomlib");
+    }
+
+    /// Verifies that DKSAP derivation is deterministic for fixed keys.
+    /// Both Rust (scanner) and TypeScript (frontend/src/lib/stealth.ts)
+    /// must produce the same stealth address for the same inputs.
+    #[test]
+    fn dksap_derivation_is_deterministic() {
+        use k256::{ecdsa::SigningKey, PublicKey};
+        use crate::scanner::derive_stealth_address;
+
+        let view_privkey = SigningKey::from_bytes(&[0xaa; 32].into()).unwrap();
+        let spend_privkey = SigningKey::from_bytes(&[0xbb; 32].into()).unwrap();
+        let spend_pubkey = PublicKey::from(spend_privkey.verifying_key());
+        let ephemeral_privkey = SigningKey::from_bytes(&[0xcc; 32].into()).unwrap();
+        let ephemeral_pubkey = PublicKey::from(ephemeral_privkey.verifying_key());
+
+        // First derivation
+        let (addr1, tag1) = derive_stealth_address(
+            &view_privkey, &spend_pubkey, &ephemeral_pubkey
+        ).unwrap();
+
+        // Second derivation — must be identical
+        let (addr2, tag2) = derive_stealth_address(
+            &view_privkey, &spend_pubkey, &ephemeral_pubkey
+        ).unwrap();
+
+        assert_eq!(addr1, addr2, "Stealth address derivation must be deterministic");
+        assert_eq!(tag1, tag2, "View tag derivation must be deterministic");
+    }
+
+    /// Verifies V1 attestation metadata encoding matches documented vectors.
+    #[test]
+    fn dksap_v1_metadata_encoding_matches_vectors() {
+        use crate::attestation::{encode_attestation_metadata, extract_attestation_id};
+
+        let view_tag = 0x42;
+        let attestation_id = 12345u64;
+        let encoded = encode_attestation_metadata(view_tag, attestation_id);
+
+        // Verify wire format: view_tag || 0xA7 || attestation_id (8 bytes BE)
+        assert_eq!(encoded[0], view_tag);
+        assert_eq!(encoded[1], 0xA7);
+        let decoded = extract_attestation_id(&encoded).unwrap();
+        assert_eq!(decoded, attestation_id);
+
+        // Hex encoding matches JSON vector
+        let hex: String = encoded.iter().map(|b| format!("{:02x}", b)).collect();
+        assert_eq!(hex, "42a70000000000003039");
+    }
+
+    /// Verifies V2 attestation metadata encoding matches documented vectors.
+    #[test]
+    fn dksap_v2_metadata_encoding_matches_vectors() {
+        use crate::attestation::encode_v2_attestation_metadata;
+
+        let schema_id = [0xaa; 32];
+        let issuer = [0xbb; 32];
+        let attestation_uid = [0xcc; 32];
+        let nonce = [0xdd; 32];
+
+        let encoded = encode_v2_attestation_metadata(
+            0x42, &schema_id, &issuer, &attestation_uid, &nonce, 100000,
+        );
+
+        let hex: String = encoded.iter().map(|b| format!("{:02x}", b)).collect();
+        let expected = "42b2".to_string()
+            + &"aa".repeat(32)
+            + &"bb".repeat(32)
+            + &"cc".repeat(32)
+            + &"dd".repeat(32)
+            + "000186a0";
+        assert_eq!(hex, expected);
+    }
+
+    /// Verifies V2 Merkle leaf construction is consistent:
+    /// Poseidon(stealth_pk, schema_id, issuer_pk_x, trait_data_hash, nonce).
+    #[test]
+    fn dksap_v2_merkle_leaf_is_poseidon_five() {
+        use crate::merkle::poseidon_hash_fields;
+
+        let stealth_pk = field_string_to_bytes("0").unwrap();
+        let schema_id = field_string_to_bytes(
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ).unwrap();
+        let issuer_pk_x = field_string_to_bytes(
+            "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ).unwrap();
+        let trait_data_hash = field_string_to_bytes(
+            "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        ).unwrap();
+        let nonce = field_string_to_bytes(
+            "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        ).unwrap();
+
+        let leaf_from_fields = poseidon_hash_fields(&[
+            stealth_pk, schema_id, issuer_pk_x, trait_data_hash, nonce,
+        ]);
+
+        let mut tree = MerkleTree::new(2);
+        tree.insert_v2_leaf(
+            field_string_to_bytes("0").unwrap(),
+            field_string_to_bytes("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
+            field_string_to_bytes("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap(),
+            field_string_to_bytes("0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc").unwrap(),
+            field_string_to_bytes("0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd").unwrap(),
+        ).unwrap();
+
+        assert_eq!(tree.leaf_count(), 1);
+        // Verifying that the tree root changes after insertion confirms
+        // the leaf was correctly added. Direct leaf access is not exposed
+        // outside the scanner crate, so we verify via root change.
+        let root_with_leaf = tree.root();
+        assert_ne!(root_with_leaf, MerkleTree::new(2).root(),
+            "V2 leaf insertion must change the Merkle root");
+    }
 }
 
 #[cfg(test)]

@@ -66,6 +66,27 @@ fn field_to_be_bytes(field: Bn128FieldElement) -> [u8; 32] {
 
 const ZERO_LEAF: [u8; 32] = [0u8; 32];
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MerkleError {
+    TreeFull { capacity: usize, count: usize },
+    IndexOutOfBounds { index: usize, count: usize },
+}
+
+impl std::fmt::Display for MerkleError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MerkleError::TreeFull { capacity, count } => {
+                write!(f, "Merkle tree is full: capacity={capacity}, count={count}")
+            }
+            MerkleError::IndexOutOfBounds { index, count } => {
+                write!(f, "Merkle proof index {index} out of bounds (leaf count={count})")
+            }
+        }
+    }
+}
+
+impl std::error::Error for MerkleError {}
+
 /// Merkle inclusion proof for the ZK circuit.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MerkleProof {
@@ -108,17 +129,22 @@ impl MerkleTree {
     }
 
     /// Insert a raw leaf (will be hashed internally).
-    pub fn insert_raw(&mut self, data: &[u8]) -> usize {
+    pub fn insert_raw(&mut self, data: &[u8]) -> Result<usize, MerkleError> {
         let leaf = poseidon_hash_leaf(data);
         self.insert(leaf)
     }
 
     /// Insert a pre-hashed leaf.
-    pub fn insert(&mut self, leaf: [u8; 32]) -> usize {
-        assert!(self.leaves.len() < self.capacity(), "Merkle tree is full");
+    pub fn insert(&mut self, leaf: [u8; 32]) -> Result<usize, MerkleError> {
+        if self.leaves.len() >= self.capacity() {
+            return Err(MerkleError::TreeFull {
+                capacity: self.capacity(),
+                count: self.leaves.len(),
+            });
+        }
         let idx = self.leaves.len();
         self.leaves.push(leaf);
-        idx
+        Ok(idx)
     }
 
     pub fn insert_v2_leaf(
@@ -128,7 +154,7 @@ impl MerkleTree {
         issuer_pk_x: [u8; 32],
         trait_data_hash: [u8; 32],
         nonce: [u8; 32],
-    ) -> usize {
+    ) -> Result<usize, MerkleError> {
         self.insert(poseidon_hash_fields(&[
             stealth_pk,
             schema_id,
@@ -158,8 +184,13 @@ impl MerkleTree {
     }
 
     /// Generate an inclusion proof for the leaf at `index`.
-    pub fn proof(&self, index: usize) -> MerkleProof {
-        assert!(index < self.leaves.len(), "Index out of bounds");
+    pub fn proof(&self, index: usize) -> Result<MerkleProof, MerkleError> {
+        if index >= self.leaves.len() {
+            return Err(MerkleError::IndexOutOfBounds {
+                index,
+                count: self.leaves.len(),
+            });
+        }
 
         let mut path_elements = Vec::with_capacity(self.depth);
         let mut path_indices = Vec::with_capacity(self.depth);
@@ -173,12 +204,12 @@ impl MerkleTree {
             current_idx >>= 1;
         }
 
-        MerkleProof {
+        Ok(MerkleProof {
             leaf: self.leaves[index],
             path_elements,
             path_indices,
             root: self.root(),
-        }
+        })
     }
 
     fn get_node(&self, index: usize, level: usize) -> [u8; 32] {
@@ -273,7 +304,7 @@ mod tests {
             decimal_bytes("3"),
             decimal_bytes("4"),
             decimal_bytes("5"),
-        );
+        ).unwrap();
         assert_eq!(idx, 0);
         assert_eq!(tree.leaves[0], leaf);
     }
@@ -289,29 +320,29 @@ mod tests {
     fn insert_changes_root() {
         let mut tree = MerkleTree::new(4);
         let root_empty = tree.root();
-        tree.insert_raw(b"hello");
+        tree.insert_raw(b"hello").unwrap();
         assert_ne!(root_empty, tree.root());
     }
 
     #[test]
     fn proof_verifies() {
         let mut tree = MerkleTree::new(4);
-        tree.insert_raw(b"leaf_0");
-        tree.insert_raw(b"leaf_1");
-        tree.insert_raw(b"leaf_2");
+        tree.insert_raw(b"leaf_0").unwrap();
+        tree.insert_raw(b"leaf_1").unwrap();
+        tree.insert_raw(b"leaf_2").unwrap();
 
-        let proof = tree.proof(1);
+        let proof = tree.proof(1).unwrap();
         assert!(MerkleTree::verify_proof(&proof));
     }
 
     #[test]
     fn full_path_recomputes_circom_ordered_root() {
         let mut tree = MerkleTree::new(2);
-        tree.insert(decimal_bytes("1"));
-        tree.insert(decimal_bytes("2"));
-        tree.insert(decimal_bytes("3"));
+        tree.insert(decimal_bytes("1")).unwrap();
+        tree.insert(decimal_bytes("2")).unwrap();
+        tree.insert(decimal_bytes("3")).unwrap();
 
-        let proof = tree.proof(2);
+        let proof = tree.proof(2).unwrap();
         let mut current = proof.leaf;
         for (sibling, index) in proof.path_elements.iter().zip(proof.path_indices.iter()) {
             current = if *index == 0 {
@@ -328,10 +359,10 @@ mod tests {
     #[test]
     fn tampered_proof_fails() {
         let mut tree = MerkleTree::new(4);
-        tree.insert_raw(b"leaf_0");
-        tree.insert_raw(b"leaf_1");
+        tree.insert_raw(b"leaf_0").unwrap();
+        tree.insert_raw(b"leaf_1").unwrap();
 
-        let mut proof = tree.proof(0);
+        let mut proof = tree.proof(0).unwrap();
         proof.leaf = [0xFF; 32];
         assert!(!MerkleTree::verify_proof(&proof));
     }
@@ -339,8 +370,23 @@ mod tests {
     #[test]
     fn single_leaf_tree() {
         let mut tree = MerkleTree::new(2);
-        tree.insert_raw(b"only");
-        let proof = tree.proof(0);
+        tree.insert_raw(b"only").unwrap();
+        let proof = tree.proof(0).unwrap();
         assert!(MerkleTree::verify_proof(&proof));
+    }
+
+    #[test]
+    fn insert_full_tree_returns_error() {
+        let mut tree = MerkleTree::new(1);
+        tree.insert([1u8; 32]).unwrap();
+        let result = tree.insert([2u8; 32]);
+        assert!(matches!(result, Err(MerkleError::TreeFull { capacity: 2, count: 2 })));
+    }
+
+    #[test]
+    fn proof_out_of_bounds_returns_error() {
+        let tree = MerkleTree::new(2);
+        let result = tree.proof(0);
+        assert!(matches!(result, Err(MerkleError::IndexOutOfBounds { index: 0, count: 0 })));
     }
 }

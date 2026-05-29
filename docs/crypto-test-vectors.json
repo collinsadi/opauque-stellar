@@ -1,0 +1,44 @@
+{
+  "_schema": "opaque-crypto-test-vectors-v1",
+  "_version": 1,
+  "description": "Cross-language cryptography test vectors for DKSAP, stealth addresses, view tags, metadata encoding, leaf hashing, and nullifiers. Only verified values are included.",
+  "vectors": {
+    "poseidon_pair": {
+      "description": "Poseidon(1, 2) over BN254 scalar field. Matches circomlib poseidon(2) output. Verified: Rust scanner/src/merkle.rs and TypeScript circomlibjs.",
+      "left_decimal": "1",
+      "right_decimal": "2",
+      "expected_hash_decimal": "7853200120776062878684798364095072458815029376092732009249414926327459813530"
+    },
+    "poseidon_zero_pair": {
+      "description": "Poseidon(0, 0). Used as Merkle zero hash at level 0. Verified in Rust tests.",
+      "left_decimal": "0",
+      "right_decimal": "0",
+      "expected_hash_decimal": "14744269619966411208579211824598458697587494354926760081771325075741142829156"
+    },
+    "v1_metadata_encoding": {
+      "description": "V1 attestation metadata wire format: view_tag(1) || 0xA7(1) || attestation_id(8 big-endian). Verified in Rust attestation roundtrip tests.",
+      "view_tag_dec": 66,
+      "attestation_id_dec": 12345,
+      "metadata_hex": "42a70000000000003039"
+    },
+    "v2_metadata_encoding": {
+      "description": "V2 attestation metadata wire format: view_tag(1) || 0xB2(1) || schema_id(32) || issuer(32) || attestation_uid(32) || nonce(32) || expiration_ledger(4 big-endian). Verified in Rust encode/decode tests.",
+      "view_tag_dec": 66,
+      "schema_id_hex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "issuer_hex": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "attestation_uid_hex": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "nonce_hex": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "expiration_ledger_dec": 100000,
+      "metadata_hex": "42b2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd000186a0"
+    },
+    "schema_id": {
+      "description": "Canonical schema ID derivation. SHA-256(authority || name || version_be_u32 || canonical_field_defs). Verified across Rust schema-registry and TS schemaEncoding tests.",
+      "authority_bytes_hex": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
+      "name_utf8": "MySchema",
+      "field_definitions": "string name",
+      "canonical_field_defs_binary": "0105046e616d65",
+      "version_be_u32": "00000001",
+      "schema_id_hex": "9dfa94834360623aa1fdc98ac048339004cf326bb1b49d853e15dc063f6c2547"
+    }
+  }
+}

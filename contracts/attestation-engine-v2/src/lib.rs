@@ -466,6 +466,263 @@ impl AttestationEngineV2 {
     }
 }
 
+// =============================================================================
+// Property/Fuzz Tests for Attestation State Machines (Issue #90)
+// =============================================================================
+// Invariants verified:
+//   - Revoked attestations stay revoked forever
+//   - Authorization cannot be bypassed (unauthorized issuers rejected)
+//   - Paused state blocks issuance but not reads
+//   - Duplicate UIDs rejected
+//   - Schema expiry prevents new attestations
+//   - Governance separation (admin vs governance)
+
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    extern crate schema_registry;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        Address, Bytes, BytesN, Env, String as SorobanString,
+    };
+
+    fn setup() -> (
+        Env,
+        Address,
+        Address,
+        schema_registry::SchemaRegistryClient<'static>,
+        AttestationEngineV2Client<'static>,
+    ) {
+        crate::test::setup()
+    }
+
+    fn authority_key(env: &Env) -> BytesN<32> {
+        BytesN::from_array(env, &[0x2au8; 32])
+    }
+
+    fn schema_id_for(env: &Env, field_defs: &str) -> BytesN<32> {
+        let fields = parse_field_definitions(field_defs).unwrap();
+        let canonical = opaque_schema_core::encode_canonical_field_defs(&fields);
+        schema_registry::derive_schema_id(
+            env,
+            &authority_key(env),
+            &SorobanString::from_str(env, "PropSchema"),
+            1,
+            &canonical,
+        )
+    }
+
+    fn encode_data(env: &Env, field_defs: &str, values: &[(&str, &str)]) -> Bytes {
+        let fields = parse_field_definitions(field_defs).unwrap();
+        let encoded =
+            opaque_schema_core::encode_attestation_data_from_strings(&fields, values).unwrap();
+        Bytes::from_slice(env, &encoded)
+    }
+
+    const DEFAULT_DEFS: &str = "string field1";
+
+    /// Invariant: Once revoked, an attestation stays revoked.
+    /// revocation_ledger transitions from 0 to non-zero and never changes.
+    #[test]
+    fn property_revoked_stays_revoked() {
+        let (env, authority, _engine_id, schema_client, engine_client) = setup();
+        let schema_id = schema_id_for(&env, DEFAULT_DEFS);
+        schema_client.register_schema(
+            &authority,
+            &authority_key(&env),
+            &schema_id,
+            &SorobanString::from_str(&env, "PropSchema"),
+            &SorobanString::from_str(&env, DEFAULT_DEFS),
+            &true,
+            &1u32,
+            &None,
+            &0u32,
+        );
+        let stealth_hash = BytesN::from_array(&env, &[0xCCu8; 32]);
+        let data = encode_data(&env, DEFAULT_DEFS, &[("field1", "revoke-me")]);
+        let ref_uid = BytesN::from_array(&env, &[0u8; 32]);
+
+        let uid = engine_client.attest(&authority, &schema_id, &stealth_hash, &data, &0u32, &ref_uid);
+
+        // Revoke
+        engine_client.revoke_attestation(&authority, &uid);
+        let att = engine_client.get_attestation(&uid);
+        assert_ne!(att.revocation_ledger, 0u32, "revocation_ledger must be non-zero after revoke");
+
+        // Invariant: second revoke fails
+        let result = engine_client.try_revoke_attestation(&authority, &uid);
+        assert_eq!(result, Err(Ok(AttestationError::AlreadyRevoked)));
+
+        // Invariant: revocation_ledger stays the same
+        let att2 = engine_client.get_attestation(&uid);
+        assert_eq!(att2.revocation_ledger, att.revocation_ledger,
+            "revocation_ledger must not change after AlreadyRevoked");
+    }
+
+    /// Invariant: Unauthorized issuers cannot create attestations.
+    #[test]
+    fn property_authorization_cannot_be_bypassed() {
+        let (env, authority, _engine_id, schema_client, engine_client) = setup();
+        let schema_id = schema_id_for(&env, DEFAULT_DEFS);
+        schema_client.register_schema(
+            &authority,
+            &authority_key(&env),
+            &schema_id,
+            &SorobanString::from_str(&env, "PropSchema"),
+            &SorobanString::from_str(&env, DEFAULT_DEFS),
+            &true,
+            &1u32,
+            &None,
+            &0u32,
+        );
+        let stranger = Address::generate(&env);
+        let stealth_hash = BytesN::from_array(&env, &[0xAAu8; 32]);
+        let data = encode_data(&env, DEFAULT_DEFS, &[("field1", "rogue")]);
+        let ref_uid = BytesN::from_array(&env, &[0u8; 32]);
+
+        // Invariant: stranger fails
+        let result = engine_client.try_attest(&stranger, &schema_id, &stealth_hash, &data, &0u32, &ref_uid);
+        assert_eq!(result, Err(Ok(AttestationError::UnauthorizedIssuer)));
+    }
+
+    /// Invariant: Paused attestation blocks issuance but allows read operations.
+    /// After unpause, attestation works again.
+    #[test]
+    fn property_pause_blocks_issuance_but_not_reads() {
+        let (env, authority, _engine_id, schema_client, engine_client) = setup();
+        let schema_id = schema_id_for(&env, DEFAULT_DEFS);
+        schema_client.register_schema(
+            &authority,
+            &authority_key(&env),
+            &schema_id,
+            &SorobanString::from_str(&env, "PropSchema"),
+            &SorobanString::from_str(&env, DEFAULT_DEFS),
+            &true,
+            &1u32,
+            &None,
+            &0u32,
+        );
+
+        let stealth_hash = BytesN::from_array(&env, &[0xAAu8; 32]);
+        let data = encode_data(&env, DEFAULT_DEFS, &[("field1", "x")]);
+        let ref_uid = BytesN::from_array(&env, &[0u8; 32]);
+
+        // Pause
+        engine_client.pause_attestation(&authority);
+
+        // Invariant: issuance blocked
+        let result = engine_client.try_attest(&authority, &schema_id, &stealth_hash, &data, &0u32, &ref_uid);
+        assert_eq!(result, Err(Ok(AttestationError::Paused)));
+
+        // Invariant: reads still work
+        let cfg = engine_client.get_config();
+        assert!(cfg.paused_attestation);
+
+        // Invariant: unpause restores issuance
+        engine_client.unpause_attestation(&authority);
+        let uid = engine_client.attest(&authority, &schema_id, &stealth_hash, &data, &0u32, &ref_uid);
+        assert!(uid.to_array() != [0u8; 32]);
+    }
+
+    /// Invariant: Duplicate UIDs are always rejected.
+    #[test]
+    fn property_duplicate_uid_always_rejected() {
+        let (env, authority, _engine_id, schema_client, engine_client) = setup();
+        let schema_id = schema_id_for(&env, DEFAULT_DEFS);
+        schema_client.register_schema(
+            &authority,
+            &authority_key(&env),
+            &schema_id,
+            &SorobanString::from_str(&env, "PropSchema"),
+            &SorobanString::from_str(&env, DEFAULT_DEFS),
+            &true,
+            &1u32,
+            &None,
+            &0u32,
+        );
+
+        let stealth_hash = BytesN::from_array(&env, &[0xBBu8; 32]);
+        let data = encode_data(&env, DEFAULT_DEFS, &[("field1", "uid-test")]);
+        let ref_uid = BytesN::from_array(&env, &[0u8; 32]);
+
+        let uid = engine_client.attest(&authority, &schema_id, &stealth_hash, &data, &0u32, &ref_uid);
+
+        // Same inputs → same UID → rejected
+        let result = engine_client.try_attest(&authority, &schema_id, &stealth_hash, &data, &0u32, &ref_uid);
+        assert_eq!(result, Err(Ok(AttestationError::AttestationAlreadyExists)));
+    }
+
+    /// Invariant: Schema expiry prevents new attestations past expiry boundary.
+    #[test]
+    fn property_schema_expiry_prevents_new_attestations() {
+        let (env, authority, _engine_id, schema_client, engine_client) = setup();
+
+        let schema_id = schema_id_for(&env, DEFAULT_DEFS);
+        // Register schema with expiry at ledger 100
+        env.ledger().with_mut(|l| l.sequence_number = 50);
+        schema_client.register_schema(
+            &authority,
+            &authority_key(&env),
+            &schema_id,
+            &SorobanString::from_str(&env, "PropSchema"),
+            &SorobanString::from_str(&env, DEFAULT_DEFS),
+            &true,
+            &1u32,
+            &None,
+            &100u32,
+        );
+
+        let stealth_hash = BytesN::from_array(&env, &[0xDDu8; 32]);
+        let data = encode_data(&env, DEFAULT_DEFS, &[("field1", "expiry-test")]);
+        let ref_uid = BytesN::from_array(&env, &[0u8; 32]);
+
+        // Can attest before expiry
+        let uid = engine_client.attest(&authority, &schema_id, &stealth_hash, &data.clone(), &0u32, &ref_uid.clone());
+        assert!(uid.to_array() != [0u8; 32]);
+
+        // After expiry, attestation fails
+        env.ledger().with_mut(|l| l.sequence_number = 100);
+        let result = engine_client.try_attest(&authority, &schema_id, &stealth_hash, &data, &0u32, &ref_uid);
+        assert_eq!(result, Err(Ok(AttestationError::SchemaExpired)));
+    }
+
+    /// Invariant: Only admin/governance can pause/unpause. Strangers cannot.
+    #[test]
+    fn property_governance_enforced() {
+        let (env, authority, _engine_id, schema_client, engine_client) = setup();
+        let schema_id = schema_id_for(&env, DEFAULT_DEFS);
+        schema_client.register_schema(
+            &authority,
+            &authority_key(&env),
+            &schema_id,
+            &SorobanString::from_str(&env, "PropSchema"),
+            &SorobanString::from_str(&env, DEFAULT_DEFS),
+            &true,
+            &1u32,
+            &None,
+            &0u32,
+        );
+
+        let stranger = Address::generate(&env);
+
+        // Invariant: stranger cannot pause
+        let result = engine_client.try_pause_attestation(&stranger);
+        assert_eq!(result, Err(Ok(AttestationError::Unauthorized)));
+
+        // Invariant: authority can pause
+        engine_client.pause_attestation(&authority);
+        assert!(engine_client.get_config().paused_attestation);
+
+        // Invariant: stranger cannot unpause
+        let result = engine_client.try_unpause_attestation(&stranger);
+        assert_eq!(result, Err(Ok(AttestationError::Unauthorized)));
+
+        // Invariant: authority can unpause
+        engine_client.unpause_attestation(&authority);
+        assert!(!engine_client.get_config().paused_attestation);
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
