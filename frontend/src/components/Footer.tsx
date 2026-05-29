@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { getDocUrl } from "../lib/docsLinks";
 
 export function Footer() {
   return (
@@ -22,6 +23,14 @@ export function Footer() {
         >
           Disclaimer
         </Link>
+        <a
+          href={getDocUrl("user-recovery")}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="hover:text-sol-purple transition-colors"
+        >
+          Recovery guide
+        </a>
       </nav>
       <p className="font-mono text-mist/60">
         © 2026 Opaque Protocol. Stellar stealth and reputation stack.

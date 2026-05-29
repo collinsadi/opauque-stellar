@@ -24,6 +24,9 @@ import { MainnetSafetyBanner } from "./components/security/MainnetSafetyBanner";
 import { MainnetWarningModal } from "./components/security/MainnetWarningModal";
 import { NetworkMismatchModal } from "./components/security/NetworkMismatchModal";
 import { SecuritySettings } from "./pages/settings/SecuritySettings";
+import { FeatureDisabledNotice } from "./components/FeatureDisabledNotice";
+import { getTabAccess } from "./lib/tabAccess";
+import { getFeatureFlags } from "./lib/featureFlags";
 
 const SchemaStudio = lazy(() => import("./components/SchemaStudio").then((m) => ({ default: m.SchemaStudio })));
 const AttestationManager = lazy(() => import("./components/AttestationManager").then((m) => ({ default: m.AttestationManager })));
@@ -106,19 +109,56 @@ function AppContent() {
   };
 
   const renderView = () => {
+    const access = getTabAccess(tab);
+    if (access === "hidden") {
+      const hiddenFeature =
+        tab === "schemas" || tab === "attest" ? "schemaManagement" : "reputationProofs";
+      return (
+        <div className="max-w-lg mx-auto py-8">
+          <FeatureDisabledNotice feature={hiddenFeature} />
+        </div>
+      );
+    }
+
     if (tab === "dashboard") return <DashboardView onNavigate={setTab} address={address ?? undefined} cluster={cluster} />;
     if (tab === "send") return <SendView />;
     if (tab === "receive") return <ReceiveView onBack={() => setTab("dashboard")} />;
     if (tab === "balance") return <PrivateBalanceView />;
     if (tab === "history") return <TransactionHistoryView />;
     if (tab === "profile") return <ProfileView onNavigate={setTab} onDisconnect={handleDisconnect} />;
-    if (tab === "reputation" || tab === "my-traits") return <Suspense fallback={<LazyFallback />}><MyTraitsView onNavigate={setTab} /></Suspense>;
-    if (tab === "schemas") return <Suspense fallback={<LazyFallback />}><SchemaStudio /></Suspense>;
-    if (tab === "attest") return <Suspense fallback={<LazyFallback />}><AttestationManager onNavigate={setTab} /></Suspense>;
-    if (tab === "manage") return <Suspense fallback={<LazyFallback />}><ManageView onNavigate={setTab} /></Suspense>;
+    if (tab === "reputation" || tab === "my-traits") {
+      return (
+        <Suspense fallback={<LazyFallback />}>
+          <MyTraitsView onNavigate={setTab} readOnly={access === "readonly"} />
+        </Suspense>
+      );
+    }
+    if (tab === "schemas") {
+      return (
+        <Suspense fallback={<LazyFallback />}>
+          <SchemaStudio />
+        </Suspense>
+      );
+    }
+    if (tab === "attest") {
+      return (
+        <Suspense fallback={<LazyFallback />}>
+          <AttestationManager onNavigate={setTab} />
+        </Suspense>
+      );
+    }
+    if (tab === "manage") {
+      return (
+        <Suspense fallback={<LazyFallback />}>
+          <ManageView onNavigate={setTab} readOnly={access === "readonly"} />
+        </Suspense>
+      );
+    }
     if (tab === "security" as any) return <SecuritySettings />;
     return null;
   };
+
+  const protocolLogPanel = getFeatureFlags().debugLogs ? <ProtocolLogPanel /> : null;
 
   if (!isSetup) {
     return (
@@ -138,7 +178,7 @@ function AppContent() {
         isConnecting={isConnecting}
         onConnect={handleConnect}
         onDisconnect={handleDisconnect}
-        protocolLog={<ProtocolLogPanel />}
+        protocolLog={protocolLogPanel}
       >
         <div className="flex flex-col items-center justify-center min-h-[40vh] gap-4">
           <span className="h-7 w-7 animate-spin rounded-full border-2 border-ink-600 border-t-sol-purple" aria-hidden />
@@ -158,7 +198,7 @@ function AppContent() {
         isConnecting={isConnecting}
         onConnect={handleConnect}
         onDisconnect={handleDisconnect}
-        protocolLog={<ProtocolLogPanel />}
+        protocolLog={protocolLogPanel}
       >
         <RegistrationWizard onComplete={handleRegistrationComplete} />
       </Layout>
@@ -174,7 +214,7 @@ function AppContent() {
       isConnecting={isConnecting}
       onConnect={handleConnect}
       onDisconnect={handleDisconnect}
-      protocolLog={<ProtocolLogPanel />}
+      protocolLog={protocolLogPanel}
     >
       <NetworkGuard>{renderView()}</NetworkGuard>
     </Layout>

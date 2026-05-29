@@ -10,6 +10,8 @@ for the Opaque Stellar mainnet deployment. The system comprises:
 - **Scanner engine** (Rust WASM) embedded in the frontend for stealth address detection
 - **Indexer** (optional) for event backfill and historical scans
 
+For the initial **testnet → mainnet promotion** procedure (build, deploy, init, admin transfer, smoke tests), see **[MAINNET_PROMOTION_RUNBOOK.md](./MAINNET_PROMOTION_RUNBOOK.md)**.
+
 ---
 
 ## Alert Rules

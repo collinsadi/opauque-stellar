@@ -1,5 +1,7 @@
 # Ghost Address Key Storage — Threat Model
 
+For user-facing backup and recovery steps (payment-link vs manual ghost, device migration), see [USER_RECOVERY.md](./USER_RECOVERY.md).
+
 ## What is protected
 
 Ephemeral private keys (`ephemeralPrivKeyHex`) for ghost addresses are encrypted

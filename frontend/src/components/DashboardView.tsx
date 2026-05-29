@@ -8,6 +8,8 @@ import { getCluster } from "../lib/chain";
 import type { StellarNetwork } from "../lib/chain";
 import { useTxHistoryStore } from "../store/txHistoryStore";
 import type { TxHistoryEntry } from "../store/txHistoryStore";
+import { isTabNavVisible } from "../lib/tabAccess";
+import { getFeatureFlags } from "../lib/featureFlags";
 
 type DashboardViewProps = {
   onNavigate: (t: Tab) => void;
@@ -43,10 +45,15 @@ const QUICK_LINKS: { id: Tab; label: string }[] = [
   { id: "history", label: "History" },
   { id: "reputation", label: "My Traits" },
   { id: "manage", label: "Manage" },
-];
+].filter((link) => isTabNavVisible(link.id));
 
 export function DashboardView({ onNavigate, address, cluster }: DashboardViewProps) {
   const [showSwitchModal, setShowSwitchModal] = useState(false);
+  const manualGhostEnabled = getFeatureFlags().manualGhostAddresses;
+
+  const receiveSubtitle = manualGhostEnabled
+    ? "Payment link or manual ghost address"
+    : "Payment link";
 
   const canChangeNetwork = cluster != null && isClusterSupported(cluster as StellarNetwork);
   const byChain = useTxHistoryStore((s) => s.byChain);
@@ -116,7 +123,7 @@ export function DashboardView({ onNavigate, address, cluster }: DashboardViewPro
               {card.icon}
             </span>
             <p className="font-display text-base font-bold text-white">{card.title}</p>
-            <p className="mt-1 text-sm text-mist">{card.subtitle}</p>
+            <p className="mt-1 text-sm text-mist">{card.id === "receive" ? receiveSubtitle : card.subtitle}</p>
           </button>
         ))}
       </div>
