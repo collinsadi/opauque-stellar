@@ -1,4 +1,6 @@
+import { Link } from "react-router-dom";
 import { LegalPageLayout } from "./LegalPageLayout";
+import { ABUSE_POLICY_ROUTE, PUBLIC_CONTACTS } from "../lib/abusePolicy";
 
 export function DisclaimerPage() {
   return (
@@ -29,6 +31,29 @@ export function DisclaimerPage() {
           laundering (AML) laws. Use of privacy-preserving tools does not exempt you
           from applicable regulations. Ensure your use of Opaque is lawful in your
           jurisdiction.
+        </p>
+      </section>
+
+      <section>
+        <h2 className="text-white font-medium text-base mb-2">Sanctions &amp; Abuse Reporting</h2>
+        <p>
+          Opaque is non-custodial and does not screen counterparties on-chain. Operators
+          cannot freeze user funds or reverse Stellar transactions. To report abuse or
+          sanctions concerns regarding official deployments, see the{" "}
+          <Link
+            to={ABUSE_POLICY_ROUTE}
+            className="text-sol-purple underline hover:text-white font-medium"
+          >
+            Abuse &amp; Sanctions Response Policy
+          </Link>{" "}
+          or email{" "}
+          <a
+            href={`mailto:${PUBLIC_CONTACTS.abuse.email}`}
+            className="text-sol-purple underline hover:text-white font-medium"
+          >
+            {PUBLIC_CONTACTS.abuse.email}
+          </a>
+          .
         </p>
       </section>
     </LegalPageLayout>
