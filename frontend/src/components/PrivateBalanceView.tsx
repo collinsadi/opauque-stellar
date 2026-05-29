@@ -53,6 +53,8 @@ import {
 } from "../store/ghostAnnouncementStore";
 import { GhostAnnounceModal } from "./GhostAnnounceModal";
 import { ModalShell } from "./ModalShell";
+import { RecoveryDocLink } from "./RecoveryDocLink";
+import { getFeatureFlags } from "../lib/featureFlags";
 
 export type FoundTx = {
   id: string;
@@ -348,6 +350,7 @@ export function PrivateBalanceView() {
   const keysContext = useKeys();
   const { address: mainWalletAddress, connection } = useWallet();
   const cluster = getCluster();
+  const manualGhostEnabled = getFeatureFlags().manualGhostAddresses;
   const currentConfig = getConfigForCluster(cluster);
   const { push: logPush } = useProtocolLog();
   const pushTx = useTxHistoryStore((s) => s.push);
@@ -821,6 +824,7 @@ export function PrivateBalanceView() {
             >
               {refreshing ? "Refreshing…" : "Refresh"}
             </button>
+            {manualGhostEnabled && (
             <button
               type="button"
               onClick={() => {
@@ -832,6 +836,7 @@ export function PrivateBalanceView() {
             >
               Import ghost
             </button>
+            )}
           </div>
         </div>
 
@@ -971,6 +976,7 @@ export function PrivateBalanceView() {
                     ghostAnnouncementEntryKey(cluster, tx.address)
                   ];
                 const canAnnounceGhostOnchain =
+                  manualGhostEnabled &&
                   tx.source === "manual" &&
                   cluster != null &&
                   announcerConfigured &&
@@ -1230,7 +1236,12 @@ export function PrivateBalanceView() {
         <ModalShell
           open
           title="Import ghost address"
-          description="Add a previously generated stealth address to tracking. Without its ephemeral key, you can view balance but cannot withdraw."
+          description={
+            <>
+              Add a previously generated stealth address to tracking. Without its ephemeral key, you can view balance but cannot withdraw.{" "}
+              <RecoveryDocLink section="manual-ghost">Ghost recovery guide</RecoveryDocLink>
+            </>
+          }
           onClose={() => setManualImportOpen(false)}
           maxWidthClassName="max-w-md"
         >
