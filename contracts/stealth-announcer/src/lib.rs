@@ -50,6 +50,8 @@ pub enum AnnouncerError {
     InvalidStealthAddressLength = 5,
     /// Stealth address encoding/format is invalid for the scheme (e.g., hex string bytes passed instead of raw bytes).
     InvalidStealthAddressEncoding = 6,
+    /// A log with this caller/log_id already exists and allow_overwrite was not set.
+    DuplicateLogId = 7,
 }
 
 // Registry/config for supported schemes. Keep as a simple allowlist so adding future
@@ -91,9 +93,28 @@ impl StealthAnnouncer {
         ephemeral_pub_key: Bytes,
         metadata: Bytes,
         log_id: Bytes,
+        allow_overwrite: bool,
     ) -> Result<(), AnnouncerError> {
         caller.require_auth();
         Self::validate(scheme_id, &stealth_address, &ephemeral_pub_key, &metadata)?;
+        
+        let key = log_key(&caller, &log_id);
+        
+        // Check if a log with this caller/log_id already exists
+        let existing_log: Option<AnnouncementLog> = env.storage().persistent().get(&key);
+        
+        if existing_log.is_some() {
+            if !allow_overwrite {
+                // Emit a separate event for duplicate rejection
+                env.events().publish(
+                    (Symbol::new(&env, "DuplicateLogRejected"), EVENT_VERSION),
+                    (caller.clone(), log_id.clone(), scheme_id),
+                );
+                return Err(AnnouncerError::DuplicateLogId);
+            }
+            // If allow_overwrite is true, we'll proceed with the overwrite below
+        }
+        
         let ledger = env.ledger().sequence();
         let log = AnnouncementLog {
             scheme_id: scheme_id,
@@ -104,7 +125,7 @@ impl StealthAnnouncer {
             ledger,
             log_id: log_id.clone(),
         };
-        let key = log_key(&caller, &log_id);
+        
         env.storage().persistent().set(&key, &log);
         // Cap log lifetime to ~7 days so persistent storage does not grow indefinitely.
         env.storage()
@@ -364,6 +385,7 @@ mod test {
             &valid_ephemeral_key(&env),
             &valid_metadata(&env),
             &log_id,
+            &false,
         );
 
         let events = env.events().all();
@@ -387,6 +409,7 @@ mod test {
             &valid_ephemeral_key(&env),
             &valid_metadata(&env),
             &log_id,
+            &false,
         );
     }
 
@@ -407,6 +430,7 @@ mod test {
             &short,
             &valid_metadata(&client.env),
             &log_id,
+            &false,
         );
         assert!(result.is_err());
     }
@@ -496,6 +520,7 @@ mod test {
             &bad,
             &valid_metadata(&env),
             &log_id,
+            &false,
         );
         assert!(result.is_err());
     }
@@ -552,7 +577,165 @@ mod test {
             &valid_ephemeral_key(&env),
             &valid_metadata(&env),
             &log_id,
+            &false,
         );
         assert_eq!(emitted_event_version(&env, &client.address), EVENT_VERSION);
+    }
+
+    // -------------------------------------------------------------------------
+    // Duplicate log_id handling tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_announce_with_log_rejects_duplicate_log_id() {
+        let Setup { env, client, caller } = setup();
+        let log_id = {
+            let mut b = Bytes::new(&env);
+            b.push_back(0x01u8);
+            b
+        };
+
+        // First call should succeed
+        client.announce_with_log(
+            &caller,
+            &1u64,
+            &stealth_address(&env),
+            &valid_ephemeral_key(&env),
+            &valid_metadata(&env),
+            &log_id,
+            &false,
+        );
+
+        // Second call with same log_id should fail
+        let result = client.try_announce_with_log(
+            &caller,
+            &1u64,
+            &stealth_address(&env),
+            &valid_ephemeral_key(&env),
+            &valid_metadata(&env),
+            &log_id,
+            &false,
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), AnnouncerError::DuplicateLogId);
+    }
+
+    #[test]
+    fn test_announce_with_log_emits_duplicate_rejected_event() {
+        let Setup { env, client, caller } = setup();
+        let log_id = {
+            let mut b = Bytes::new(&env);
+            b.push_back(0x01u8);
+            b
+        };
+
+        // First call should succeed
+        client.announce_with_log(
+            &caller,
+            &1u64,
+            &stealth_address(&env),
+            &valid_ephemeral_key(&env),
+            &valid_metadata(&env),
+            &log_id,
+            &false,
+        );
+
+        // Second call should emit DuplicateLogRejected event
+        let result = client.try_announce_with_log(
+            &caller,
+            &1u64,
+            &stealth_address(&env),
+            &valid_ephemeral_key(&env),
+            &valid_metadata(&env),
+            &log_id,
+            &false,
+        );
+        assert!(result.is_err());
+
+        // Check that DuplicateLogRejected event was emitted
+        let events = env.events().all();
+        let has_duplicate_event = events.iter().any(|e| {
+            let topics = &e.1;
+            topics.len() >= 1 && topics.get(0).unwrap() == Symbol::new(&env, "DuplicateLogRejected").into_val(&env)
+        });
+        assert!(has_duplicate_event);
+    }
+
+    #[test]
+    fn test_announce_with_log_allows_overwrite_when_flag_set() {
+        let Setup { env, client, caller } = setup();
+        let log_id = {
+            let mut b = Bytes::new(&env);
+            b.push_back(0x01u8);
+            b
+        };
+
+        // First call should succeed
+        client.announce_with_log(
+            &caller,
+            &1u64,
+            &stealth_address(&env),
+            &valid_ephemeral_key(&env),
+            &valid_metadata(&env),
+            &log_id,
+            &false,
+        );
+
+        // Second call with allow_overwrite=true should succeed
+        client.announce_with_log(
+            &caller,
+            &1u64,
+            &stealth_address(&env),
+            &valid_ephemeral_key(&env),
+            &valid_metadata(&env),
+            &log_id,
+            &true,
+        );
+
+        // Verify the log was overwritten by checking it exists
+        let key = log_key(&caller, &log_id);
+        let stored_log: Option<AnnouncementLog> = env.storage().persistent().get(&key);
+        assert!(stored_log.is_some());
+    }
+
+    #[test]
+    fn test_announce_with_log_different_callers_same_log_id_allowed() {
+        let Setup { env, client, caller } = setup();
+        let caller2 = Address::generate(&env);
+        let log_id = {
+            let mut b = Bytes::new(&env);
+            b.push_back(0x01u8);
+            b
+        };
+
+        // First caller should succeed
+        client.announce_with_log(
+            &caller,
+            &1u64,
+            &stealth_address(&env),
+            &valid_ephemeral_key(&env),
+            &valid_metadata(&env),
+            &log_id,
+            &false,
+        );
+
+        // Different caller with same log_id should also succeed (key includes caller)
+        client.announce_with_log(
+            &caller2,
+            &1u64,
+            &stealth_address(&env),
+            &valid_ephemeral_key(&env),
+            &valid_metadata(&env),
+            &log_id,
+            &false,
+        );
+
+        // Both logs should exist
+        let key1 = log_key(&caller, &log_id);
+        let key2 = log_key(&caller2, &log_id);
+        let log1: Option<AnnouncementLog> = env.storage().persistent().get(&key1);
+        let log2: Option<AnnouncementLog> = env.storage().persistent().get(&key2);
+        assert!(log1.is_some());
+        assert!(log2.is_some());
     }
 }

@@ -5,6 +5,7 @@ import { computeStealthAddressAndViewTag } from "../lib/stealth";
 import { getCluster } from "../lib/chain";
 import { useGhostAddressStore } from "../store/ghostAddressStore";
 import { useWatchlistStore } from "../hooks/useWatchlist";
+import { createPaymentLink } from "../lib/paymentLink";
 
 type Mode = "choose" | "payment_link" | "manual_ghost";
 
@@ -62,7 +63,7 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
     );
   }
 
-  const paymentLink = `${window.location.origin}/pay/${stealthMetaAddressHex}`;
+  const paymentLink = createPaymentLink(stealthMetaAddressHex, cluster);
 
   if (mode === "choose") {
     return (
