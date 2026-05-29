@@ -5,6 +5,7 @@ import {
   Contract,
   TransactionBuilder,
   nativeToScVal,
+  StrKey,
 } from "@stellar/stellar-sdk";
 import {
   computeStealthAddressAndViewTag,
@@ -17,6 +18,7 @@ import { useKeys } from "../context/KeysContext";
 import { useWallet } from "../hooks/useWallet";
 import { getConfigForCluster } from "../contracts/contract-config";
 import { SCHEME_ID_SECP256K1 } from "../lib/contracts";
+import { resolveMetaAddress } from "../lib/registry";
 import {
   bytesToScVal,
   buildNativeTransferOperation,
@@ -32,12 +34,21 @@ import { useProtocolLog } from "../context/ProtocolLogContext";
 import { useTxHistoryStore } from "../store/txHistoryStore";
 
 const STROOP_FEE_BUFFER = 100_000n;
+
 const isMetaAddress = (value: string): boolean => {
   const normalized = value.startsWith("0x") ? value : `0x${value}`;
   return (
     normalized.length === 2 + 66 * 2 &&
     (normalized.startsWith("0x02") || normalized.startsWith("0x03"))
   );
+};
+
+const isGAddress = (value: string): boolean => {
+  try {
+    return StrKey.isValidEd25519PublicKey(value.trim());
+  } catch {
+    return false;
+  }
 };
 
 export function SendView() {
@@ -125,13 +136,33 @@ export function SendView() {
       setError("Connect Freighter on a supported network.");
       return;
     }
-    const recipientMeta = recipient.trim();
+    let recipientMeta = recipient.trim();
     if (!recipientMeta || !amount) {
       setError("Enter recipient and amount.");
       return;
     }
-    if (!isMetaAddress(recipientMeta)) {
-      setError("Enter a valid stealth meta-address (0x + 132 hex chars).");
+
+    // If a G-address is entered, resolve it to a meta-address via the registry.
+    if (isGAddress(recipientMeta)) {
+      setSending(true);
+      setSteps([]);
+      addStep("wait", "Resolving stealth meta-address from registry…");
+      const resolved = await resolveMetaAddress(recipientMeta);
+      if (!resolved) {
+        setError("Stellar address is not registered in the stealth registry.");
+        setSteps((prev) => {
+          const last = prev[prev.length - 1];
+          return prev.slice(0, -1).concat([{ ...last, status: "error" as const }]);
+        });
+        setSending(false);
+        return;
+      }
+      addStep("ok", "Meta-address resolved from registry.", resolved);
+      recipientMeta = resolved;
+    } else if (!isMetaAddress(recipientMeta)) {
+      setError(
+        "Enter a valid Stellar address (G…) or stealth meta-address (0x + 132 hex chars).",
+      );
       return;
     }
 
@@ -272,15 +303,20 @@ export function SendView() {
       <motion.div className="space-y-4">
         <div>
           <label className="block text-sm text-neutral-400 mb-1">
-            Recipient meta-address
+            Recipient address or meta-address
           </label>
           <input
             type="text"
             value={recipient}
             onChange={(e) => setRecipient(e.target.value)}
-            placeholder="0x02…"
+            placeholder="G… Stellar address or 0x02… meta-address"
             className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white"
           />
+          {recipient && !isGAddress(recipient) && !isMetaAddress(recipient) && (
+            <p className="text-xs text-red-400 mt-1">
+              Enter a registered Stellar address (G…) or a stealth meta-address (0x + 132 hex chars).
+            </p>
+          )}
         </div>
         <div>
           <label className="block text-sm text-neutral-400 mb-1">

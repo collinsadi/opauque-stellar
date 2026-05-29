@@ -19,6 +19,11 @@ pub struct StealthAnnouncer;
 /// Scanners should reject events with an unrecognised version rather than misparse them.
 const EVENT_VERSION: u32 = 1;
 
+/// TTL policy for announcement logs stored via `announce_with_log`.
+/// Logs are retained for ~7 days (at ~5s/ledger: 7 * 24 * 3600 / 5 = 120_960 ledgers).
+/// This prevents unbounded storage growth while giving indexers time to pick up the log.
+const LOG_TTL_LEDGERS: u32 = 120_960;
+
 #[contracttype]
 #[derive(Clone)]
 pub struct AnnouncementLog {
@@ -99,9 +104,12 @@ impl StealthAnnouncer {
             ledger,
             log_id: log_id.clone(),
         };
+        let key = log_key(&caller, &log_id);
+        env.storage().persistent().set(&key, &log);
+        // Cap log lifetime to ~7 days so persistent storage does not grow indefinitely.
         env.storage()
             .persistent()
-            .set(&log_key(&caller, &log_id), &log);
+            .extend_ttl(&key, LOG_TTL_LEDGERS, LOG_TTL_LEDGERS);
         env.events().publish(
             (Symbol::new(&env, "Announcement"), EVENT_VERSION),
             (scheme_id, stealth_address, caller, ephemeral_pub_key, metadata),

@@ -8,9 +8,10 @@ import {
   deployedAddresses,
   PLACEHOLDER_CONTRACT_ID,
   contractEnvKeysForNetwork,
+  CONTRACT_KEYS,
 } from "./deployedAddresses";
 import { isValidStellarContractId } from "./deploymentManifest";
-import { CONTRACT_KEYS, manifestContractIds } from "@deployments/types";
+import { manifestContractIds } from "@deployments/types";
 
 export type ClusterProgramConfig = {
   registryContract: string;
@@ -154,6 +155,34 @@ export function getNetworkSupportMessage(network: StellarNetwork | null | undefi
     return "Mainnet requires production HTTPS VITE_STELLAR_RPC_URL and VITE_STELLAR_HORIZON_URL values plus mainnet contract IDs in deployments/v1/mainnet.json or VITE_MAINNET_* env vars.";
   }
   return `Set VITE_STELLAR_NETWORK to one of: ${SUPPORTED_NETWORKS.join(", ")}.`;
+}
+
+/**
+ * Validates all contract IDs for the given network and returns a list of
+ * human-readable errors. An empty array means all IDs are valid.
+ * Run this at app startup before any user action to surface misconfigurations early.
+ */
+export function validateContractIds(network: StellarNetwork): string[] {
+  const errors: string[] = [];
+  const ids = Object.fromEntries(
+    CONTRACT_KEYS.map((key) => [
+      key,
+      CLUSTER_CONFIG[network]
+        ? (CLUSTER_CONFIG[network] as ClusterProgramConfig)[key as keyof ClusterProgramConfig]
+        : "",
+    ]),
+  ) as Record<string, string>;
+
+  for (const key of CONTRACT_KEYS) {
+    const value = ids[key];
+    if (!value || value.length === 0) {
+      errors.push(`Missing contract ID for "${key}". Set VITE_${network.toUpperCase()}_${key} or update deployments/v1/${network}.json.`);
+    } else if (!isValidStellarContractId(value)) {
+      errors.push(`Invalid Stellar contract ID for "${key}": "${value}". Contract IDs must be valid C-strkey addresses.`);
+    }
+  }
+
+  return errors;
 }
 
 /** @deprecated */
