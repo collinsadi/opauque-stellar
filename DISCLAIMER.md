@@ -9,7 +9,7 @@ Opaque is **experimental, unaudited software** provided on an "as-is" basis. It 
 While the protocol is designed to provide unlinkable receive addresses and selective disclosure of reputation, **no privacy system is perfect**. Specific risks include:
 
 - **Metadata leakage.** On-chain transactions carry timing, amount, and fee-payer information that sophisticated observers may use for statistical linkage analysis.
-- **Local data loss.** Ghost addresses rely on local device storage. Lost data may make funds **permanently inaccessible** with no on-chain recovery.
+- **Local data loss.** Ghost addresses rely on local device storage. Lost data may make funds **permanently inaccessible** with no on-chain recovery. See [User Recovery Guide](docs/USER_RECOVERY.md) for what to back up and how payment-link vs manual ghost receives differ.
 - **Scanner limitations.** The WASM scanner depends on complete announcement data from RPC or Horizon. Missed events may delay detection until a rescan.
 - **View-tag false positives.** Roughly 1 in 256 announcements pass the view-tag filter without being yours, requiring full derivation to confirm.
 

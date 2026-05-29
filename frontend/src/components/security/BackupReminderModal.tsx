@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { useSecurityStore } from "../../store/securityStore";
+import { RecoveryDocLink } from "../RecoveryDocLink";
 
 export const BackupReminderModal: React.FC<{ type: "send" | "receive"; onProceed: () => void; onCancel: () => void }> = ({ type, onProceed, onCancel }) => {
   const { hasBackedUp, hasAcknowledgedReceiveRisk, setHasAcknowledgedReceiveRisk } = useSecurityStore();
@@ -30,7 +31,10 @@ export const BackupReminderModal: React.FC<{ type: "send" | "receive"; onProceed
       <div className="bg-white text-gray-900 rounded-lg p-6 max-w-md w-full shadow-2xl">
         <h2 className="text-xl font-bold mb-4">⚠️ Backup Reminder</h2>
         <p className="mb-6 text-gray-600">
-          Stealth address recovery relies entirely on your local keys. Without a backup, if you lose your device, your funds are permanently lost.
+          Stealth address recovery relies entirely on your local keys. Without a backup, if you lose your device, your funds are permanently lost.{" "}
+          <RecoveryDocLink section="what-to-backup" className="text-indigo-600 hover:underline font-medium">
+            What to back up
+          </RecoveryDocLink>
         </p>
         <div className="mb-6 flex items-start space-x-3">
           <input

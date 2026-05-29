@@ -51,3 +51,5 @@ CI runs manifest validation, builds scanner WASM with hash verification, and run
 ### Updating after deploy
 
 See [deployments/README.md](deployments/README.md) and [artifacts/README.md](artifacts/README.md).
+
+For the full testnet → mainnet promotion procedure, see [docs/MAINNET_PROMOTION_RUNBOOK.md](docs/MAINNET_PROMOTION_RUNBOOK.md).

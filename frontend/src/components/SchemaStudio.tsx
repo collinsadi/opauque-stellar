@@ -19,6 +19,8 @@ import { invokeRegisterSchema, bytesToHex } from "../lib/programs";
 import { getExplorerTxUrl } from "../lib/explorer";
 import { getSorobanServer } from "../lib/stellar";
 import { useSchemaStore } from "../store/schemaStore";
+import { getFeatureFlags } from "../lib/featureFlags";
+import { FeatureDisabledNotice } from "./FeatureDisabledNotice";
 
 // =============================================================================
 // Constants
@@ -73,6 +75,7 @@ const RESOLVER_OPTIONS: {
 // =============================================================================
 
 export function SchemaStudio() {
+  const schemaManagementEnabled = getFeatureFlags().schemaManagement;
   const { address: walletAddress, publicKey, signTransaction } = useWallet();
   const addSchema = useSchemaStore((s) => s.addSchema);
 
@@ -190,6 +193,14 @@ export function SchemaStudio() {
       setIsSubmitting(false);
     }
   };
+
+  if (!schemaManagementEnabled) {
+    return (
+      <div className="max-w-lg mx-auto py-8">
+        <FeatureDisabledNotice feature="schemaManagement" />
+      </div>
+    );
+  }
 
   if (txSig) {
     return (
