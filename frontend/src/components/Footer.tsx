@@ -23,14 +23,12 @@ export function Footer() {
         >
           Disclaimer
         </Link>
-        <a
-          href={getDocUrl("user-recovery")}
-          target="_blank"
-          rel="noopener noreferrer"
+        <Link
+          to="/threat-model"
           className="hover:text-sol-purple transition-colors"
         >
-          Recovery guide
-        </a>
+          Threat model
+        </Link>
       </nav>
       <p className="font-mono text-mist/60">
         © 2026 Opaque Protocol. Stellar stealth and reputation stack.

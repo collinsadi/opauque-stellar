@@ -1,4 +1,10 @@
 import { Footer } from "./Footer";
+import { Link } from "react-router-dom";
+import {
+  PRIVACY_NOT_HIDDEN,
+  PRIVACY_PROVIDED,
+  THREAT_MODEL_ROUTE,
+} from "../lib/privacyThreatModel";
 
 type LandingPageProps = {
   onEnterVault: () => void;
@@ -179,20 +185,29 @@ export function LandingPage({ onEnterVault }: LandingPageProps) {
             <div className="rounded-2xl border border-sol-purple/20 bg-ink-950/40 p-5">
               <p className="text-sm font-semibold text-glow font-display">What's private</p>
               <ul className="mt-3 space-y-2 text-sm text-mist leading-relaxed">
-                <li>Incoming transfers are harder to link to a single deposit address.</li>
-                <li>PSR proofs reveal eligibility without revealing identity.</li>
-                <li>Stealth keys and scanning happen entirely on-device.</li>
+                {PRIVACY_PROVIDED.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
               </ul>
             </div>
             <div className="rounded-2xl border border-sol-purple/20 bg-ink-950/40 p-5">
               <p className="text-sm font-semibold text-flare font-display">What's not magic</p>
               <ul className="mt-3 space-y-2 text-sm text-mist leading-relaxed">
-                <li>On-chain activity still leaks timing/amount patterns.</li>
-                <li>Local scanning means device-bound recovery constraints.</li>
-                <li>Experimental protocol — use testnet and small amounts before relying on real value.</li>
+                {PRIVACY_NOT_HIDDEN.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
               </ul>
             </div>
           </div>
+          <p className="mt-5 text-sm text-mist">
+            <Link
+              to={THREAT_MODEL_ROUTE}
+              className="font-medium text-sol-purple underline hover:text-white"
+            >
+              Read the full privacy threat model
+            </Link>{" "}
+            for adversaries, mitigations, and implementation mapping.
+          </p>
         </div>
       </section>
 

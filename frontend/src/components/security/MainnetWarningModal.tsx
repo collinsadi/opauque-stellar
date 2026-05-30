@@ -1,10 +1,6 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
-import {
-  canProceedToMainnet,
-  MAINNET_LEGAL_DOCS,
-  requiresMainnetLegalAck,
-} from "../../lib/mainnetLegal";
+import { MAINNET_PRIVACY_WARNINGS, THREAT_MODEL_ROUTE } from "../../lib/privacyThreatModel";
 import { useSecurityStore } from "../../store/securityStore";
 
 export const MainnetWarningModal: React.FC = () => {
@@ -33,24 +29,36 @@ export const MainnetWarningModal: React.FC = () => {
           consume real funds. Review the legal documents below before proceeding.
         </p>
 
-        <div className="mb-4 rounded-md border border-gray-200 bg-gray-50 p-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-gray-600 mb-2">
-            Required reading
-          </p>
-          <ul className="space-y-1 text-sm">
-            {MAINNET_LEGAL_DOCS.map(({ path, label }) => (
-              <li key={path}>
-                <Link
-                  to={path}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-red-700 font-medium underline hover:text-red-800"
-                >
-                  {label}
-                </Link>
-              </li>
+        <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm">
+          <p className="font-semibold text-amber-900 mb-2">Privacy limits on mainnet</p>
+          <ul className="list-disc pl-4 space-y-1 text-amber-950/90">
+            {MAINNET_PRIVACY_WARNINGS.map((item) => (
+              <li key={item}>{item}</li>
             ))}
           </ul>
+          <p className="mt-2">
+            <Link
+              to={THREAT_MODEL_ROUTE}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-amber-900 underline hover:text-amber-950"
+            >
+              Full privacy threat model
+            </Link>
+          </p>
+        </div>
+
+        <div className="mb-6 flex items-center space-x-2">
+          <input
+            type="checkbox"
+            id="understood"
+            checked={understood}
+            onChange={(e) => setUnderstood(e.target.checked)}
+            className="w-5 h-5 accent-red-600"
+          />
+          <label htmlFor="understood" className="font-semibold cursor-pointer">
+            I understand I am using mainnet and real funds.
+          </label>
         </div>
 
         <div className="mb-4 space-y-3">
