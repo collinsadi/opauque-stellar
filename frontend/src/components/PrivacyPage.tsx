@@ -32,6 +32,17 @@ export function PrivacyPage() {
           control or obscure blockchain-level visibility.
         </p>
       </section>
+
+      <section>
+        <h2 className="text-white font-medium text-base mb-2">Mainnet Privacy Limits</h2>
+        <p>
+          On Stellar Mainnet, stealth payments reduce address linkability but do not
+          guarantee anonymity. Timing, amounts, fees, RPC queries, and wallet metadata
+          may still be observable. Local ghost-address data is stored only on your device;
+          loss of that data may make mainnet funds permanently inaccessible with no
+          on-chain recovery path.
+        </p>
+      </section>
     </LegalPageLayout>
   );
 }
