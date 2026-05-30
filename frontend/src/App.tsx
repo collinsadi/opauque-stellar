@@ -20,8 +20,6 @@ import { useRegistrationStatus } from "./hooks/useRegistrationStatus";
 import { useVaultStore } from "./store/vaultStore";
 import { useGhostAddressStore, useGhostAddressPersistence } from "./store/ghostAddressStore";
 import { getExplorerTxUrl } from "./lib/explorer";
-import { MainnetSafetyBanner } from "./components/security/MainnetSafetyBanner";
-import { MainnetWarningModal } from "./components/security/MainnetWarningModal";
 import { NetworkMismatchModal } from "./components/security/NetworkMismatchModal";
 import { SecuritySettings } from "./pages/settings/SecuritySettings";
 import { FeatureDisabledNotice } from "./components/FeatureDisabledNotice";
@@ -275,8 +273,6 @@ export default function App() {
     <KeysProvider>
       <ProtocolLogProvider>
         <ToastProvider>
-          <MainnetSafetyBanner />
-          <MainnetWarningModal />
           <NetworkMismatchModal />
           <AppContent />
           <ToastLayer />
