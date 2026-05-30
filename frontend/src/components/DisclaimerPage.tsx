@@ -1,4 +1,6 @@
+import { Link } from "react-router-dom";
 import { LegalPageLayout } from "./LegalPageLayout";
+import { ABUSE_POLICY_ROUTE, PUBLIC_CONTACTS } from "../lib/abusePolicy";
 
 export function DisclaimerPage() {
   return (
@@ -33,23 +35,25 @@ export function DisclaimerPage() {
       </section>
 
       <section>
-        <h2 className="text-white font-medium text-base mb-2">Mainnet Production Use</h2>
+        <h2 className="text-white font-medium text-base mb-2">Sanctions &amp; Abuse Reporting</h2>
         <p>
-          Mainnet deployments involve <strong className="text-neutral-200">real funds</strong>.
-          Smart contracts and the frontend are experimental and have not undergone a formal
-          production security audit. Account reserves, network fees, and failed transactions
-          consume real XLM irreversibly. Do not use mainnet privacy payments unless you
-          accept these risks and have completed your own legal and technical review.
-        </p>
-      </section>
-
-      <section>
-        <h2 className="text-white font-medium text-base mb-2">Sanctions and Counterparty Risk</h2>
-        <p>
-          Opaque is non-custodial and does not screen senders, recipients, or payment-link
-          counterparties against sanctions lists or other compliance databases. You are
-          solely responsible for ensuring your mainnet use complies with applicable sanctions
-          and counterparty due-diligence requirements.
+          Opaque is non-custodial and does not screen counterparties on-chain. Operators
+          cannot freeze user funds or reverse Stellar transactions. To report abuse or
+          sanctions concerns regarding official deployments, see the{" "}
+          <Link
+            to={ABUSE_POLICY_ROUTE}
+            className="text-sol-purple underline hover:text-white font-medium"
+          >
+            Abuse &amp; Sanctions Response Policy
+          </Link>{" "}
+          or email{" "}
+          <a
+            href={`mailto:${PUBLIC_CONTACTS.abuse.email}`}
+            className="text-sol-purple underline hover:text-white font-medium"
+          >
+            {PUBLIC_CONTACTS.abuse.email}
+          </a>
+          .
         </p>
       </section>
     </LegalPageLayout>

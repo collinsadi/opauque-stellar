@@ -24,10 +24,10 @@ export function Footer() {
           Disclaimer
         </Link>
         <Link
-          to="/threat-model"
+          to="/abuse-policy"
           className="hover:text-sol-purple transition-colors"
         >
-          Threat model
+          Abuse policy
         </Link>
       </nav>
       <p className="font-mono text-mist/60">

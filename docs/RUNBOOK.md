@@ -147,9 +147,13 @@ For the initial **testnet → mainnet promotion** procedure (build, deploy, init
 
 | Role | Name | Contact |
 |---|---|---|
-| Primary On-Call | Opaque Team | #ops-channel (Discord) |
+| Primary On-Call | Opaque Team | #ops-channel (Discord) · incident@opaqueprotocol.org |
+| Abuse / sanctions triage | Opaque Team | abuse@opaqueprotocol.org |
+| Security incidents | Opaque Team | security@opaqueprotocol.org · [GitHub Security Advisories](https://github.com/collinsadi/opaque-stellar/security/advisories/new) |
 | Contract Admin | Protocol DAO | Multisig |
 | RPC Provider | Soroban RPC | #stellar-network (Discord) |
+
+See also [Abuse & Sanctions Response Policy](ABUSE_AND_SANCTIONS_POLICY.md) and [internal abuse runbook](internal/ABUSE_SANCTIONS_RUNBOOK.md).
 
 ---
 
