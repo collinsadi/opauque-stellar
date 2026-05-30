@@ -19,6 +19,8 @@ import { encodeAttestationData } from "../lib/attestationV2";
 import { computeStealthAddressAndViewTag } from "../lib/stealth";
 import { hexToBytes, invokeAttest } from "../lib/programs";
 import { announceStealthTransfer, SCHEME_ID_SECP256K1 } from "../lib/contracts";
+import { getFeatureFlags } from "../lib/featureFlags";
+import { FeatureDisabledNotice } from "./FeatureDisabledNotice";
 
 // =============================================================================
 // Component
@@ -31,6 +33,7 @@ interface AttestationManagerProps {
 export function AttestationManager({
   onNavigate,
 }: AttestationManagerProps = {}) {
+  const schemaManagementEnabled = getFeatureFlags().schemaManagement;
   const {
     address: walletAddress,
     publicKey,
@@ -227,6 +230,14 @@ export function AttestationManager({
       setIsSubmitting(false);
     }
   };
+
+  if (!schemaManagementEnabled) {
+    return (
+      <div className="max-w-lg mx-auto py-8">
+        <FeatureDisabledNotice feature="schemaManagement" />
+      </div>
+    );
+  }
 
   if (txSig) {
     return (

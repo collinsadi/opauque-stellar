@@ -90,6 +90,8 @@ Stealth Stellar accounts are derived deterministically from the stealth secp256k
 
 Deploy with the [Stellar CLI](https://developers.stellar.org/docs/build/smart-contracts/getting-started/setup), then record contract IDs in the canonical manifest at [`deployments/v1/testnet.json`](deployments/v1/testnet.json) (see [`deployments/README.md`](deployments/README.md)). Optional `VITE_<NETWORK>_*` overrides in `frontend/.env` are for local dev only.
 
+**Mainnet promotion:** step-by-step runbook at [`docs/MAINNET_PROMOTION_RUNBOOK.md`](docs/MAINNET_PROMOTION_RUNBOOK.md).
+
 ---
 
 ## Running locally
@@ -186,6 +188,16 @@ See [`frontend/.env.example`](frontend/.env.example) and [`deployments/README.md
 | ZK | Groth16 (BN254) | In-browser reputation proofs |
 | On-chain verify | Soroban BN254 | Pairing verification in contracts |
 | Nullifiers | Poseidon | Replay resistance |
+
+---
+
+## User recovery
+
+Master stealth keys are **deterministically recovered** by re-signing with the same wallet. **Manual ghost receives** are browser-bound and require backing up ephemeral keys. See **[docs/USER_RECOVERY.md](docs/USER_RECOVERY.md)** for:
+
+- What must be backed up (wallet, ghost ephemeral keys)
+- Payment-link vs manual ghost receive flows
+- Browser session behavior and device migration
 
 ---
 

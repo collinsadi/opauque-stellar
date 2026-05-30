@@ -16,6 +16,7 @@ import { isClusterSupported } from "./contracts/contract-config.ts";
 import { LandingPage } from "./components/LandingPage.tsx";
 import { BrandingPage } from "./components/BrandingPage.tsx";
 import { StellarWalletProviders } from "./context/StellarWalletProviders.tsx";
+import { MainnetSecurityLayer } from "./components/security/MainnetSecurityLayer.tsx";
 import { logExpectedArtifactHashes } from "./lib/artifactHashes.ts";
 
 console.log("[Opaque] App bootstrapping (Stellar)…");
@@ -37,6 +38,7 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <StellarWalletProviders>
       <BrowserRouter>
+        <MainnetSecurityLayer />
         <Routes>
           <Route path="/" element={<LandingRoute />} />
           <Route path="/app" element={<App />} />

@@ -38,3 +38,4 @@ Each network manifest records:
 - Local dev may override manifest IDs with `VITE_<NETWORK>_*` env vars (non-production only).
 - Production builds require manifest IDs or matching env overrides; CI runs `verify-deployment-manifest.mjs` to ensure env and manifest agree.
 - See [RELEASE_NOTES.md](../RELEASE_NOTES.md) for release links.
+- **Mainnet promotion:** follow [docs/MAINNET_PROMOTION_RUNBOOK.md](../docs/MAINNET_PROMOTION_RUNBOOK.md) for the full testnet → mainnet procedure.

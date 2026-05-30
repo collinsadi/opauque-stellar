@@ -12,6 +12,7 @@ import {
   saveSignatureSession,
   setRememberSignaturePreference,
 } from "../lib/signatureSession";
+import { RecoveryDocLink } from "./RecoveryDocLink";
 
 type Phase = "idle" | "restoring" | "connecting" | "signing" | "checking" | "register" | "registering" | "done" | "error";
 
@@ -293,6 +294,12 @@ export function LandingView() {
               />
               Remember signature for this tab (about 30 minutes)
             </label>
+            <p className="mt-2 text-xs text-mist/70">
+              Session cache is not a backup.{" "}
+              <RecoveryDocLink section="browser-session" className="text-mist/90 hover:text-sol-purple hover:underline font-medium">
+                How key recovery works
+              </RecoveryDocLink>
+            </p>
           </>
         )}
 

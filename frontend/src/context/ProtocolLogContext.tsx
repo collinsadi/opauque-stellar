@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { getFeatureFlags } from "../lib/featureFlags";
 
 export type ProtocolLogSource = "wasm" | "blockchain" | "ui";
 
@@ -34,6 +35,7 @@ export function ProtocolLogProvider({ children }: { children: ReactNode }) {
   const [entries, setEntries] = useState<ProtocolLogEntry[]>([]);
 
   const push = useCallback((source: ProtocolLogSource, message: string) => {
+    if (!getFeatureFlags().debugLogs) return;
     setEntries((prev) =>
       prev.concat({
         id: nextId(),
