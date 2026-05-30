@@ -32,6 +32,8 @@ import { ProtocolStepper } from "./ProtocolStepper";
 import type { ProtocolStep } from "./ProtocolStepper";
 import { useProtocolLog } from "../context/ProtocolLogContext";
 import { useTxHistoryStore } from "../store/txHistoryStore";
+import { PrivacyWarningCallout } from "./PrivacyWarningCallout";
+import { SEND_PRIVACY_WARNING } from "../lib/privacyThreatModel";
 
 const STROOP_FEE_BUFFER = 100_000n;
 
@@ -295,10 +297,12 @@ export function SendView() {
   return (
     <motion.div className="card max-w-lg mx-auto">
       <h2 className="text-lg font-semibold text-white mb-1">Send XLM</h2>
-      <p className="text-sm text-neutral-500 mb-6">
+      <p className="text-sm text-neutral-500 mb-4">
         Send XLM to a stealth meta-address. The app derives a one-time Stellar
         account and publishes a Soroban announcement.
       </p>
+
+      <PrivacyWarningCallout message={SEND_PRIVACY_WARNING} className="mb-6" />
 
       <motion.div className="space-y-4">
         <div>
