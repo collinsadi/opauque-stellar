@@ -5,6 +5,7 @@
   "scripts": {
     "verify:deployment": "node scripts/verify-deployment-manifest.mjs",
     "verify:deployment:strict": "node scripts/verify-deployment-manifest.mjs --strict",
+    "verify:security-audit": "node scripts/verify-security-audit.mjs --network mainnet",
     "update:manifest-wasm": "node scripts/update-manifest-wasm-hashes.mjs",
     "build:scanner": "node scripts/build-scanner-wasm.mjs",
     "fetch:circuits": "node scripts/fetch-circuit-artifacts.mjs",

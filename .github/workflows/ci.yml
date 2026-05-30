@@ -19,6 +19,9 @@ jobs:
       - name: Validate manifests (schema, no legacy Solana/devnet)
         run: npm run verify:deployment
 
+      - name: Validate mainnet security audit register
+        run: npm run verify:security-audit
+
       - name: Reject devnet / Solana address patterns in production config
         run: |
           if grep -rE '"devnet"|"cluster"[[:space:]]*:[[:space:]]*"devnet"' frontend/src/contracts --include='*.json' 2>/dev/null; then

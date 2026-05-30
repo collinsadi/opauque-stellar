@@ -31,18 +31,7 @@ Nothing here is financial, legal, or tax advice. Comply with applicable laws in 
 
 ## Testnet Default
 
-Default configuration targets **Stellar testnet**. Test XLM has no monetary value.
-
-## Mainnet Production Use
-
-When configured for **Stellar Mainnet**, privacy payment features use **real XLM**. Risks include:
-
-- **Irreversible transactions.** Sends, sweeps, and account reserves consume real funds.
-- **Regulatory and sanctions exposure.** Privacy tools may be restricted in some jurisdictions; users must comply with applicable law.
-- **No production audit.** Contracts and frontend are experimental and not formally audited for mainnet.
-- **Incomplete privacy.** On-chain metadata and off-chain observability may still deanonymize activity.
-
-Do not enable mainnet until you have reviewed the Terms, Privacy Policy, Disclaimer, and [MAINNET_LEGAL_REVIEW.md](MAINNET_LEGAL_REVIEW.md).
+Default configuration targets **Stellar testnet**. Test XLM has no monetary value. Do not send mainnet funds until the [mainnet security audit](docs/security/MAINNET_AUDIT_SIGNOFF.md) is approved and blocking findings are resolved.
 
 ## No Warranty
 

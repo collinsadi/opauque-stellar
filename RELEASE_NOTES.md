@@ -7,7 +7,21 @@ Mainnet v1 deployment evidence is recorded in versioned manifests under `deploym
 | Network | Manifest | Status |
 |---------|----------|--------|
 | Testnet | [deployments/v1/testnet.json](deployments/v1/testnet.json) | Template — contract IDs filled after deploy |
-| Mainnet | [deployments/v1/mainnet.json](deployments/v1/mainnet.json) | Not deployed |
+| Mainnet | [deployments/v1/mainnet.json](deployments/v1/mainnet.json) | Not deployed — [security audit blocked](docs/security/MAINNET_AUDIT_SIGNOFF.md) |
+
+### Mainnet security audit
+
+Before mainnet deploy, complete the structured review in [docs/security/](docs/security/):
+
+- [Audit scope](docs/security/MAINNET_AUDIT_SCOPE.md) — contracts, circuits, scanner, frontend keys, ops
+- [Findings register](docs/security/mainnet-audit-findings.json) — triaged blocking issues
+- [Final report](docs/security/MAINNET_AUDIT_REPORT.md) · [Signoff](docs/security/MAINNET_AUDIT_SIGNOFF.md)
+
+```bash
+npm run verify:security-audit
+# Enforce before production deploy:
+node scripts/verify-security-audit.mjs --network mainnet --require-approved
+```
 
 ### What each manifest records
 
@@ -40,6 +54,7 @@ V2 `contractVkHash` is derived from `groth16-verifier` byte constants; `zkeyHash
 
 ```bash
 npm run verify:deployment
+npm run verify:security-audit
 npm run verify:artifacts -- --strict
 # After contracts are built:
 node scripts/verify-deployment-manifest.mjs --network testnet --check-wasm --strict
