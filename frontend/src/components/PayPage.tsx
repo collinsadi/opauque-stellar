@@ -119,19 +119,30 @@ export function PayPage() {
           return;
         }
 
-        // Handle ENS names
+        // Handle federation addresses
         if (isEnsName(id)) {
-          const controller = await resolveEnsToAddress(id);
-          if (cancelled || !controller) {
-            if (!cancelled) setResolveStatus("not_found");
-            return;
-          }
-          const meta = await resolveMetaAddress(controller);
-          if (cancelled) return;
-          if (!meta) setResolveStatus("not_found");
-          else {
-            setResolvedMeta(meta);
-            setResolveStatus("found");
+          try {
+            const controller = await resolveEnsToAddress(id);
+            if (cancelled || !controller) {
+              if (!cancelled) setResolveStatus("not_found");
+              return;
+            }
+            const meta = await resolveMetaAddress(controller);
+            if (cancelled) return;
+            if (!meta) setResolveStatus("not_found");
+            else {
+              setResolvedMeta(meta);
+              setResolveStatus("found");
+            }
+          } catch (err) {
+            if (!cancelled) {
+              const errorMessage =
+                err instanceof Error
+                  ? err.message
+                  : "Failed to resolve federation address";
+              setError(errorMessage);
+              setResolveStatus("not_found");
+            }
           }
         } else {
           // Handle direct meta-address
@@ -141,8 +152,13 @@ export function PayPage() {
             setResolveStatus("found");
           } else setResolveStatus("not_found");
         }
-      } catch {
-        if (!cancelled) setResolveStatus("not_found");
+      } catch (err) {
+        if (!cancelled) {
+          const errorMessage =
+            err instanceof Error ? err.message : "Unknown error";
+          setError(errorMessage);
+          setResolveStatus("not_found");
+        }
       }
     })();
     return () => {
