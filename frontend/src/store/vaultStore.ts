@@ -4,7 +4,8 @@
  */
 
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
+import { createSafeLocalStorage } from "../lib/safePersistStorage";
 type Address = string;
 type Hex = string;
 
@@ -144,6 +145,7 @@ export const useVaultStore = create<VaultState>()(
     }),
     {
       name: VAULT_STORAGE_KEY,
+      storage: createJSONStorage(() => createSafeLocalStorage()),
       partialize: (s) => ({
         entries: s.entries.map((e) => ({
           ...e,

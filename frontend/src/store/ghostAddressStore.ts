@@ -14,6 +14,12 @@ import {
   decryptGhostEntries,
   type EncryptedGhostPayload,
 } from "../lib/ghostCrypto";
+import {
+  classifyStorageError,
+  storageFailureMessage,
+  writeLocalStorage,
+  type StorageWriteResult,
+} from "../lib/storageHealth";
 
 type Address = string;
 
@@ -83,6 +89,13 @@ function parseStored(raw: string | null): GhostEntry[] {
   }
 }
 
+type GhostPersistListener = (result: StorageWriteResult) => void;
+let _persistListener: GhostPersistListener | null = null;
+
+export function setGhostPersistListener(listener: GhostPersistListener | null): void {
+  _persistListener = listener;
+}
+
 type GhostState = {
   entries: GhostEntry[];
   add: (entry: Omit<GhostEntry, "createdAt">) => void;
@@ -99,18 +112,29 @@ type GhostState = {
   getForCluster: (cluster: string) => GhostEntry[];
 };
 
-async function persistEntries(entries: GhostEntry[]): Promise<void> {
-  if (typeof localStorage === "undefined") return;
-  try {
-    if (_password) {
-      const encrypted = await encryptGhostEntries(entries, _password);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(encrypted));
-    } else {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
-    }
-  } catch {
-    /* ignore quota / private mode */
+export async function persistGhostEntries(
+  entries: GhostEntry[],
+): Promise<StorageWriteResult> {
+  if (typeof localStorage === "undefined") {
+    return {
+      ok: false,
+      kind: "unavailable",
+      message: "Browser storage is unavailable.",
+    };
   }
+  try {
+    const payload = _password
+      ? await encryptGhostEntries(entries, _password)
+      : entries;
+    return writeLocalStorage(STORAGE_KEY, JSON.stringify(payload));
+  } catch (error) {
+    const kind = classifyStorageError(error);
+    return { ok: false, kind, message: storageFailureMessage(kind) };
+  }
+}
+
+function notifyPersistResult(result: StorageWriteResult): void {
+  if (!result.ok) _persistListener?.(result);
 }
 
 export const useGhostAddressStore = create<GhostState>()((set, get) => ({
@@ -137,7 +161,7 @@ export const useGhostAddressStore = create<GhostState>()((set, get) => ({
           String(e.stealthAddress).toLowerCase() !==
             stealthAddress.toLowerCase(),
       );
-      void persistEntries(entries);
+      void persistGhostEntries(entries).then(notifyPersistResult);
       return { entries };
     }),
 
@@ -225,7 +249,7 @@ export function useGhostAddressPersistence(): void {
   useEffect(() => {
     if (typeof localStorage === "undefined") return;
     if (!hasLoadedFromStorage.current) return;
-    void persistEntries(entries);
+    void persistGhostEntries(entries).then(notifyPersistResult);
   }, [entries]);
 }
 

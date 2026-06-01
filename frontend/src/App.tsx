@@ -18,13 +18,20 @@ import { NetworkGuard } from "./components/NetworkGuard";
 import { useWallet } from "./hooks/useWallet";
 import { useRegistrationStatus } from "./hooks/useRegistrationStatus";
 import { useVaultStore } from "./store/vaultStore";
-import { useGhostAddressStore, useGhostAddressPersistence } from "./store/ghostAddressStore";
+import {
+  useGhostAddressStore,
+  useGhostAddressPersistence,
+  setGhostPersistListener,
+} from "./store/ghostAddressStore";
+import { setReputationPersistListener } from "./store/reputationStore";
 import { getExplorerTxUrl } from "./lib/explorer";
 import { NetworkMismatchModal } from "./components/security/NetworkMismatchModal";
 import { SecuritySettings } from "./pages/settings/SecuritySettings";
 import { FeatureDisabledNotice } from "./components/FeatureDisabledNotice";
 import { getTabAccess } from "./lib/tabAccess";
 import { getFeatureFlags } from "./lib/featureFlags";
+import { disconnectWalletSession } from "./lib/localDataManager";
+import { setPersistErrorListener } from "./lib/safePersistStorage";
 
 const SchemaStudio = lazy(() => import("./components/SchemaStudio").then((m) => ({ default: m.SchemaStudio })));
 const AttestationManager = lazy(() => import("./components/AttestationManager").then((m) => ({ default: m.AttestationManager })));
@@ -40,6 +47,7 @@ function LazyFallback() {
 }
 
 function AppContent() {
+  const { showToast } = useToast();
   const [tab, setTab] = useState<Tab>("dashboard");
   const [registrationJustCompleted, setRegistrationJustCompleted] = useState(false);
   const location = useLocation();
@@ -51,6 +59,21 @@ function AppContent() {
   const clearVault = useVaultStore((s) => s.clear);
 
   useGhostAddressPersistence();
+
+  useEffect(() => {
+    setGhostPersistListener((result) => {
+      if (!result.ok) showToast(result.message);
+    });
+    setReputationPersistListener((message) => showToast(message));
+    setPersistErrorListener((result) => {
+      if (!result.ok) showToast(result.message);
+    });
+    return () => {
+      setGhostPersistListener(null);
+      setReputationPersistListener(null);
+      setPersistErrorListener(null);
+    };
+  }, [showToast]);
 
   useEffect(() => {
     useGhostAddressStore.getState().sanitizeGhostAddresses();
@@ -99,12 +122,14 @@ function AppContent() {
     }
   }, [connect]);
 
-  const handleDisconnect = () => {
-    clearKeys();
-    clearVault();
-    disconnect();
+  const handleDisconnect = useCallback(() => {
+    disconnectWalletSession({
+      clearKeys,
+      clearVault,
+      disconnectWallet: disconnect,
+    });
     setTab("dashboard");
-  };
+  }, [clearKeys, clearVault, disconnect]);
 
   const renderView = () => {
     const access = getTabAccess(tab);
@@ -152,7 +177,8 @@ function AppContent() {
         </Suspense>
       );
     }
-    if (tab === "security" as any) return <SecuritySettings />;
+    if (tab === "security" as any)
+      return <SecuritySettings onAfterPrivacyWipe={handleDisconnect} />;
     return null;
   };
 

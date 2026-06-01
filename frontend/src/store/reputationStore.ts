@@ -7,6 +7,7 @@
 
 import { create } from "zustand";
 import type { DiscoveredTrait, ProofState, ProofData } from "../lib/reputation";
+import { writeLocalStorage } from "../lib/storageHealth";
 
 interface ReputationState {
   discoveredTraits: DiscoveredTrait[];
@@ -38,12 +39,17 @@ function loadPersistedTraits(): DiscoveredTrait[] {
   }
 }
 
+let _traitPersistListener: ((message: string) => void) | null = null;
+
+export function setReputationPersistListener(
+  listener: ((message: string) => void) | null,
+): void {
+  _traitPersistListener = listener;
+}
+
 function persistTraits(traits: DiscoveredTrait[]) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(traits));
-  } catch {
-    // Silently fail if storage is full
-  }
+  const result = writeLocalStorage(STORAGE_KEY, JSON.stringify(traits));
+  if (!result.ok) _traitPersistListener?.(result.message);
 }
 
 const initialProofState: ProofState = {

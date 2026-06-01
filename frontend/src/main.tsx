@@ -18,6 +18,8 @@ import { LandingPage } from "./components/LandingPage.tsx";
 import { BrandingPage } from "./components/BrandingPage.tsx";
 import { StellarWalletProviders } from "./context/StellarWalletProviders.tsx";
 import { MainnetSecurityLayer } from "./components/security/MainnetSecurityLayer.tsx";
+import { BrowserGuard, BrowserSupportBanner } from "./components/BrowserGuard.tsx";
+import { StorageHealthBanner } from "./components/StorageHealthBanner.tsx";
 import { logExpectedArtifactHashes } from "./lib/artifactHashes.ts";
 
 console.log("[Opaque] App bootstrapping (Stellar)…");
@@ -37,8 +39,11 @@ function LandingRoute() {
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
+    <BrowserGuard>
     <StellarWalletProviders>
       <BrowserRouter>
+        <StorageHealthBanner />
+        <BrowserSupportBanner />
         <MainnetSecurityLayer />
         <Routes>
           <Route path="/" element={<LandingRoute />} />
@@ -54,5 +59,6 @@ createRoot(document.getElementById("root")!).render(
         </Routes>
       </BrowserRouter>
     </StellarWalletProviders>
+    </BrowserGuard>
   </StrictMode>,
 );
