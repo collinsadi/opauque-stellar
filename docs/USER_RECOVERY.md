@@ -62,7 +62,9 @@ This is a **convenience feature**, not a backup:
 
 ### Disconnect / logout
 
-Disconnecting clears in-memory master keys and the signature session. It does **not** delete ghost addresses or vault entries from `localStorage`.
+Disconnecting clears in-memory master keys, the signature session, and vault entries. It does **not** delete ghost addresses, transaction history, schema cache, or IndexedDB announcement data from the browser.
+
+Use **Security settings → Clear all local data** for a full privacy wipe. See **[LOCAL_DATA_AND_DISCONNECT.md](./LOCAL_DATA_AND_DISCONNECT.md)** for the full matrix.
 
 ---
 

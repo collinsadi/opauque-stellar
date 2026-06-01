@@ -3,9 +3,16 @@ import { QRCodeCanvas } from "qrcode.react";
 import { useKeys } from "../context/KeysContext";
 import { computeStealthAddressAndViewTag } from "../lib/stealth";
 import { getCluster } from "../lib/chain";
-import { useGhostAddressStore } from "../store/ghostAddressStore";
+import {
+  useGhostAddressStore,
+  persistGhostEntries,
+} from "../store/ghostAddressStore";
 import { useWatchlistStore } from "../hooks/useWatchlist";
-import { createPaymentLink } from "../lib/paymentLink";
+import {
+  createPaymentLink,
+  decodePaymentLink,
+  isValidMetaAddress,
+} from "../lib/paymentLink";
 import { RecoveryDocLink } from "./RecoveryDocLink";
 import { BackupReminderModal } from "./security/BackupReminderModal";
 import { useSecurityStore } from "../store/securityStore";
@@ -28,6 +35,11 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
     stealthAddress: string;
     ephemeralPrivKeyHex: string;
   } | null>(null);
+  const [ghostPersistWarning, setGhostPersistWarning] = useState<string | null>(
+    null,
+  );
+  const paymentLinkQrRef = useRef<HTMLCanvasElement>(null);
+  const metaQrRef = useRef<HTMLCanvasElement>(null);
   const addGhost = useGhostAddressStore((s) => s.add);
   const watchlistAdd = useWatchlistStore((s) => s.add);
   const hasAcknowledgedReceiveRisk = useSecurityStore((s) => s.hasAcknowledgedReceiveRisk);
@@ -35,13 +47,12 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
   const cluster = getCluster();
   const manualGhostEnabled = getFeatureFlags().manualGhostAddresses;
   const qrRef = useRef<HTMLCanvasElement>(null);
-  const handleDownloadQR = useCallback(() => {
-    const canvas = qrRef.current;
+  const handleDownloadQR = useCallback((canvas: HTMLCanvasElement | null, name: string) => {
     if (!canvas) return;
     const url = canvas.toDataURL("image/png");
     const a = document.createElement("a");
     a.href = url;
-    a.download = "stealth-address-qr.png";
+    a.download = name;
     a.click();
   }, []);
 
@@ -72,6 +83,14 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
   }
 
   const paymentLink = createPaymentLink(stealthMetaAddressHex, cluster);
+  const paymentLinkValid = "link" in decodePaymentLink(paymentLink);
+  const metaAddressValid = isValidMetaAddress(stealthMetaAddressHex);
+  const networkLabel =
+    cluster === "mainnet"
+      ? "Mainnet"
+      : cluster === "testnet"
+        ? "Testnet"
+        : cluster;
 
   if (mode === "choose") {
     return (
@@ -154,16 +173,83 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
     return (
       <div className="w-full">
         <h2 className="font-display text-xl font-bold text-white mb-1">Payment link</h2>
-        <p className="text-sm text-mist mb-5">
+        <p className="text-sm text-mist mb-4">
           Share either your meta-address or link. Senders derive a unique stealth address per payment.{" "}
           <RecoveryDocLink section="payment-link">Recovery guide</RecoveryDocLink>
         </p>
+        <div className="mb-4 px-4 py-3 rounded-2xl border border-amber-500/40 bg-amber-500/10">
+          <p className="text-sm font-medium text-amber-200">Network-specific link</p>
+          <p className="text-xs text-amber-200/80 mt-1">
+            This payment link and QR codes are bound to Stellar <strong>{networkLabel}</strong>.
+            Senders on a different network cannot use them. Switch the app network before sharing
+            if your audience uses another environment.
+          </p>
+        </div>
+        {(!paymentLinkValid || !metaAddressValid) && (
+          <div className="mb-4 px-4 py-3 rounded-2xl border border-error/40 bg-error/10 text-xs text-amber-100">
+            Payment link validation failed. Regenerate keys or reconnect your wallet.
+          </div>
+        )}
+        <div className="grid gap-4 sm:grid-cols-2 mb-4">
+          <div className="rounded-2xl border border-ink-700 bg-ink-900/25 p-4">
+            <p className="text-[11px] uppercase tracking-wider text-mist/70 mb-2">
+              Payment link QR
+              {paymentLinkValid ? " ✓" : ""}
+            </p>
+            <div className="p-3 rounded-xl bg-white inline-block">
+              <QRCodeCanvas
+                ref={paymentLinkQrRef}
+                value={paymentLink}
+                size={160}
+                level="M"
+                bgColor="#ffffff"
+                fgColor="#000000"
+                marginSize={2}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                handleDownloadQR(paymentLinkQrRef.current, "opaque-payment-link-qr.png")
+              }
+              className="mt-3 block text-xs text-sol-purple hover:underline"
+            >
+              Download payment link QR
+            </button>
+          </div>
+          <div className="rounded-2xl border border-ink-700 bg-ink-900/25 p-4">
+            <p className="text-[11px] uppercase tracking-wider text-mist/70 mb-2">
+              Meta-address QR
+              {metaAddressValid ? " ✓" : ""}
+            </p>
+            <div className="p-3 rounded-xl bg-white inline-block">
+              <QRCodeCanvas
+                ref={metaQrRef}
+                value={stealthMetaAddressHex}
+                size={160}
+                level="M"
+                bgColor="#ffffff"
+                fgColor="#000000"
+                marginSize={2}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                handleDownloadQR(metaQrRef.current, "opaque-meta-address-qr.png")
+              }
+              className="mt-3 block text-xs text-sol-purple hover:underline"
+            >
+              Download meta-address QR
+            </button>
+          </div>
+        </div>
         <div className="rounded-2xl border border-ink-700 bg-ink-900/25 p-4 mb-3">
           <p className="text-[11px] uppercase tracking-wider text-mist/70 mb-1">Meta-address</p>
           <div className="font-mono text-xs text-white/90 break-all">{stealthMetaAddressHex}</div>
         </div>
         <div className="rounded-2xl border border-ink-700 bg-ink-900/20 p-4 mb-5">
-          <p className="text-[11px] uppercase tracking-wider text-mist/70 mb-1">Payment link</p>
+          <p className="text-[11px] uppercase tracking-wider text-mist/70 mb-1">Payment link (opaque://v1)</p>
           <div className="font-mono text-xs text-mist break-all">{paymentLink}</div>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -209,8 +295,9 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
       );
     }
     if (!ghostResult) {
-      const generate = () => {
+      const generate = async () => {
         try {
+          setGhostPersistWarning(null);
           const { stealthAddress, ephemeralPriv } = computeStealthAddressAndViewTag(stealthMetaAddressHex);
           const ephemeralPrivKeyHex = bytesToHex(ephemeralPriv);
           if (ephemeralPrivKeyHex == null || ephemeralPrivKeyHex === "") {
@@ -218,6 +305,14 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
             return;
           }
           addGhost({ cluster, stealthAddress, ephemeralPrivKeyHex });
+          const persistResult = await persistGhostEntries(
+            useGhostAddressStore.getState().entries,
+          );
+          if (!persistResult.ok) {
+            setGhostPersistWarning(
+              `${persistResult.message} Copy the ephemeral key now — it may be lost on refresh.`,
+            );
+          }
           watchlistAdd(cluster, stealthAddress);
           setGhostResult({ stealthAddress, ephemeralPrivKeyHex });
         } catch (err) {
@@ -265,9 +360,15 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
           <RecoveryDocLink section="device-migration">Device migration steps</RecoveryDocLink>
         </p>
         <h2 className="font-display text-xl font-bold text-white mb-1">Your ghost address</h2>
-        <p className="text-sm text-mist mb-4">
-          Share this address with the sender. It is stored locally; the app will detect incoming payments.
-        </p>
+        {ghostPersistWarning ? (
+          <div className="mb-4 px-4 py-3 rounded-2xl border border-error/40 bg-error/10 text-xs text-amber-100">
+            {ghostPersistWarning}
+          </div>
+        ) : (
+          <p className="text-sm text-mist mb-4">
+            Share this address with the sender. Recovery data was saved to this browser; the app will detect incoming payments.
+          </p>
+        )}
         <div className="p-4 rounded-2xl bg-white inline-block mb-4">
           <QRCodeCanvas
             ref={qrRef}
@@ -292,7 +393,7 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
           </button>
           <button
             type="button"
-            onClick={handleDownloadQR}
+            onClick={() => handleDownloadQR(qrRef.current, "stealth-address-qr.png")}
             className="rounded-xl border border-ink-600 bg-ink-950/30 px-3.5 py-2 text-sm font-medium text-mist transition-colors hover:border-sol-purple/30 hover:text-white"
           >
             Download QR Code
