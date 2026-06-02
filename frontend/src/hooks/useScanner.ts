@@ -17,6 +17,8 @@ import {
 import type { StellarNetwork } from "../lib/chain";
 import {
   getAnnouncementsForCluster,
+  getAnnouncementsForClusterCapped,
+  estimateAnnouncementsMemoryBytes,
   getSyncState,
   setSyncState,
   clearSyncState,
@@ -33,8 +35,11 @@ import { getStoredGhostEntries } from "../store/ghostAddressStore";
 
 type PublicClient = SorobanRpc.Server | null;
 
+/** Max announcements held in React state at once. Older entries stay in IndexedDB. */
+const SCAN_MEMORY_CAP = 50_000;
+
 export type ScanProgress = {
-  phase: "idle" | "loading-cache" | "indexer-fetch" | "indexer-fetched" | "syncing" | "backfilling" | "matching" | "done" | "error";
+  phase: "idle" | "loading-cache" | "indexer-fetch" | "indexer-fetched" | "syncing" | "backfilling" | "matching" | "done" | "error" | "cancelled";
   /** 0–100 for backfilling/syncing */
   percent: number;
   message: string;
@@ -42,6 +47,10 @@ export type ScanProgress = {
   toBlock: bigint;
   currentBlock: bigint;
   error: string | null;
+  /** Announcements currently held in React state (capped at SCAN_MEMORY_CAP). */
+  announcementCount: number;
+  /** Approximate heap usage in bytes for the in-memory announcement set. */
+  memoryEstimateBytes: number;
 };
 
 export type UseScannerOptions = {
@@ -59,7 +68,7 @@ export type WatchlistBalances = {
 };
 
 export type UseScannerResult = {
-  /** All cached + newly synced announcements for the chain (raw, not yet matched with WASM) */
+  /** Announcements for the chain, capped at SCAN_MEMORY_CAP (most recent by slot). */
   announcements: CachedAnnouncement[];
   progress: ScanProgress;
   /** Native balance per ghost/watchlist address (manual scan). Use for displaying/claiming manual receives. */
@@ -79,6 +88,8 @@ export type UseScannerResult = {
   refresh: () => Promise<void>;
   /** Call when WASM matching has finished (e.g. after indexer path) so progress can move to "done" */
   markSyncComplete: () => void;
+  /** Abort the current in-progress scan; sets phase to "cancelled". */
+  cancelScan: () => void;
 };
 
 function getStartBlock(_cluster: StellarNetwork): bigint {
@@ -102,13 +113,16 @@ async function fetchLogsAdaptive(
   fromBlock: bigint,
   toBlock: bigint,
   _cluster: StellarNetwork,
-  onChunk: (from: bigint, to: bigint, logs: CachedAnnouncement[]) => Promise<void>
+  onChunk: (from: bigint, to: bigint, logs: CachedAnnouncement[]) => Promise<void>,
+  signal?: AbortSignal
 ): Promise<void> {
   const publicClient = getSorobanServer();
   let currentFrom = fromBlock;
   const BATCH_SIZE = 10000n; // Ledger range per call
 
   while (currentFrom <= toBlock) {
+    if (signal?.aborted) throw new DOMException("Scan cancelled", "AbortError");
+
     const currentTo =
       currentFrom + BATCH_SIZE > toBlock ? toBlock : currentFrom + BATCH_SIZE;
 
@@ -212,9 +226,12 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
     toBlock: 0n,
     currentBlock: 0n,
     error: null,
+    announcementCount: 0,
+    memoryEstimateBytes: 0,
   });
   const [isBackfilling, setIsBackfilling] = useState(false);
   const refreshKeyRef = useRef(0);
+  const scanAbortRef = useRef<AbortController | null>(null);
 
   const runChunkedRpcSync = useCallback(
     async (
@@ -223,7 +240,8 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
       fromBlock: bigint,
       toBlock: bigint,
       cacheEmpty: boolean,
-      startBlock: bigint
+      startBlock: bigint,
+      signal?: AbortSignal
     ) => {
       await fetchLogsAdaptive(
         announcerAddress,
@@ -231,6 +249,7 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
         toBlock,
         cluster!,
         async (_from, end, logs) => {
+          if (signal?.aborted) throw new DOMException("Scan cancelled", "AbortError");
           await putAnnouncements(cluster!, logs);
           await setSyncState(cluster!, Number(end));
           const totalBlocks = Number(toBlock - (cacheEmpty ? startBlock : fromBlock) + 1n);
@@ -243,7 +262,8 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
             message: cacheEmpty ? `Optimizing Vault… [${percent}%]` : `Syncing… ${percent}%`,
             currentBlock: end,
           }));
-        }
+        },
+        signal
       );
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- opts only appears in type annotations
@@ -258,6 +278,11 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
       console.log("enabled", enabled);
       if (cluster == null || !publicClient || !announcerAddress || !enabled) return;
 
+      // Cancel any in-progress scan before starting a new one.
+      scanAbortRef.current?.abort();
+      const abortController = new AbortController();
+      scanAbortRef.current = abortController;
+      const { signal } = abortController;
 
       const startBlock = getStartBlock(cluster);
       const subgraphUrl = getSubgraphUrl(cluster);
@@ -270,6 +295,8 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
       setProgress((p: ScanProgress) => ({ ...p, phase: "loading-cache", message: "Loading cache…", error: null }));
 
       const cached = await getAnnouncementsForCluster(cluster);
+      if (signal.aborted) return;
+
       const sync = await getSyncState(cluster);
       const lastScanned = sync?.lastScannedSlot ?? null;
       // Gap detection: ensure cached announcements cover up to lastScannedSlot
@@ -291,6 +318,8 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
         }
       }
       const toBlock = BigInt(await publicClient.getSlot());
+      if (signal.aborted) return;
+
       const fromBlock =
         clearCache || lastScanned == null
           ? startBlock
@@ -316,8 +345,10 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
             })));
             const maxSlot = list.length > 0 ? Math.max(...list.map((a) => a.slot)) : 0;
             await setSyncState(cluster, maxSlot);
-            // Pass announcements directly so WASM scanning loop runs immediately (no cache read).
-            setAnnouncements(list);
+            if (signal.aborted) return;
+            // Cap in-memory set; full dataset stays in IndexedDB for WASM matching.
+            const capped = list.length > SCAN_MEMORY_CAP ? list.slice(-SCAN_MEMORY_CAP) : list;
+            setAnnouncements(capped);
             setProgress((p: ScanProgress) => ({
               ...p,
               phase: "indexer-fetched",
@@ -327,11 +358,14 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
               toBlock,
               currentBlock: toBlock,
               error: null,
+              announcementCount: capped.length,
+              memoryEstimateBytes: estimateAnnouncementsMemoryBytes(capped.length),
             }));
             setIsBackfilling(false);
             return;
           }
-        } catch {
+        } catch (err) {
+          if (err instanceof DOMException && err.name === "AbortError") return;
           // Fall through to chunked RPC fallback (safe mode)
         }
       }
@@ -349,7 +383,8 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
           error: null,
         }));
       } else {
-        setAnnouncements(cached);
+        const cappedCached = cached.length > SCAN_MEMORY_CAP ? cached.slice(-SCAN_MEMORY_CAP) : cached;
+        setAnnouncements(cappedCached);
         if (fromBlock > toBlock) {
           setProgress((p: ScanProgress) => ({
             ...p,
@@ -360,6 +395,8 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
             toBlock,
             currentBlock: toBlock,
             error: null,
+            announcementCount: cappedCached.length,
+            memoryEstimateBytes: estimateAnnouncementsMemoryBytes(cappedCached.length),
           }));
           setIsBackfilling(false);
           return;
@@ -376,8 +413,9 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
       }
 
       try {
-        await runChunkedRpcSync(publicClient, announcerAddress, fromBlock, toBlock, cacheEmpty, startBlock);
-        const updated = await getAnnouncementsForCluster(cluster);
+        await runChunkedRpcSync(publicClient, announcerAddress, fromBlock, toBlock, cacheEmpty, startBlock, signal);
+        if (signal.aborted) return;
+        const updated = await getAnnouncementsForClusterCapped(cluster, SCAN_MEMORY_CAP);
         setAnnouncements(updated);
         setProgress((p: ScanProgress) => ({
           ...p,
@@ -388,9 +426,21 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
           toBlock,
           currentBlock: toBlock,
           error: null,
+          announcementCount: updated.length,
+          memoryEstimateBytes: estimateAnnouncementsMemoryBytes(updated.length),
         }));
         setIsBackfilling(false);
       } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") {
+          setProgress((p: ScanProgress) => ({
+            ...p,
+            phase: "cancelled",
+            message: "Scan cancelled",
+            error: null,
+          }));
+          setIsBackfilling(false);
+          return;
+        }
         const msg = getUserFacingSyncMessage(err);
         logSyncError(err, "Sync failed");
         setProgress((p: ScanProgress) => ({
@@ -424,7 +474,7 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
     setProgress((p: ScanProgress) => ({ ...p, phase: "loading-cache", message: "Loading cache…" }));
 
     (async () => {
-      const cached = await getAnnouncementsForCluster(cluster);
+      const cached = await getAnnouncementsForClusterCapped(cluster, SCAN_MEMORY_CAP);
       if (cancelled) return;
       setAnnouncements(cached);
 
@@ -468,6 +518,17 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
       if (p.phase !== "indexer-fetched") return p;
       return { ...p, phase: "done", message: "Up to date" };
     });
+  }, []);
+
+  const cancelScan = useCallback(() => {
+    scanAbortRef.current?.abort();
+    setProgress((p: ScanProgress) => ({
+      ...p,
+      phase: "cancelled",
+      message: "Scan cancelled",
+      error: null,
+    }));
+    setIsBackfilling(false);
   }, []);
 
   // State-polling: check watchlist + ghost addresses + opaque-ghost-addresses (current chain only)
@@ -545,5 +606,6 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
     retrySync,
     refresh,
     markSyncComplete,
+    cancelScan,
   };
 }

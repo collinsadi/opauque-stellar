@@ -13,6 +13,7 @@ import { invokeVerifyProofV2, hexToBytes, hexPubkeyToBase58 } from "../lib/progr
 import { useOpaqueWasm } from "../hooks/useOpaqueWasm";
 import { useKeys } from "../context/KeysContext";
 import { getAnnouncementsForCluster } from "../lib/opaqueCache";
+import { buildSingleLeafMerkleTree } from "../lib/merkle";
 import { getCluster } from "../lib/chain";
 import { fetchLatestValidMerkleRoot, generateReputationProof } from "../lib/reputationProver";
 import { getExplorerTxUrl } from "../lib/explorer";
@@ -130,22 +131,9 @@ async function buildCircuitInputs(
   const leaf: bigint = ph([stealthPk, schemaId, issuerPkX, traitDataHash, nonce]);
 
   // ── 6. Build a depth-20 single-leaf Poseidon Merkle tree ─────────────────
-  // zero_hashes[i] = hash of an empty subtree at level i.
-  const zeroHashes: bigint[] = [0n];
-  for (let i = 0; i < MERKLE_DEPTH; i++) {
-    zeroHashes.push(ph([zeroHashes[i], zeroHashes[i]]));
-  }
-
-  // The single leaf is at index 0 (always a left child at every level).
-  const merklePath: bigint[] = [];
-  const merklePathIndices: number[] = [];
-  let current: bigint = leaf;
-  for (let i = 0; i < MERKLE_DEPTH; i++) {
-    merklePath.push(zeroHashes[i]);   // sibling = empty subtree at this level
-    merklePathIndices.push(0);        // 0 = current node is the left child
-    current = ph([current, zeroHashes[i]]);
-  }
-  const merkleRoot: bigint = current;
+  // Leaf is at index 0 (always a left child). O(depth) via buildSingleLeafMerkleTree.
+  const { root: merkleRoot, path: merklePath, pathIndices: merklePathIndices } =
+    buildSingleLeafMerkleTree(leaf, MERKLE_DEPTH, ph);
 
   // ── 7. Compute nullifier_hash = Poseidon2(stealth_pk, external_nullifier) ─
   const nullifierHash: bigint = ph([stealthPk, externalNullifier]);

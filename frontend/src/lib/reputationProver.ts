@@ -8,6 +8,7 @@
 
 import type { OpaqueWasmModule } from "../hooks/useOpaqueWasm";
 import type { ProofData, DiscoveredTrait } from "./reputation";
+import { buildSingleLeafMerkleTree } from "./merkle";
 import { reputationAddresses } from "../contracts/reputationAddresses";
 import { BASE_FEE, Contract, TransactionBuilder, nativeToScVal } from "@stellar/stellar-sdk";
 import { bytesToScVal, getSorobanServer, invokeContractMethod, u64ToScVal } from "./stellar";
@@ -63,29 +64,18 @@ async function buildCircuitConsistentWitness(
   const addressCommitment = F.toObject(poseidon([sharedX, sharedY, stealthPubX, stealthPubY]));
   const leaf = F.toObject(poseidon([addressCommitment, attestationId]));
 
-  const zeroHashes: bigint[] = [];
-  zeroHashes.push(F.toObject(poseidon([0n, 0n])));
-  for (let i = 1; i < TREE_DEPTH; i++) {
-    zeroHashes.push(F.toObject(poseidon([zeroHashes[i - 1], zeroHashes[i - 1]])));
-  }
-
-  const merklePathElements: string[] = [];
-  const merklePathIndices: number[] = [];
-  let current = leaf;
-  for (let i = 0; i < TREE_DEPTH; i++) {
-    merklePathElements.push(zeroHashes[i].toString());
-    merklePathIndices.push(0);
-    current = F.toObject(poseidon([current, zeroHashes[i]]));
-  }
+  const ph = (inputs: bigint[]): bigint => F.toObject(poseidon(inputs)) as bigint;
+  const { root: merkleRoot, path: merklePath, pathIndices: merklePathIndices } =
+    buildSingleLeafMerkleTree(leaf as bigint, TREE_DEPTH, ph);
 
   return {
-    merkle_root: current.toString(),
+    merkle_root: merkleRoot.toString(),
     attestation_id: attestationId.toString(),
     external_nullifier: extNullifier.toString(),
     stealth_private_key: stealthPriv.toString(),
     ephemeral_pubkey: [ephemeralPubX.toString(), ephemeralPubY.toString()],
     announcement_attestation_id: attestationId.toString(),
-    merkle_path_elements: merklePathElements,
+    merkle_path_elements: merklePath.map((h) => h.toString()),
     merkle_path_indices: merklePathIndices,
   };
 }

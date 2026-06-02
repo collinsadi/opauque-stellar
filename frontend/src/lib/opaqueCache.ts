@@ -143,3 +143,26 @@ export async function getAnnouncementCountForCluster(cluster: string): Promise<n
   const index = db.transaction("announcements").store.index("by-cluster");
   return index.count(cluster);
 }
+
+/**
+ * Rough per-entry memory footprint for a CachedAnnouncement.
+ * txSig ~88 chars + 3 hex fields ~66 chars each + cluster + overhead ≈ 400 bytes.
+ */
+export const ANNOUNCEMENT_APPROX_BYTES = 400;
+
+/** Returns an approximate heap size in bytes for a given announcement count. */
+export function estimateAnnouncementsMemoryBytes(count: number): number {
+  return count * ANNOUNCEMENT_APPROX_BYTES;
+}
+
+/**
+ * Returns at most `limit` announcements for a cluster, keeping the most recent
+ * by slot. Use this to bound how many entries are loaded into React state.
+ */
+export async function getAnnouncementsForClusterCapped(
+  cluster: string,
+  limit: number
+): Promise<CachedAnnouncement[]> {
+  const all = await getAnnouncementsForCluster(cluster);
+  return all.length > limit ? all.slice(-limit) : all;
+}
