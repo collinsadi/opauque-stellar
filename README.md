@@ -44,6 +44,10 @@
 
 > Experimental software. Read [DISCLAIMER.md](DISCLAIMER.md) before using real funds.
 
+Security researchers should use the confidential disclosure process in
+[SECURITY.md](SECURITY.md), which defines the in-scope contracts, deployment
+manifests, response SLAs, reward expectations, and safe-harbor terms.
+
 ---
 
 ## Quick start
