@@ -6,7 +6,15 @@ import {
   TransactionBuilder,
   nativeToScVal,
   StrKey,
+  Asset,
 } from "@stellar/stellar-sdk";
+
+const USDC_ISSUER: Record<string, string> = {
+  mainnet: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+  testnet: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+  futurenet: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+  local: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+};
 import {
   computeStealthAddressAndViewTag,
   formatXlm,
@@ -64,6 +72,7 @@ export function SendView() {
 
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("");
+  const [selectedAsset, setSelectedAsset] = useState<"XLM" | "USDC">("XLM");
   const [txHash, setTxHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -81,13 +90,29 @@ export function SendView() {
     (async () => {
       try {
         const account = await getHorizonServer().loadAccount(address);
-        const native = account.balances.find((b) => b.asset_type === "native");
-        const stroops = BigInt(
-          Math.round(
-            parseFloat((native as { balance: string })?.balance ?? "0") * 1e7,
-          ),
-        );
-        if (!cancelled) setActiveBalance(stroops);
+        if (selectedAsset === "XLM") {
+          const native = account.balances.find((b) => b.asset_type === "native");
+          const stroops = BigInt(
+            Math.round(
+              parseFloat((native as { balance: string })?.balance ?? "0") * 1e7,
+            ),
+          );
+          if (!cancelled) setActiveBalance(stroops);
+        } else {
+          const network = getNetwork();
+          const issuer = USDC_ISSUER[network] || USDC_ISSUER.testnet;
+          const token = account.balances.find(
+            (b) =>
+              b.asset_code === "USDC" &&
+              (b as { asset_issuer?: string })?.asset_issuer === issuer,
+          );
+          const stroops = BigInt(
+            Math.round(
+              parseFloat((token as { balance: string })?.balance ?? "0") * 1e7,
+            ),
+          );
+          if (!cancelled) setActiveBalance(stroops);
+        }
       } catch {
         if (!cancelled) setActiveBalance(null);
       } finally {
@@ -97,14 +122,17 @@ export function SendView() {
     return () => {
       cancelled = true;
     };
-  }, [address]);
+  }, [address, selectedAsset]);
 
   const maxSendableBalance = useMemo(() => {
     if (activeBalance == null) return null;
-    return activeBalance > STROOP_FEE_BUFFER
-      ? activeBalance - STROOP_FEE_BUFFER
-      : 0n;
-  }, [activeBalance]);
+    if (selectedAsset === "XLM") {
+      return activeBalance > STROOP_FEE_BUFFER
+        ? activeBalance - STROOP_FEE_BUFFER
+        : 0n;
+    }
+    return activeBalance;
+  }, [activeBalance, selectedAsset]);
 
   const inputStroops = useMemo(() => {
     const raw = amount.trim();
@@ -213,12 +241,47 @@ export function SendView() {
       const source = await horizon.loadAccount(publicKey);
       const announcer = new Contract(deployedAddresses.stealthAnnouncer);
 
-      // Fresh stealth accounts don't exist yet, so create them on first send
-      // instead of issuing a plain payment that would fail.
-      const transferOp = await buildNativeTransferOperation({
-        destination: stealthStellarAddress,
-        amountStroops: value,
-      });
+      const usdcIssuer = USDC_ISSUER[network] || USDC_ISSUER.testnet;
+      const usdcAsset = new Asset("USDC", usdcIssuer);
+
+      let transferOp;
+      if (selectedAsset === "XLM") {
+        transferOp = await buildNativeTransferOperation({
+          destination: stealthStellarAddress,
+          amountStroops: value,
+        });
+      } else {
+        // USDC trustline check
+        addStep("wait", "Checking recipient USDC trustline…");
+        try {
+          const destAccount = await horizon.loadAccount(stealthStellarAddress);
+          const hasTrustline = destAccount.balances.some(
+            (b) =>
+              b.asset_code === "USDC" &&
+              (b as { asset_issuer?: string })?.asset_issuer === usdcIssuer,
+          );
+          if (!hasTrustline) {
+            throw new Error("Recipient account lacks USDC trustline.");
+          }
+          addStep("ok", "Recipient USDC trustline verified.");
+        } catch {
+          throw new Error(
+            "Recipient account does not exist or lacks USDC trustline. " +
+            "A recipient must have a USDC trustline established before receiving USDC."
+          );
+        }
+
+        transferOp = Operation.payment({
+          destination: stealthStellarAddress,
+          asset: usdcAsset,
+          amount: (Number(value) / 1e7).toFixed(7),
+        });
+      }
+
+      // Encode asset encoding in metadata: metadataEncoded[0] = viewTag, metadataEncoded[1] = asset type (0 for XLM, 1 for USDC)
+      const metadataEncoded = new Uint8Array(2);
+      metadataEncoded[0] = metadata[0];
+      metadataEncoded[1] = selectedAsset === "USDC" ? 0x01 : 0x00;
 
       let tx = new TransactionBuilder(source, {
         fee: BASE_FEE,
@@ -232,7 +295,7 @@ export function SendView() {
             u64ToScVal(SCHEME_ID_SECP256K1),
             bytesToScVal(hexToBytes(stealthAddress)),
             bytesToScVal(ephemeralPubKey),
-            bytesToScVal(metadata),
+            bytesToScVal(metadataEncoded),
           ),
         )
         .setTimeout(180)
@@ -265,8 +328,8 @@ export function SendView() {
           "…" +
           stealthStellarAddress.slice(-4),
         amountStroops: value.toString(),
-        tokenSymbol: "XLM",
-        tokenAddress: null,
+        tokenSymbol: selectedAsset,
+        tokenAddress: selectedAsset === "USDC" ? usdcAsset.contractId(passphrase) : null,
         amount: formatXlm(value),
         txHash: send.hash,
       });
@@ -296,15 +359,28 @@ export function SendView() {
 
   return (
     <motion.div className="card max-w-lg mx-auto">
-      <h2 className="text-lg font-semibold text-white mb-1">Send XLM</h2>
+      <h2 className="text-lg font-semibold text-white mb-1">Send Privately</h2>
       <p className="text-sm text-neutral-500 mb-4">
-        Send XLM to a stealth meta-address. The app derives a one-time Stellar
+        Send XLM or USDC to a stealth meta-address. The app derives a one-time Stellar
         account and publishes a Soroban announcement.
       </p>
 
       <PrivacyWarningCallout message={SEND_PRIVACY_WARNING} className="mb-6" />
 
       <motion.div className="space-y-4">
+        <div>
+          <label className="block text-sm text-neutral-400 mb-1">
+            Asset
+          </label>
+          <select
+            value={selectedAsset}
+            onChange={(e) => setSelectedAsset(e.target.value as "XLM" | "USDC")}
+            className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white focus:outline-none"
+          >
+            <option value="XLM">XLM (Stellar Lumens)</option>
+            <option value="USDC">USDC (USD Coin)</option>
+          </select>
+        </div>
         <div>
           <label className="block text-sm text-neutral-400 mb-1">
             Recipient address or meta-address
@@ -324,7 +400,7 @@ export function SendView() {
         </div>
         <div>
           <label className="block text-sm text-neutral-400 mb-1">
-            Amount (XLM)
+            Amount ({selectedAsset})
           </label>
           <div className="flex gap-2">
             <input
@@ -347,7 +423,7 @@ export function SendView() {
             <p className="text-xs text-neutral-500 mt-1">Loading balance…</p>
           ) : formattedMaxBalance != null ? (
             <p className="text-xs text-neutral-500 mt-1">
-              Available: {formattedMaxBalance} XLM
+              Available: {formattedMaxBalance} {selectedAsset}
             </p>
           ) : null}
         </div>
