@@ -249,6 +249,64 @@ pub enum ViewTagCheck {
     PossibleMatch,
 }
 
+// =============================================================================
+// Telemetry: view-tag collision tracking
+// =============================================================================
+
+/// Telemetry counters for view-tag filter performance analysis.
+/// Records false positive rate without exposing PII or cryptographic material.
+#[derive(Debug, Clone, Default)]
+pub struct ScanTelemetry {
+    /// Number of announcements that passed view-tag filter.
+    pub view_tag_matches: u64,
+    /// Number of view-tag matches confirmed as true positives after full derivation.
+    pub full_derivation_confirms: u64,
+    /// Number of view-tag matches that were false positives.
+    pub view_tag_false_positives: u64,
+}
+
+impl ScanTelemetry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record a view-tag match (before full derivation).
+    pub fn record_view_tag_match(&mut self) {
+        self.view_tag_matches = self.view_tag_matches.saturating_add(1);
+    }
+
+    /// Record the result of full derivation after a view-tag match.
+    pub fn record_full_derivation_result(&mut self, confirmed: bool) {
+        if confirmed {
+            self.full_derivation_confirms = self.full_derivation_confirms.saturating_add(1);
+        } else {
+            self.view_tag_false_positives = self.view_tag_false_positives.saturating_add(1);
+        }
+    }
+
+    /// Calculate false positive rate as a percentage (0-100).
+    /// Returns None if no view-tag matches have been recorded.
+    pub fn false_positive_rate(&self) -> Option<f64> {
+        if self.view_tag_matches == 0 {
+            return None;
+        }
+        Some((self.view_tag_false_positives as f64 / self.view_tag_matches as f64) * 100.0)
+    }
+
+    /// Export telemetry as JSON-compatible structure for diagnostics.
+    pub fn to_diagnostics(&self) -> String {
+        format!(
+            "{{\"view_tag_matches\":{},\"full_derivation_confirms\":{},\"view_tag_false_positives\":{},\"false_positive_rate\":{}}}",
+            self.view_tag_matches,
+            self.full_derivation_confirms,
+            self.view_tag_false_positives,
+            self.false_positive_rate()
+                .map(|r| format!("{:.2}", r))
+                .unwrap_or_else(|| "null".to_string())
+        )
+    }
+}
+
 /// Checks the announcement's view tag against the local secret hash **before**
 /// doing the expensive elliptic curve addition. If the view tag does not match,
 /// the announcement is not for this recipient (~255/256 of announcements).

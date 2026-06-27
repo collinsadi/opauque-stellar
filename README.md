@@ -73,6 +73,18 @@ npm run dev
 
 Open **http://localhost:5173** · connect Freighter on testnet · initialize stealth keys.
 
+#### WASM SIMD Optimization (Optional)
+
+For modern browsers, build with SIMD support for 1.5-3x faster scanning:
+
+```bash
+cd scanner
+RUSTFLAGS="-C target-feature=+simd128,+bulk-memory" \
+  wasm-pack build --release --target web --profile wasm-simd --out-dir ../frontend/public/pkg
+```
+
+**Browser requirements**: Chrome 91+, Firefox 89+, Safari 16.4+. See [WASM_SIMD_EVALUATION.md](docs/WASM_SIMD_EVALUATION.md) for details.
+
 ### 2 · Deploy contracts (optional)
 
 ```bash

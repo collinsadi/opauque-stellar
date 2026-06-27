@@ -28,6 +28,35 @@ poseidon-bn128 = "0.1.1"
 scalarff = { version = "0.4", features = ["alt_bn128"] }
 log = "0.4"
 env_logger = "0.10"
+
 [dev-dependencies]
 criterion = "0.5"
 rand = "0.8"
+
+# SIMD optimization profiles for WASM
+[profile.release-simd]
+inherits = "release"
+# Enable SIMD128 for WebAssembly
+# Note: requires browser support for WebAssembly SIMD
+# Chrome 91+, Firefox 89+, Safari 16.4+
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+# Production WASM build with SIMD (use with wasm-pack)
+# Build with: wasm-pack build --release --target web -- --features simd
+[profile.wasm-simd]
+inherits = "release"
+opt-level = 3
+lto = true
+
+[features]
+# SIMD feature flag for conditional compilation
+simd = []
+
+[[bench]]
+name = "scanner_perf"
+harness = false

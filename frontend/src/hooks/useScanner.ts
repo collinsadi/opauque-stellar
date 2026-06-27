@@ -21,6 +21,10 @@ import {
   clearSyncState,
   putAnnouncements,
   clearClusterCache,
+  saveScanCheckpoint,
+  getScanCheckpoint,
+  validateCheckpoint,
+  clearScanCheckpoint,
   type CachedAnnouncement,
 } from "../lib/opaqueCache";
 import { getSorobanServer } from "../lib/stellar";
@@ -30,6 +34,7 @@ import {
 } from "../lib/syncErrorUtils";
 import { getStoredGhostEntries } from "../store/ghostAddressStore";
 import { getManifestForNetwork } from "../contracts/deploymentManifest";
+import { getNetworkPassphrase } from "../lib/chain";
 import {
   scanAnnouncementsInWorker,
   type ScannerAnnouncement,
@@ -74,6 +79,13 @@ export type ScanProgress = {
   error: string | null;
   warning: string | null;
   unsupportedEventVersionCount: number;
+  /** RPC rate limit retry status */
+  retryStatus?: {
+    attempt: number;
+    maxRetries: number;
+    delayMs: number;
+    reason: string;
+  };
 };
 
 export type UseScannerOptions = {
@@ -141,26 +153,57 @@ async function fetchLogsAdaptive(
   fromBlock: bigint,
   toBlock: bigint,
   _cluster: StellarNetwork,
-  onChunk: (from: bigint, to: bigint, logs: Parameters<typeof putAnnouncements>[1], skippedUnsupportedVersions: number) => Promise<void>
+  onChunk: (from: bigint, to: bigint, logs: Parameters<typeof putAnnouncements>[1], skippedUnsupportedVersions: number) => Promise<void>,
+  onRetry?: (attempt: number, delayMs: number, error: string) => void
 ): Promise<void> {
   const publicClient = getSorobanServer();
   let currentFrom = fromBlock;
   const BATCH_SIZE = 10000n; // Ledger range per call
 
+  const MAX_RETRIES = 5;
+  const BASE_DELAY_MS = 1000;
+  const MAX_DELAY_MS = 32000;
+
+  async function fetchWithBackoff(startLedger: number, attempt = 0): Promise<any> {
+    try {
+      const response = await publicClient.getEvents({
+        startLedger,
+        filters: [
+          {
+            type: "contract",
+            contractIds: [announcerAddress],
+            topics: [[xdr.ScVal.scvSymbol("Announcement").toXDR("base64")]],
+          },
+        ],
+      });
+      return response;
+    } catch (error: any) {
+      const is429 = error?.response?.status === 429 || 
+                    error?.status === 429 ||
+                    error?.message?.includes("429") ||
+                    error?.message?.toLowerCase().includes("rate limit");
+
+      if (is429 && attempt < MAX_RETRIES) {
+        const delayMs = Math.min(BASE_DELAY_MS * Math.pow(2, attempt), MAX_DELAY_MS);
+        const errorMsg = error?.message || "Rate limit exceeded";
+        
+        if (onRetry) {
+          onRetry(attempt + 1, delayMs, errorMsg);
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        return fetchWithBackoff(startLedger, attempt + 1);
+      }
+      
+      throw error;
+    }
+  }
+
   while (currentFrom <= toBlock) {
     const currentTo =
       currentFrom + BATCH_SIZE > toBlock ? toBlock : currentFrom + BATCH_SIZE;
 
-    const response = await publicClient.getEvents({
-      startLedger: Number(currentFrom),
-      filters: [
-        {
-          type: "contract",
-          contractIds: [announcerAddress],
-          topics: [[xdr.ScVal.scvSymbol("Announcement").toXDR("base64")]],
-        },
-      ],
-    });
+    const response = await fetchWithBackoff(Number(currentFrom));
 
     let skippedUnsupportedVersions = 0;
     const mapped: Parameters<typeof putAnnouncements>[1] = [];
@@ -322,6 +365,8 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
       phaseOverride?: "backfilling" | "syncing",
       messagePrefix?: string,
     ) => {
+      const networkPassphrase = getNetworkPassphrase();
+      
       await fetchLogsAdaptive(
         announcerAddress,
         fromBlock,
@@ -330,6 +375,15 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
         async (_from, end, logs, skippedUnsupportedVersions) => {
           await putAnnouncements(cluster!, logs);
           await setSyncState(cluster!, Number(end));
+          
+          // Save checkpoint every chunk for resume capability
+          await saveScanCheckpoint(
+            cluster!,
+            Number(end),
+            Number(toBlock),
+            networkPassphrase
+          );
+          
           const totalBlocks = Number(toBlock - (cacheEmpty ? startBlock : fromBlock) + 1n);
           const doneBlocks = Number(end - (cacheEmpty ? startBlock : fromBlock) + 1n);
           const percent = totalBlocks > 0 ? Math.min(100, Math.round((doneBlocks / totalBlocks) * 100)) : 100;
@@ -354,9 +408,25 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
                 : p.warning,
             unsupportedEventVersionCount:
               p.unsupportedEventVersionCount + skippedUnsupportedVersions,
+            retryStatus: undefined,
+          }));
+        },
+        (attempt, delayMs, reason) => {
+          setProgress((p: ScanProgress) => ({
+            ...p,
+            message: `Rate limited. Retrying in ${(delayMs / 1000).toFixed(0)}s (attempt ${attempt}/5)…`,
+            retryStatus: {
+              attempt,
+              maxRetries: 5,
+              delayMs,
+              reason,
+            },
           }));
         }
       );
+      
+      // Clear checkpoint after successful completion
+      await clearScanCheckpoint(cluster!);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- opts only appears in type annotations
     [cluster]
@@ -370,6 +440,7 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
       console.log("enabled", enabled);
       if (cluster == null || !publicClient || !announcerAddress || !enabled) return;
 
+      const networkPassphrase = getNetworkPassphrase();
 
       let startBlock: bigint;
       try {
@@ -388,6 +459,7 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
 
       if (clearCache) {
         await clearClusterCache(cluster);
+        await clearScanCheckpoint(cluster);
         setAnnouncements([]);
       }
 
@@ -399,6 +471,28 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
         warning: null,
         unsupportedEventVersionCount: 0,
       }));
+
+      // Check for resumable checkpoint
+      const checkpoint = await getScanCheckpoint(cluster);
+      let resumeFromCheckpoint = false;
+      
+      if (checkpoint && !clearCache && !fullRescan) {
+        const isValid = await validateCheckpoint(cluster, networkPassphrase);
+        if (isValid) {
+          console.log("[useScanner] Found valid checkpoint, resuming from ledger", checkpoint.lastProcessedLedger);
+          resumeFromCheckpoint = true;
+          setProgress((p: ScanProgress) => ({
+            ...p,
+            phase: "loading-cache",
+            message: "Resuming from checkpoint…",
+          }));
+        } else {
+          console.warn("[useScanner] Checkpoint invalid, triggering full rescan");
+          await clearScanCheckpoint(cluster);
+          await clearClusterCache(cluster);
+          setAnnouncements([]);
+        }
+      }
 
       const cached = await getAnnouncementsForCluster(cluster);
       const sync = await getSyncState(cluster);
@@ -563,13 +657,23 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
       return;
     }
 
-    // Resolve subgraph URL for the current supported chain
-    // getSubgraphUrl(cluster);
-
     let cancelled = false;
     setProgress((p: ScanProgress) => ({ ...p, phase: "loading-cache", message: "Loading cache…" }));
 
     (async () => {
+      const networkPassphrase = getNetworkPassphrase();
+      
+      // Check for network change and clear checkpoint if detected
+      const checkpoint = await getScanCheckpoint(cluster);
+      if (checkpoint && checkpoint.networkPassphrase !== networkPassphrase) {
+        console.warn(
+          "[useScanner] Network change detected, clearing checkpoint and cache",
+          { stored: checkpoint.networkPassphrase, current: networkPassphrase }
+        );
+        await clearScanCheckpoint(cluster);
+        await clearClusterCache(cluster);
+      }
+      
       const cached = await getAnnouncementsForCluster(cluster);
       if (cancelled) return;
       setAnnouncements(cached);
@@ -595,6 +699,7 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
           toBlock: String(toBlock),
         });
         await clearSyncState(cluster);
+        await clearScanCheckpoint(cluster);
       }
 
       await runScan(false);

@@ -29,7 +29,7 @@ pub use merkle::MerkleError;
 use scanner::{
     check_announcement, check_announcement_ed25519, check_announcement_view_tag,
     check_announcement_view_tag_ed25519, derive_stealth_account_ed25519, derive_stealth_address,
-    derive_stealth_signing_key, ViewTagCheck,
+    derive_stealth_signing_key, ScanTelemetry, ViewTagCheck,
 };
 
 // Initialize panic hook for better error messages in browser console
@@ -1396,4 +1396,102 @@ mod pubkey_validation_tests {
     fn rejects_wrong_length() {
         assert!(parse_compressed_pubkey(&GENERATOR_COMPRESSED[..32]).is_err());
     }
+}
+
+// =============================================================================
+// Telemetry diagnostics export
+// =============================================================================
+
+/// Creates a new telemetry counter instance for tracking view-tag performance.
+/// Returns an opaque handle (integer ID) for subsequent operations.
+#[wasm_bindgen]
+pub fn telemetry_create() -> u32 {
+    use std::sync::Mutex;
+    use std::collections::HashMap;
+    
+    static TELEMETRY_STORE: Mutex<Option<HashMap<u32, ScanTelemetry>>> = Mutex::new(None);
+    static NEXT_ID: Mutex<u32> = Mutex::new(1);
+    
+    let mut store = TELEMETRY_STORE.lock().unwrap();
+    if store.is_none() {
+        *store = Some(HashMap::new());
+    }
+    
+    let mut next_id = NEXT_ID.lock().unwrap();
+    let id = *next_id;
+    *next_id = next_id.wrapping_add(1);
+    
+    store.as_mut().unwrap().insert(id, ScanTelemetry::new());
+    id
+}
+
+/// Records a view-tag match for the given telemetry instance.
+#[wasm_bindgen]
+pub fn telemetry_record_view_tag_match(handle: u32) -> Result<(), JsValue> {
+    use std::sync::Mutex;
+    use std::collections::HashMap;
+    
+    static TELEMETRY_STORE: Mutex<Option<HashMap<u32, ScanTelemetry>>> = Mutex::new(None);
+    
+    let mut store = TELEMETRY_STORE.lock().unwrap();
+    let telemetry = store
+        .as_mut()
+        .and_then(|s| s.get_mut(&handle))
+        .ok_or_else(|| JsValue::from_str("Invalid telemetry handle"))?;
+    
+    telemetry.record_view_tag_match();
+    Ok(())
+}
+
+/// Records the result of full derivation after a view-tag match.
+#[wasm_bindgen]
+pub fn telemetry_record_derivation_result(handle: u32, confirmed: bool) -> Result<(), JsValue> {
+    use std::sync::Mutex;
+    use std::collections::HashMap;
+    
+    static TELEMETRY_STORE: Mutex<Option<HashMap<u32, ScanTelemetry>>> = Mutex::new(None);
+    
+    let mut store = TELEMETRY_STORE.lock().unwrap();
+    let telemetry = store
+        .as_mut()
+        .and_then(|s| s.get_mut(&handle))
+        .ok_or_else(|| JsValue::from_str("Invalid telemetry handle"))?;
+    
+    telemetry.record_full_derivation_result(confirmed);
+    Ok(())
+}
+
+/// Exports telemetry data as JSON for diagnostics.
+/// Does not contain PII or cryptographic keys.
+#[wasm_bindgen]
+pub fn telemetry_export(handle: u32) -> Result<String, JsValue> {
+    use std::sync::Mutex;
+    use std::collections::HashMap;
+    
+    static TELEMETRY_STORE: Mutex<Option<HashMap<u32, ScanTelemetry>>> = Mutex::new(None);
+    
+    let store = TELEMETRY_STORE.lock().unwrap();
+    let telemetry = store
+        .as_ref()
+        .and_then(|s| s.get(&handle))
+        .ok_or_else(|| JsValue::from_str("Invalid telemetry handle"))?;
+    
+    Ok(telemetry.to_diagnostics())
+}
+
+/// Destroys a telemetry instance and frees its resources.
+#[wasm_bindgen]
+pub fn telemetry_destroy(handle: u32) -> Result<(), JsValue> {
+    use std::sync::Mutex;
+    use std::collections::HashMap;
+    
+    static TELEMETRY_STORE: Mutex<Option<HashMap<u32, ScanTelemetry>>> = Mutex::new(None);
+    
+    let mut store = TELEMETRY_STORE.lock().unwrap();
+    store
+        .as_mut()
+        .and_then(|s| s.remove(&handle))
+        .ok_or_else(|| JsValue::from_str("Invalid telemetry handle"))?;
+    
+    Ok(())
 }

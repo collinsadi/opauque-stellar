@@ -32,6 +32,12 @@ export type SyncState = {
   cluster: string;
   /** @deprecated Use `lastScannedLedger` instead (Stellar) */
   lastScannedSlot: number;
+  /** Timestamp when this checkpoint was created */
+  checkpointTimestamp?: number;
+  /** Version identifier for checkpoint format */
+  checkpointVersion?: number;
+  /** Network passphrase to detect network changes */
+  networkPassphrase?: string;
 };
 
 interface OpaqueCacheDBSchema extends DBSchema {
@@ -49,30 +55,55 @@ interface OpaqueCacheDBSchema extends DBSchema {
     key: string;
     value: SyncState;
   };
+  /** Incremental scan checkpoints for resume capability */
+  scanCheckpoints: {
+    key: string;
+    value: {
+      cluster: string;
+      lastProcessedLedger: number;
+      targetLedger: number;
+      timestamp: number;
+      networkPassphrase: string;
+      partialResultsCount: number;
+    };
+  };
 }
 
 const DB_NAME = "OpaqueCache";
-/** Schema version 3: adds `eventId` field + `by-event-id` index for dedup (#402). */
+/** Schema version 3: adds `eventId` field + `by-event-id` index for dedup (#402) + scanCheckpoints store for resume (#396). */
 const DB_VERSION = 3;
+const CHECKPOINT_VERSION = 1;
 
 let dbPromise: Promise<IDBPDatabase<OpaqueCacheDBSchema>> | null = null;
 
 function getDB(): Promise<IDBPDatabase<OpaqueCacheDBSchema>> {
   if (!dbPromise) {
     dbPromise = openDB<OpaqueCacheDBSchema>(DB_NAME, DB_VERSION, {
-      upgrade(db) {
-        if (db.objectStoreNames.contains("announcements")) {
-          db.deleteObjectStore("announcements");
+      upgrade(db, oldVersion) {
+        if (oldVersion < 2) {
+          if (db.objectStoreNames.contains("announcements")) {
+            db.deleteObjectStore("announcements");
+          }
+          if (db.objectStoreNames.contains("syncState")) {
+            db.deleteObjectStore("syncState");
+          }
         }
-        if (db.objectStoreNames.contains("syncState")) {
-          db.deleteObjectStore("syncState");
+        
+        if (!db.objectStoreNames.contains("announcements")) {
+          const announcements = db.createObjectStore("announcements", { keyPath: "id" });
+          announcements.createIndex("by-cluster", "cluster");
+          announcements.createIndex("by-slot", "slot");
+          announcements.createIndex("by-cluster-slot", ["cluster", "slot"]);
+          announcements.createIndex("by-event-id", "eventId");
         }
-        const announcements = db.createObjectStore("announcements", { keyPath: "id" });
-        announcements.createIndex("by-cluster", "cluster");
-        announcements.createIndex("by-slot", "slot");
-        announcements.createIndex("by-cluster-slot", ["cluster", "slot"]);
-        announcements.createIndex("by-event-id", "eventId");
-        db.createObjectStore("syncState", { keyPath: "cluster" });
+        
+        if (!db.objectStoreNames.contains("syncState")) {
+          db.createObjectStore("syncState", { keyPath: "cluster" });
+        }
+        
+        if (oldVersion < 3 && !db.objectStoreNames.contains("scanCheckpoints")) {
+          db.createObjectStore("scanCheckpoints", { keyPath: "cluster" });
+        }
       },
     });
   }
@@ -172,4 +203,121 @@ export async function getAnnouncementCountForCluster(cluster: string): Promise<n
   const db = await getDB();
   const index = db.transaction("announcements").store.index("by-cluster");
   return index.count(cluster);
+}
+
+// =============================================================================
+// Incremental scan checkpoint persistence
+// =============================================================================
+
+export type ScanCheckpoint = {
+  cluster: string;
+  lastProcessedLedger: number;
+  targetLedger: number;
+  timestamp: number;
+  networkPassphrase: string;
+  partialResultsCount: number;
+};
+
+/**
+ * Saves a scan checkpoint for resume capability.
+ * Called periodically during long scans to enable resume on page reload.
+ */
+export async function saveScanCheckpoint(
+  cluster: string,
+  lastProcessedLedger: number,
+  targetLedger: number,
+  networkPassphrase: string
+): Promise<void> {
+  const db = await getDB();
+  const partialResultsCount = await getAnnouncementCountForCluster(cluster);
+  await db.put("scanCheckpoints", {
+    cluster,
+    lastProcessedLedger,
+    targetLedger,
+    timestamp: Date.now(),
+    networkPassphrase,
+    partialResultsCount,
+  });
+}
+
+/**
+ * Retrieves the scan checkpoint for a cluster.
+ * Returns null if no checkpoint exists.
+ */
+export async function getScanCheckpoint(cluster: string): Promise<ScanCheckpoint | null> {
+  const db = await getDB();
+  const checkpoint = await db.get("scanCheckpoints", cluster);
+  return checkpoint ?? null;
+}
+
+/**
+ * Validates a checkpoint against current network state.
+ * Returns true if checkpoint is valid and can be resumed.
+ * Returns false if checkpoint is corrupt or network changed.
+ */
+export async function validateCheckpoint(
+  cluster: string,
+  currentNetworkPassphrase: string
+): Promise<boolean> {
+  const checkpoint = await getScanCheckpoint(cluster);
+  if (!checkpoint) return false;
+  
+  // Check network passphrase matches (detects network change)
+  if (checkpoint.networkPassphrase !== currentNetworkPassphrase) {
+    console.warn(
+      `[opaqueCache] Network passphrase mismatch for ${cluster}. Checkpoint invalid.`,
+      { stored: checkpoint.networkPassphrase, current: currentNetworkPassphrase }
+    );
+    return false;
+  }
+  
+  // Check timestamp is recent (within 7 days)
+  const MAX_CHECKPOINT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+  const age = Date.now() - checkpoint.timestamp;
+  if (age > MAX_CHECKPOINT_AGE_MS) {
+    console.warn(
+      `[opaqueCache] Checkpoint for ${cluster} is stale (${Math.round(age / 1000 / 60 / 60)}h old). Discarding.`
+    );
+    return false;
+  }
+  
+  // Check ledger range is sane
+  if (checkpoint.lastProcessedLedger > checkpoint.targetLedger) {
+    console.warn(
+      `[opaqueCache] Checkpoint for ${cluster} has invalid ledger range. Corrupt.`
+    );
+    return false;
+  }
+  
+  // Check partial results count matches IndexedDB state
+  const actualCount = await getAnnouncementCountForCluster(cluster);
+  if (Math.abs(actualCount - checkpoint.partialResultsCount) > 100) {
+    console.warn(
+      `[opaqueCache] Checkpoint for ${cluster} has mismatched result count. Corrupt.`,
+      { expected: checkpoint.partialResultsCount, actual: actualCount }
+    );
+    return false;
+  }
+  
+  return true;
+}
+
+/**
+ * Clears the scan checkpoint for a cluster.
+ * Called after successful sync completion or when checkpoint is corrupt.
+ */
+export async function clearScanCheckpoint(cluster: string): Promise<void> {
+  const db = await getDB();
+  await db.delete("scanCheckpoints", cluster);
+}
+
+/**
+ * Clears all checkpoints for all clusters.
+ * Useful for global reset or network change detection.
+ */
+export async function clearAllCheckpoints(): Promise<void> {
+  const db = await getDB();
+  const tx = db.transaction("scanCheckpoints", "readwrite");
+  await tx.store.clear();
+  await tx.done;
 }
