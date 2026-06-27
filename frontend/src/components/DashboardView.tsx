@@ -86,7 +86,7 @@ export function DashboardView({ onNavigate, address, cluster }: DashboardViewPro
         {canChangeNetwork && (
           <div className="mt-2 flex items-center gap-3">
             <span className="inline-flex items-center gap-1.5 rounded-full border border-ink-600 bg-ink-900/40 px-3 py-1 text-xs text-mist">
-              <span className="h-1.5 w-1.5 rounded-full bg-white" aria-hidden />
+              <span className="h-1.5 w-1.5 rounded-full bg-glow" aria-hidden />
               {getCluster()}
             </span>
             <button

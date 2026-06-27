@@ -155,7 +155,7 @@ export function OperatorDashboard() {
             )}
             <button
               type="submit"
-              className="w-full rounded-xl bg-white text-black text-sm font-semibold py-2.5 hover:bg-black hover:text-white border border-white transition-colors"
+              className="w-full rounded-xl bg-sol-gradient text-white text-sm font-semibold py-2.5 hover:opacity-90 border border-white transition-colors"
             >
               Authenticate
             </button>
@@ -203,7 +203,7 @@ export function OperatorDashboard() {
             return (
               <div
                 key={i}
-                className={`flex-1 rounded-sm ${h > 3 ? "bg-amber-500/60" : "bg-white/20"}`}
+                className={`flex-1 rounded-sm ${h > 3 ? "bg-amber-500/60" : "bg-ink-700"}`}
                 style={{ height: `${pct}%` }}
                 title={`${h} ledgers`}
                 aria-hidden

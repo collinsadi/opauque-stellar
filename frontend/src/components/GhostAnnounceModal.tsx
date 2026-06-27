@@ -277,7 +277,7 @@ export function GhostAnnounceModal({
           type="button"
           disabled={!canStart}
           onClick={() => void handleStart()}
-          className="px-4 py-2 rounded-xl text-sm font-semibold bg-white border border-white text-black disabled:opacity-40 disabled:cursor-not-allowed hover:bg-black hover:text-white"
+          className="px-4 py-2 rounded-xl text-sm font-semibold bg-sol-gradient border border-transparent text-white disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90"
         >
           {running ? "Working…" : "Start on-chain announcement"}
         </button>

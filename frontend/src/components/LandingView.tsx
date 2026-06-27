@@ -190,7 +190,7 @@ export function LandingView() {
               type="button"
               onClick={() => void handleEnterVault()}
               disabled={connecting || flowInFlightRef.current}
-              className="mt-8 w-full rounded-xl bg-white border border-white px-6 py-3.5 text-sm font-semibold text-black transition-all hover:bg-black hover:text-white hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
+              className="mt-8 w-full rounded-xl bg-sol-gradient border border-transparent px-6 py-3.5 text-sm font-semibold text-white transition-all hover:opacity-90 hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
             >
               {!connected ? "Connect wallet & initialize" : "Initialize protocol"}
             </button>
@@ -237,7 +237,7 @@ export function LandingView() {
               type="button"
               onClick={() => void handleRegister()}
               disabled={!currentConfig}
-              className="mt-4 w-full rounded-xl bg-white border border-white px-6 py-3 text-sm font-semibold text-black hover:bg-black hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
+              className="mt-4 w-full rounded-xl bg-sol-gradient border border-transparent px-6 py-3 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Register
             </button>

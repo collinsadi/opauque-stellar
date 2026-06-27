@@ -21,6 +21,7 @@ import { MainnetSecurityLayer } from "./components/security/MainnetSecurityLayer
 import { logExpectedArtifactHashes } from "./lib/artifactHashes.ts";
 import { OperatorDashboard } from "./components/OperatorDashboard.tsx";
 import { ProtocolLogProvider } from "./context/ProtocolLogContext.tsx";
+import { DeepLinkRoute } from "./components/DeepLinkRoute.tsx";
 
 console.log("[Opaque] App bootstrapping (Stellar)…");
 logExpectedArtifactHashes();
@@ -58,6 +59,7 @@ createRoot(document.getElementById("root")!).render(
           <Route path="/abuse-policy" element={<AbusePolicyPage />} />
           <Route path="/pay/success" element={<PaySuccessPage />} />
           <Route path="/pay/:identifier" element={<KeysProvider><PayPage /></KeysProvider>} />
+          <Route path="/link" element={<DeepLinkRoute />} />
           <Route path="/branding" element={<BrandingPage />} />
           <Route path="/operator" element={<ProtocolLogProvider><OperatorDashboard /></ProtocolLogProvider>} />
           <Route path="*" element={<NotFoundPage />} />

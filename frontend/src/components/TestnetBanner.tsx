@@ -49,7 +49,7 @@ export function TestnetBanner({ isConnected }: TestnetBannerProps) {
       aria-live="polite"
     >
       <span
-        className="flex items-center justify-center w-7 h-7 rounded-full bg-white/10 border border-white/25 shrink-0"
+        className="flex items-center justify-center w-7 h-7 rounded-full bg-ink-800 border border-white/25 shrink-0"
         style={{ boxShadow: "0 0 12px rgba(255, 255, 255, 0.1)" }}
         aria-hidden
       >

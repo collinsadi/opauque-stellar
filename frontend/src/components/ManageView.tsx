@@ -686,7 +686,7 @@ export function ManageView({ onNavigate, readOnly = false }: ManageViewProps = {
             <button
               type="button"
               onClick={() => onNavigate("attest")}
-              className="rounded-xl bg-white text-black border border-white px-4 py-2 text-xs font-semibold hover:bg-black hover:text-white transition-colors"
+              className="rounded-xl bg-sol-gradient text-white border border-transparent px-4 py-2 text-xs font-semibold hover:opacity-90 transition-colors"
             >
               Issue Attestation
             </button>
@@ -716,13 +716,13 @@ export function ManageView({ onNavigate, readOnly = false }: ManageViewProps = {
             onClick={() => setSection(s)}
             className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors flex items-center gap-1.5 ${
               section === s
-                ? "bg-white text-black border border-white"
+                ? "bg-sol-gradient text-white border border-transparent"
                 : "bg-ink-900 border border-ink-700 text-mist hover:text-white"
             }`}
           >
             {s === "schemas" ? "My Schemas" : s === "attestations" ? "Attestations Issued" : "Admin"}
             {s !== "admin" && (
-              <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${section === s ? "bg-white/20" : "bg-ink-700"}`}>
+              <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${section === s ? "bg-ink-700" : "bg-ink-700"}`}>
                 {s === "schemas" ? mySchemas.length : attestations.length}
               </span>
             )}
@@ -752,7 +752,7 @@ export function ManageView({ onNavigate, readOnly = false }: ManageViewProps = {
                 <button
                   type="button"
                   onClick={() => onNavigate("schemas")}
-                  className="mt-2 rounded-xl bg-white text-black border border-white px-4 py-2 text-xs font-semibold hover:bg-black hover:text-white transition-colors"
+                  className="mt-2 rounded-xl bg-sol-gradient text-white border border-transparent px-4 py-2 text-xs font-semibold hover:opacity-90 transition-colors"
                 >
                   Create New Schema
                 </button>
@@ -835,7 +835,7 @@ export function ManageView({ onNavigate, readOnly = false }: ManageViewProps = {
                 <button
                   type="button"
                   onClick={() => onNavigate("attest")}
-                  className="mt-2 rounded-xl bg-white text-black border border-white px-4 py-2 text-xs font-semibold hover:bg-black hover:text-white transition-colors"
+                  className="mt-2 rounded-xl bg-sol-gradient text-white border border-transparent px-4 py-2 text-xs font-semibold hover:opacity-90 transition-colors"
                 >
                   Issue Attestation
                 </button>
