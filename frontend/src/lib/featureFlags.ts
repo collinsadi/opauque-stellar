@@ -12,7 +12,8 @@ export type FeatureFlagKey =
   | "reputationProofs"
   | "schemaManagement"
   | "demoVerifierLinks"
-  | "debugLogs";
+  | "debugLogs"
+  | "circuitV3";
 
 export type FeatureFlags = Record<FeatureFlagKey, boolean>;
 
@@ -23,6 +24,7 @@ export const FEATURE_FLAG_ENV: Record<FeatureFlagKey, string> = {
   schemaManagement: "VITE_FEATURE_SCHEMA_MANAGEMENT",
   demoVerifierLinks: "VITE_FEATURE_DEMO_VERIFIER_LINKS",
   debugLogs: "VITE_FEATURE_DEBUG_LOGS",
+  circuitV3: "VITE_CIRCUIT_V3_ENABLED",
 };
 
 declare global {
@@ -106,6 +108,12 @@ export function buildFeatureFlags(opts: {
       isDev,
       true,
     ),
+    circuitV3: resolveFeatureFlag(
+      FEATURE_FLAG_ENV.circuitV3,
+      network,
+      env[FEATURE_FLAG_ENV.circuitV3],
+      isDev,
+    ),
   };
 
   if (runtimeOverride) {
@@ -158,4 +166,5 @@ export const FEATURE_LABELS: Record<FeatureFlagKey, string> = {
   schemaManagement: "Schema & attestation management",
   demoVerifierLinks: "Demo verifier links",
   debugLogs: "Protocol debug logs",
+  circuitV3: "Circuit V3 (batch proofs)",
 };

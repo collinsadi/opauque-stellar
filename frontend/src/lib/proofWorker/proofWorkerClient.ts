@@ -1,25 +1,32 @@
 import {
   formatProofWorkerError,
   ProofGenerationCancelledError,
+  ProofGenerationTimeoutError,
 } from "./errors";
 import type {
   Groth16ProofResult,
   ProofWorkerStage,
+  ProofWorkerTimeoutConfig,
   V1WitnessParams,
   V2WitnessParams,
   WorkerRequest,
   WorkerResponse,
 } from "./types";
 
-export type { ProofWorkerStage };
+export type { ProofWorkerStage, ProofWorkerTimeoutConfig };
 
-export { ProofGenerationCancelledError, formatProofWorkerError };
+export {
+  ProofGenerationCancelledError,
+  ProofGenerationTimeoutError,
+  formatProofWorkerError,
+};
 
 export type ProofProgressCallback = (stage: ProofWorkerStage, percent: number) => void;
 
 export interface ProofWorkerRunOptions {
   onProgress?: ProofProgressCallback;
   signal?: AbortSignal;
+  timeout?: ProofWorkerTimeoutConfig;
 }
 
 function createJobId(): string {
@@ -37,7 +44,7 @@ function runProofJob(
   request: Exclude<WorkerRequest, { type: "cancel" }>,
   options: ProofWorkerRunOptions = {},
 ): Promise<Groth16ProofResult> {
-  const { onProgress, signal } = options;
+  const { onProgress, signal, timeout } = options;
 
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -70,6 +77,14 @@ function runProofJob(
         return;
       }
 
+      if (msg.type === "timeout") {
+        cleanup();
+        reject(
+          new ProofGenerationTimeoutError(msg.stage, msg.timeoutMs),
+        );
+        return;
+      }
+
       cleanup();
 
       if (msg.type === "success") {
@@ -86,7 +101,8 @@ function runProofJob(
       reject(new Error(formatProofWorkerError(detail)));
     };
 
-    worker.postMessage(request);
+    const requestWithTimeout = timeout ? { ...request, timeout } : request;
+    worker.postMessage(requestWithTimeout);
   });
 }
 

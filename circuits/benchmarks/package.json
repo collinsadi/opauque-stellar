@@ -1,0 +1,19 @@
+{
+  "name": "opaque-circuit-benchmarks",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bench": "tsx benchmark-suite.ts",
+    "bench:v2": "tsx benchmark-suite.ts --circuit v2",
+    "bench:all": "tsx benchmark-suite.ts --circuit all",
+    "bench:ci": "tsx benchmark-suite.ts --ci"
+  },
+  "devDependencies": {
+    "circomlib": "^2.0.5",
+    "circomlibjs": "^0.1.7",
+    "snarkjs": "^0.7.5",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}
