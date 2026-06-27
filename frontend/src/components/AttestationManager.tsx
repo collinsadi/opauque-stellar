@@ -22,6 +22,9 @@ import { announceStealthTransfer, SCHEME_ID_SECP256K1 } from "../lib/contracts";
 import { getFeatureFlags } from "../lib/featureFlags";
 import { FeatureDisabledNotice } from "./FeatureDisabledNotice";
 
+/** Hard cap enforced by the attestation engine contract. */
+const MAX_ATTESTATION_PAYLOAD_BYTES = 512;
+
 // =============================================================================
 // Component
 // =============================================================================
@@ -80,11 +83,27 @@ export function AttestationManager({
     ? parseFieldDefs(selectedSchema.fieldDefinitions)
     : [];
 
+  const encodedPayloadBytes = useMemo(() => {
+    if (parsedFields.length === 0) return 0;
+    try {
+      const encoded = encodeAttestationData(
+        fieldValues,
+        parsedFields.map((f) => ({ name: f.name, type: f.type })),
+      );
+      return encoded.length;
+    } catch {
+      return 0;
+    }
+  }, [fieldValues, parsedFields]);
+
+  const payloadOverBudget = encodedPayloadBytes > MAX_ATTESTATION_PAYLOAD_BYTES;
+
   const canSubmit =
     walletAddress != null &&
     publicKey != null &&
     selectedSchemaId !== "" &&
     recipientInput.trim().length > 0 &&
+    !payloadOverBudget &&
     !isSubmitting;
 
   const handleFieldChange = (name: string, value: string) => {
@@ -431,6 +450,38 @@ export function AttestationManager({
                 )}
               </div>
             ))}
+          </div>
+
+          {/* Byte budget meter */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className={payloadOverBudget ? "text-neutral-400" : "text-mist"}>
+                Payload size
+              </span>
+              <span className={payloadOverBudget ? "text-neutral-400 font-medium" : "text-white"}>
+                {encodedPayloadBytes} / {MAX_ATTESTATION_PAYLOAD_BYTES} bytes
+              </span>
+            </div>
+            <div className="h-1.5 w-full rounded-full bg-ink-800 overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-150 ${
+                  payloadOverBudget
+                    ? "bg-neutral-500"
+                    : encodedPayloadBytes > MAX_ATTESTATION_PAYLOAD_BYTES * 0.8
+                      ? "bg-neutral-400"
+                      : "bg-white/60"
+                }`}
+                style={{
+                  width: `${Math.min(100, (encodedPayloadBytes / MAX_ATTESTATION_PAYLOAD_BYTES) * 100)}%`,
+                }}
+              />
+            </div>
+            {payloadOverBudget && (
+              <p className="text-xs text-neutral-400">
+                Payload exceeds the {MAX_ATTESTATION_PAYLOAD_BYTES}-byte on-chain limit. Shorten
+                string fields to continue.
+              </p>
+            )}
           </div>
         </section>
       )}
