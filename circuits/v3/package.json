@@ -1,0 +1,17 @@
+{
+  "name": "opaque-circuits-v3",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "circom stealth_reputation_v3.circom --r1cs --wasm --sym -o build/",
+    "build:dev": "circom stealth_reputation_v3.circom --r1cs --wasm --sym -o build/ --O0",
+    "test": "tsx ../test/regression.ts --v3",
+    "lint": "circom --inspect stealth_reputation_v3.circom"
+  },
+  "devDependencies": {
+    "circomlib": "^2.0.5",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}

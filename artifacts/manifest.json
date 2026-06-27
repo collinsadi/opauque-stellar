@@ -78,6 +78,37 @@
           "sha256": "24d0fe6a5ef1174ab616a5d39df846442af7a7818962b0ed346586bb1eb74b47"
         }
       }
+    },
+    "v3": {
+      "source": "circuits/v3/stealth_reputation_v3.circom",
+      "status": "draft",
+      "featureFlag": "VITE_CIRCUIT_V3_ENABLED",
+      "frontend": {
+        "witnessWasm": {
+          "path": "frontend/public/circuits/v3/stealth_reputation_v3.wasm",
+          "sha256": null
+        },
+        "zkey": {
+          "path": "frontend/public/circuits/v3/stealth_reputation_v3_final.zkey",
+          "sha256": null
+        }
+      },
+      "build": {
+        "r1cs": {
+          "path": "circuits/v3/build/stealth_reputation_v3.r1cs",
+          "sha256": null
+        },
+        "verificationKey": {
+          "path": "circuits/v3/build/verification_key.json",
+          "sha256": null
+        }
+      },
+      "contractVk": {
+        "groth16Verifier": "contracts/groth16-verifier/src/lib.rs",
+        "constantsPrefix": "VK_*_V3",
+        "embeddedVkHash": null,
+        "zkeyHash": null
+      }
     }
   },
   "releaseAssets": {
