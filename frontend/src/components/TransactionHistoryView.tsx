@@ -1,20 +1,14 @@
+import { useEffect, useState } from "react";
 import { getCluster } from "../lib/chain";
 import { getExplorerTxUrl } from "../lib/explorer";
 import { useTxHistoryStore } from "../store/txHistoryStore";
 import type { TxHistoryEntry } from "../store/txHistoryStore";
-import { formatXlm } from "../lib/stealth";
+import { useGhostAddressStore } from "../store/ghostAddressStore";
 import { useWallet } from "../hooks/useWallet";
-
-function formatDate(ts: number): string {
-  try {
-    const d = new Date(ts);
-    return Number.isNaN(d.getTime())
-      ? "—"
-      : d.toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
-  } catch {
-    return "—";
-  }
-}
+import { formatXlmFromStroops, formatDateTime } from "../lib/i18n-format";
+import { reconcileFromChain } from "../lib/history-reconciliation";
+import type { ReconciledEntry } from "../lib/history-reconciliation";
+import { fetchHorizonHistory } from "../services/stellarClient";
 
 function typeLabel(kind: TxHistoryEntry["kind"]): string {
   switch (kind) {
@@ -79,7 +73,7 @@ function normalizeEntry(raw: unknown, index: number): TxHistoryEntry | null {
   const amount =
     typeof o.amount === "string" && o.amount !== ""
       ? o.amount
-      : formatXlm(BigInt(amountStroops || "0"));
+      : formatXlmFromStroops(BigInt(amountStroops || "0"));
   return {
     id,
     cluster,
@@ -95,11 +89,34 @@ function normalizeEntry(raw: unknown, index: number): TxHistoryEntry | null {
   };
 }
 
+function ChainStatusBadge({ entry }: { entry: TxHistoryEntry | ReconciledEntry }) {
+  if (!("chainStatus" in entry)) return null;
+  const { chainStatus } = entry as ReconciledEntry;
+  if (chainStatus === "failed") {
+    return (
+      <span className="inline-flex px-2 py-0.5 rounded-lg text-[11px] font-medium bg-neutral-500/10 text-neutral-400 border border-neutral-500/20">
+        Failed
+      </span>
+    );
+  }
+  if (chainStatus === "pending") {
+    return (
+      <span className="inline-flex px-2 py-0.5 rounded-lg text-[11px] font-medium bg-neutral-400/10 text-neutral-300 border border-neutral-400/20">
+        Pending
+      </span>
+    );
+  }
+  return null;
+}
+
 export function TransactionHistoryView() {
   const { cluster: walletCluster } = useWallet();
   const cluster = walletCluster ?? getCluster();
   const byCluster = useTxHistoryStore((s) => s.byChain);
   const clear = useTxHistoryStore((s) => s.clear);
+
+  const [reconciling, setReconciling] = useState(false);
+  const [reconciledEntries, setReconciledEntries] = useState<ReconciledEntry[] | null>(null);
 
   let entries: TxHistoryEntry[] = [];
   try {
@@ -113,12 +130,30 @@ export function TransactionHistoryView() {
   }
   const safeEntries = Array.isArray(entries) ? entries : [];
 
+  useEffect(() => {
+    const ghostAddresses = useGhostAddressStore
+      .getState()
+      .getForCluster(cluster)
+      .map((e) => e.stealthAddress);
+    const local = useTxHistoryStore.getState().getForCluster(cluster);
+    setReconciling(true);
+    reconcileFromChain(fetchHorizonHistory, { local, cluster, ghostAddresses })
+      .then((result) => setReconciledEntries(result.entries))
+      .catch(() => {
+        // Fall back to local history on Horizon errors
+      })
+      .finally(() => setReconciling(false));
+  }, [cluster]);
+
+  const displayEntries = reconciledEntries ?? safeEntries;
+
   const handleClear = () => {
     if (
       typeof window !== "undefined" &&
       window.confirm("Clear all transaction history? This cannot be undone.")
     ) {
       clear();
+      setReconciledEntries(null);
     }
   };
 
@@ -130,9 +165,12 @@ export function TransactionHistoryView() {
           Last 50 transactions on this network, including private sends,
           withdrawals, and traits.
         </p>
+        {reconciling && (
+          <p className="mt-1 text-xs text-mist/70">Syncing on-chain history…</p>
+        )}
       </div>
 
-      {!safeEntries?.length ? (
+      {!displayEntries?.length ? (
         <div className="rounded-3xl border border-ink-700 bg-ink-900/25 p-10 text-center">
           <div className="text-3xl mb-3" aria-hidden>
             ◈
@@ -148,14 +186,14 @@ export function TransactionHistoryView() {
       ) : (
         <>
           <ul className="space-y-3">
-            {safeEntries.map((tx) => (
+            {displayEntries.map((tx) => (
               <li
                 key={tx?.id ?? `tx-${tx?.timestamp ?? 0}`}
                 className="rounded-2xl border border-ink-700 bg-ink-900/25 p-4 transition-colors hover:border-white/25"
               >
                 <div className="flex flex-wrap items-start gap-3">
                   <span className="text-mist/80 text-xs shrink-0 font-mono">
-                    {formatDate(tx.timestamp)}
+                    {formatDateTime(tx.timestamp, { dateStyle: "short", timeStyle: "short" })}
                   </span>
                   <span
                     className={`inline-flex px-2 py-0.5 rounded-lg text-[11px] font-medium shrink-0 ${
@@ -173,6 +211,7 @@ export function TransactionHistoryView() {
                   <span className="text-mist/70 text-xs shrink-0">
                     {statusFor(tx)}
                   </span>
+                  <ChainStatusBadge entry={tx} />
                   <span
                     className="text-mist text-xs truncate min-w-0 ml-auto"
                     title={tx.counterparty ?? ""}

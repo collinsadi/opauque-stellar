@@ -10,6 +10,7 @@ import { useTxHistoryStore } from "../store/txHistoryStore";
 import type { TxHistoryEntry } from "../store/txHistoryStore";
 import { isTabNavVisible } from "../lib/tabAccess";
 import { getFeatureFlags } from "../lib/featureFlags";
+import { formatDateTime } from "../lib/i18n-format";
 
 type DashboardViewProps = {
   onNavigate: (t: Tab) => void;
@@ -59,13 +60,6 @@ export function DashboardView({ onNavigate, address, cluster }: DashboardViewPro
   const byChain = useTxHistoryStore((s) => s.byChain);
   const recentHistory: TxHistoryEntry[] = cluster != null ? (byChain[cluster] ?? []).slice(0, 4) : [];
 
-  const formatDate = (ts: number): string => {
-    try {
-      return new Date(ts).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
-    } catch {
-      return "—";
-    }
-  };
 
   return (
     <div className="w-full">
@@ -175,7 +169,7 @@ export function DashboardView({ onNavigate, address, cluster }: DashboardViewPro
                 className="rounded-xl border border-ink-700 bg-ink-900/25 px-4 py-3"
               >
                 <div className="flex flex-wrap items-center gap-2 text-xs text-mist/80">
-                  <span>{formatDate(tx.timestamp)}</span>
+                  <span>{formatDateTime(tx.timestamp, { dateStyle: "short", timeStyle: "short" })}</span>
                   <span className="rounded-md border border-ink-700 bg-ink-900/40 px-1.5 py-0.5 uppercase text-[10px]">
                     {tx.kind}
                   </span>

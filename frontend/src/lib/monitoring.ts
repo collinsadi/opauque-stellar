@@ -140,6 +140,7 @@ export function recordBalanceCheck(opts: {
 export type AlertRule = {
   name: string;
   description: string;
+  severity: "critical" | "warning" | "info";
   check: (metrics: readonly MetricEvent[]) => string | null;
 };
 
@@ -150,6 +151,7 @@ export const ALERT_RULES: AlertRule[] = [
   {
     name: "root_expiry",
     description: "No successful scanner sync in the last 5 minutes",
+    severity: "critical",
     check: (m: readonly MetricEvent[]): string | null => {
       const recent = m.filter(
         (e) => e.tag === "scanner_sync" && e.success && Date.now() - e.timestamp < FIVE_MIN_MS,
@@ -161,6 +163,7 @@ export const ALERT_RULES: AlertRule[] = [
   {
     name: "rpc_failures",
     description: "More than 3 RPC failures in the last hour",
+    severity: "warning",
     check: (m: readonly MetricEvent[]): string | null => {
       const recent = m.filter(
         (e) => e.tag === "rpc_error" && Date.now() - e.timestamp < ONE_HOUR_MS,
@@ -172,6 +175,7 @@ export const ALERT_RULES: AlertRule[] = [
   {
     name: "high_tx_failure_rate",
     description: "Contract call failure rate exceeds 20% in the last hour",
+    severity: "warning",
     check: (m: readonly MetricEvent[]): string | null => {
       const recent = m.filter(
         (e) => e.tag === "contract_call" && Date.now() - e.timestamp < ONE_HOUR_MS,
@@ -186,6 +190,7 @@ export const ALERT_RULES: AlertRule[] = [
   {
     name: "proof_verification_failures",
     description: "Proof verification failures detected in the last hour",
+    severity: "critical",
     check: (m: readonly MetricEvent[]): string | null => {
       const recent = m.filter(
         (e) => e.tag === "proof_verification" && !e.success && Date.now() - e.timestamp < ONE_HOUR_MS,
