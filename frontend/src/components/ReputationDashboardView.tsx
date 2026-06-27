@@ -168,7 +168,7 @@ export function ReputationDashboardView({ onBack }: ReputationDashboardViewProps
         <button
           type="button"
           onClick={() => setShowIssueModal(true)}
-          className="rounded-xl bg-white border border-white px-4 py-2 text-sm font-semibold text-black hover:bg-black hover:text-white"
+          className="rounded-xl bg-sol-gradient border border-transparent px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
         >
           Issue trait
         </button>
@@ -230,7 +230,7 @@ export function ReputationDashboardView({ onBack }: ReputationDashboardViewProps
                         (proofState.stage !== "idle" && proofState.stage !== "error" && proofState.stage !== "verified")
                       }
                       title={isFrozen ? "Proof generation is disabled while the root is frozen" : undefined}
-                      className="mt-4 w-full rounded-xl bg-white border border-white px-4 py-2 text-sm font-semibold text-black hover:bg-black hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="mt-4 w-full rounded-xl bg-sol-gradient border border-transparent px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       {isFrozen ? "Frozen" : "Prove"}
                     </button>
@@ -339,7 +339,7 @@ function ProofProgressBar({ stage, progress, error }: { stage: ProofStage; progr
           {!isDone && !isError && (
             <div className="mt-1.5 h-1 bg-ink-800 rounded-full overflow-hidden">
               <div
-                className="h-full bg-white rounded-full transition-all duration-500"
+                className="h-full bg-sol-gradient rounded-full transition-all duration-500"
                 style={{ width: `${progress}%` }}
               />
             </div>

@@ -329,7 +329,7 @@ export function AttestationManager({
               <button
                 type="button"
                 onClick={() => onNavigate("schemas")}
-                className="shrink-0 rounded-lg bg-white text-black border border-white px-3 py-1.5 text-xs font-semibold hover:bg-black hover:text-white transition-colors"
+                className="shrink-0 rounded-lg bg-sol-gradient text-white border border-transparent px-3 py-1.5 text-xs font-semibold hover:opacity-90 transition-colors"
               >
                 Create New Schema
               </button>
@@ -473,7 +473,7 @@ export function AttestationManager({
         type="button"
         onClick={handleSubmit}
         disabled={!canSubmit}
-        className="w-full rounded-xl bg-white text-black border border-white py-3 text-sm font-semibold hover:bg-black hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        className="w-full rounded-xl bg-sol-gradient text-white border border-transparent py-3 text-sm font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
       >
         {isSubmitting ? (
           <span className="flex items-center justify-center gap-2">

@@ -25,6 +25,7 @@
 
 - [ ] No secrets, `.env`, or build artifacts committed
 - [ ] Tests added/updated (no tests deleted or weakened without justification below)
+- [ ] Theme audit completed: production views use design tokens, with no hardcoded light-only `bg-white`, `text-gray-*`, `bg-gray-*`, or `border-gray-*` classes
 - [ ] If contracts/scanner/circuits changed: WASM/artifact hashes + manifests updated
 - [ ] If circuits changed: constraint thresholds in `circuits/constraint-thresholds.json` verified and updated if needed
 - [ ] If event ABI / storage layout changed: scanner updated and version bumped

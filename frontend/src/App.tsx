@@ -7,7 +7,7 @@ import { ToastProvider, useToast } from "./context/ToastContext";
 import { LandingView } from "./components/LandingView";
 import { DashboardView } from "./components/DashboardView";
 import { RegistrationWizard } from "./components/RegistrationWizard";
-import { SendView } from "./components/SendView";
+import { SendView, type SendPrefill } from "./components/SendView";
 import { PrivateBalanceView } from "./components/PrivateBalanceView";
 import { TransactionHistoryView } from "./components/TransactionHistoryView";
 import { ReceiveView } from "./components/ReceiveView";
@@ -27,11 +27,20 @@ import { getTabAccess } from "./lib/tabAccess";
 import { getFeatureFlags } from "./lib/featureFlags";
 import { useKeyboardShortcuts, type ShortcutTarget } from "./lib/a11y/keyboardShortcuts";
 import { KeyboardHelpModal } from "./components/KeyboardHelpModal";
+import { OfflineQueueBanner } from "./components/OfflineQueueBanner";
+import { getDeepLinkFromSearch, parseOpaqueDeepLink } from "./lib/deepLinks";
 
 const SchemaStudio = lazy(() => import("./components/SchemaStudio").then((m) => ({ default: m.SchemaStudio })));
 const AttestationManager = lazy(() => import("./components/AttestationManager").then((m) => ({ default: m.AttestationManager })));
 const MyTraitsView = lazy(() => import("./components/MyTraitsView").then((m) => ({ default: m.MyTraitsView })));
 const ManageView = lazy(() => import("./components/ManageView").then((m) => ({ default: m.ManageView })));
+
+type AppRouteState = {
+  tab?: Tab;
+  sendPrefill?: SendPrefill;
+  receiveMode?: "payment_link";
+  retryOfflineScan?: boolean;
+};
 
 function LazyFallback() {
   return (
@@ -45,6 +54,9 @@ function AppContent() {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [registrationJustCompleted, setRegistrationJustCompleted] = useState(false);
   const [kbdHelpOpen, setKbdHelpOpen] = useState(false);
+  const [sendPrefill, setSendPrefill] = useState<SendPrefill | undefined>();
+  const [receiveMode, setReceiveMode] = useState<"payment_link" | undefined>();
+  const [retryOfflineScan, setRetryOfflineScan] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   useKeys();
@@ -60,12 +72,38 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
-    const requestedTab = (location.state as { tab?: Tab } | null)?.tab;
-    if (location.pathname === "/app" && requestedTab) {
-      setTab(requestedTab);
+    const routeState = (location.state as AppRouteState | null) ?? null;
+    const hasRouteAction = Boolean(
+      routeState?.tab ||
+      routeState?.sendPrefill ||
+      routeState?.receiveMode ||
+      routeState?.retryOfflineScan,
+    );
+    if (location.pathname === "/app" && routeState && hasRouteAction) {
+      if (routeState.tab) setTab(routeState.tab);
+      if (routeState.sendPrefill) setSendPrefill(routeState.sendPrefill);
+      if (routeState.receiveMode) setReceiveMode(routeState.receiveMode);
+      if (routeState.retryOfflineScan) setRetryOfflineScan(true);
       navigate("/app", { replace: true, state: {} });
     }
   }, [location.pathname, location.state, navigate]);
+
+  useEffect(() => {
+    if (location.pathname !== "/app") return;
+    const rawDeepLink = getDeepLinkFromSearch(location.search);
+    if (!rawDeepLink) return;
+
+    const parsed = parseOpaqueDeepLink(rawDeepLink);
+    if (!parsed.ok) {
+      navigate(`/link?uri=${encodeURIComponent(rawDeepLink)}`, { replace: true });
+      return;
+    }
+
+    setTab(parsed.target.tab);
+    if ("sendPrefill" in parsed.target) setSendPrefill(parsed.target.sendPrefill);
+    if ("receiveMode" in parsed.target) setReceiveMode(parsed.target.receiveMode);
+    navigate("/app", { replace: true, state: {} });
+  }, [location.pathname, location.search, navigate]);
 
   useEffect(() => {
     setRegistrationJustCompleted(false);
@@ -132,15 +170,20 @@ function AppContent() {
     }
 
     if (tab === "dashboard") return <DashboardView onNavigate={setTab} address={address ?? undefined} cluster={cluster} />;
-    if (tab === "send") return <SendView />;
-    if (tab === "receive") return <ReceiveView onBack={() => setTab("dashboard")} />;
+    if (tab === "send") return <SendView prefill={sendPrefill} />;
+    if (tab === "receive") return <ReceiveView initialMode={receiveMode} onBack={() => setTab("dashboard")} />;
     if (tab === "balance") return <PrivateBalanceView />;
     if (tab === "history") return <TransactionHistoryView />;
     if (tab === "profile") return <ProfileView onNavigate={setTab} onDisconnect={handleDisconnect} />;
     if (tab === "reputation" || tab === "my-traits") {
       return (
         <Suspense fallback={<LazyFallback />}>
-          <MyTraitsView onNavigate={setTab} readOnly={access === "readonly"} />
+          <MyTraitsView
+            onNavigate={setTab}
+            readOnly={access === "readonly"}
+            retryOfflineScan={retryOfflineScan}
+            onOfflineScanRetried={() => setRetryOfflineScan(false)}
+          />
         </Suspense>
       );
     }
@@ -200,6 +243,7 @@ function AppContent() {
           <span className="h-7 w-7 animate-spin rounded-full border-2 border-ink-600 border-t-white" aria-hidden />
           <p className="text-sm text-mist">Authenticating with protocol…</p>
         </div>
+        <OfflineQueueBanner />
       </Layout>
     );
   }
@@ -217,6 +261,7 @@ function AppContent() {
         protocolLog={protocolLogPanel}
       >
         <RegistrationWizard onComplete={handleRegistrationComplete} />
+        <OfflineQueueBanner />
       </Layout>
     );
   }
@@ -233,6 +278,7 @@ function AppContent() {
       protocolLog={protocolLogPanel}
     >
       <NetworkGuard>{renderView()}</NetworkGuard>
+      <OfflineQueueBanner />
       {helpModal}
     </Layout>
   );

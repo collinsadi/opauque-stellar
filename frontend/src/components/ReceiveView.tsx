@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { useKeys } from "../context/KeysContext";
 import { computeStealthAddressAndViewTag } from "../lib/stealth";
@@ -11,6 +11,7 @@ import { BackupReminderModal } from "./security/BackupReminderModal";
 import { useSecurityStore } from "../store/securityStore";
 import { getFeatureFlags } from "../lib/featureFlags";
 import { FeatureDisabledNotice } from "./FeatureDisabledNotice";
+import { makeOpaquePaymentLink } from "../lib/deepLinks";
 
 type Mode = "choose" | "payment_link" | "manual_ghost";
 
@@ -18,11 +19,12 @@ function bytesToHex(b: Uint8Array): string {
   return "0x" + Array.from(b).map((x) => x.toString(16).padStart(2, "0")).join("");
 }
 
-export function ReceiveView({ onBack }: { onBack: () => void }) {
+export function ReceiveView({ initialMode, onBack }: { initialMode?: Extract<Mode, "payment_link">; onBack: () => void }) {
   const { isSetup, stealthMetaAddressHex } = useKeys();
   const [mode, setMode] = useState<Mode>("choose");
   const [copiedMeta, setCopiedMeta] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedOpaqueLink, setCopiedOpaqueLink] = useState(false);
   const [copiedGhost, setCopiedGhost] = useState(false);
   const [ghostResult, setGhostResult] = useState<{
     stealthAddress: string;
@@ -45,7 +47,11 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
     a.click();
   }, []);
 
-  const handleCopy = useCallback(async (value: string, type: "meta" | "link" | "ghost") => {
+  useEffect(() => {
+    if (initialMode) setMode(initialMode);
+  }, [initialMode]);
+
+  const handleCopy = useCallback(async (value: string, type: "meta" | "link" | "opaque" | "ghost") => {
     try {
       await navigator.clipboard.writeText(value);
       if (type === "meta") {
@@ -54,6 +60,9 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
       } else if (type === "link") {
         setCopiedLink(true);
         window.setTimeout(() => setCopiedLink(false), 1200);
+      } else if (type === "opaque") {
+        setCopiedOpaqueLink(true);
+        window.setTimeout(() => setCopiedOpaqueLink(false), 1200);
       } else {
         setCopiedGhost(true);
         window.setTimeout(() => setCopiedGhost(false), 1200);
@@ -72,6 +81,7 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
   }
 
   const paymentLink = createPaymentLink(stealthMetaAddressHex, cluster);
+  const opaquePaymentLink = makeOpaquePaymentLink(stealthMetaAddressHex);
 
   if (mode === "choose") {
     return (
@@ -163,8 +173,12 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
           <div className="font-mono text-xs text-white/90 break-all">{stealthMetaAddressHex}</div>
         </div>
         <div className="rounded-2xl border border-ink-700 bg-ink-900/20 p-4 mb-5">
-          <p className="text-[11px] uppercase tracking-wider text-mist/70 mb-1">Payment link</p>
+          <p className="text-[11px] uppercase tracking-wider text-mist/70 mb-1">Web payment link</p>
           <div className="font-mono text-xs text-mist break-all">{paymentLink}</div>
+        </div>
+        <div className="rounded-2xl border border-ink-700 bg-ink-900/20 p-4 mb-5">
+          <p className="text-[11px] uppercase tracking-wider text-mist/70 mb-1">Opaque app link</p>
+          <div className="font-mono text-xs text-mist break-all">{opaquePaymentLink}</div>
         </div>
         <div className="flex flex-wrap gap-2">
           <button
@@ -177,9 +191,16 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
           <button
             type="button"
             onClick={() => handleCopy(paymentLink, "link")}
-            className="rounded-xl bg-white border border-white px-3.5 py-2 text-sm font-semibold text-black hover:bg-black hover:text-white"
+            className="rounded-xl bg-sol-gradient border border-transparent px-3.5 py-2 text-sm font-semibold text-white hover:opacity-90"
           >
-            {copiedLink ? "Copied!" : "Copy link"}
+            {copiedLink ? "Copied!" : "Copy web link"}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleCopy(opaquePaymentLink, "opaque")}
+            className="rounded-xl border border-ink-600 bg-ink-950/30 px-3.5 py-2 text-sm font-medium text-mist transition-colors hover:border-white/30 hover:text-white"
+          >
+            {copiedOpaqueLink ? "Copied!" : "Copy opaque link"}
           </button>
         </div>
         <button
@@ -234,7 +255,7 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
           <button
             type="button"
             onClick={generate}
-            className="w-full rounded-xl bg-white border border-white px-4 py-3 text-sm font-semibold text-black hover:bg-black hover:text-white"
+            className="w-full rounded-xl bg-sol-gradient border border-transparent px-4 py-3 text-sm font-semibold text-white hover:opacity-90"
           >
             Generate ghost address
           </button>
@@ -268,7 +289,7 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
         <p className="text-sm text-mist mb-4">
           Share this address with the sender. It is stored locally; the app will detect incoming payments.
         </p>
-        <div className="p-4 rounded-2xl bg-white inline-block mb-4">
+        <div className="p-4 rounded-2xl inline-block mb-4" style={{ backgroundColor: "#ffffff" }}>
           <QRCodeCanvas
             ref={qrRef}
             value={ghostResult.stealthAddress}
@@ -286,7 +307,7 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
           <button
             type="button"
             onClick={() => handleCopy(ghostResult.stealthAddress, "ghost")}
-            className="rounded-xl bg-white border border-white px-3.5 py-2 text-sm font-semibold text-black hover:bg-black hover:text-white"
+            className="rounded-xl bg-sol-gradient border border-transparent px-3.5 py-2 text-sm font-semibold text-white hover:opacity-90"
           >
             {copiedGhost ? "Copied!" : "Copy address"}
           </button>

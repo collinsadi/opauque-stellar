@@ -26,6 +26,10 @@ import {
 import { ProofGeneratorModal } from "./ProofGeneratorModal";
 import { FeatureDisabledNotice } from "./FeatureDisabledNotice";
 import { getFeatureFlags } from "../lib/featureFlags";
+import { useOnlineStatus } from "../hooks/useOnlineStatus";
+import { useOfflineQueueStore } from "../store/offlineQueueStore";
+import { useProofHistoryStore, type ProofHistoryEntry } from "../store/proofHistoryStore";
+import { getExplorerTxUrl } from "../lib/explorer";
 
 // =============================================================================
 // Constants
@@ -160,7 +164,7 @@ function TraitCard({
         <button
           type="button"
           onClick={() => onProve(trait)}
-          className="w-full rounded-xl bg-white/10 border border-white/30 py-2 text-xs font-semibold text-white hover:bg-white/10 transition-colors"
+          className="w-full rounded-xl bg-ink-800 border border-white/30 py-2 text-xs font-semibold text-white hover:bg-ink-800 transition-colors"
         >
           Generate ZK Proof ▶
         </button>
@@ -184,6 +188,83 @@ function TraitCard({
   );
 }
 
+function shortValue(value: string, start = 10, end = 6) {
+  if (value.length <= start + end + 1) return value;
+  return `${value.slice(0, start)}…${value.slice(-end)}`;
+}
+
+function ProofHistoryList({ entries }: { entries: ProofHistoryEntry[] }) {
+  if (entries.length === 0) {
+    return (
+      <div className="rounded-xl border border-ink-800 bg-ink-900/50 px-6 py-10 text-center space-y-3">
+        <p className="text-white font-medium">No proof history yet</p>
+        <p className="text-sm text-mist max-w-xs mx-auto">
+          Generated, verified, and failed on-chain proof submissions will appear here.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {entries.map((entry) => (
+        <article key={entry.id} className="rounded-xl border border-ink-700 bg-ink-900 px-5 py-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-white truncate">{entry.schemaName || "Unknown Schema"}</p>
+              <p className="mt-1 text-xs text-mist">
+                {new Date(entry.timestamp).toLocaleString()}
+              </p>
+            </div>
+            <span
+              className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
+                entry.status === "failed"
+                  ? "border-error/40 bg-error/10 text-error"
+                  : entry.status === "verified"
+                    ? "border-success/40 bg-success/10 text-success"
+                    : "border-ink-600 bg-ink-800 text-mist"
+              }`}
+            >
+              {entry.status}
+            </span>
+          </div>
+          <dl className="mt-4 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
+            <div>
+              <dt className="text-ink-500">Schema</dt>
+              <dd className="font-mono text-mist" title={entry.schemaId}>{shortValue(entry.schemaId)}</dd>
+            </div>
+            <div>
+              <dt className="text-ink-500">Nullifier</dt>
+              <dd className="font-mono text-mist" title={entry.nullifierHash}>{shortValue(entry.nullifierHash)}</dd>
+            </div>
+            <div>
+              <dt className="text-ink-500">External nullifier</dt>
+              <dd className="font-mono text-mist" title={entry.externalNullifier}>{shortValue(entry.externalNullifier)}</dd>
+            </div>
+            <div>
+              <dt className="text-ink-500">Tx hash</dt>
+              <dd className="font-mono text-mist">
+                {entry.txHash ? (
+                  <a href={getExplorerTxUrl(entry.txHash)} target="_blank" rel="noreferrer" className="hover:text-white hover:underline" title={entry.txHash}>
+                    {shortValue(entry.txHash)}
+                  </a>
+                ) : (
+                  "Not submitted"
+                )}
+              </dd>
+            </div>
+          </dl>
+          {entry.error && (
+            <p className="mt-3 rounded-lg border border-error/30 bg-error/10 px-3 py-2 text-xs text-error">
+              {entry.error}
+            </p>
+          )}
+        </article>
+      ))}
+    </div>
+  );
+}
+
 // =============================================================================
 // Main view
 // =============================================================================
@@ -191,9 +272,16 @@ function TraitCard({
 interface MyTraitsViewProps {
   onNavigate?: (tab: Tab) => void;
   readOnly?: boolean;
+  retryOfflineScan?: boolean;
+  onOfflineScanRetried?: () => void;
 }
 
-export function MyTraitsView({ onNavigate, readOnly = false }: MyTraitsViewProps = {}) {
+export function MyTraitsView({
+  onNavigate,
+  readOnly = false,
+  retryOfflineScan = false,
+  onOfflineScanRetried,
+}: MyTraitsViewProps = {}) {
   const discoveredTraitsMap = useSchemaStore((s) => s.discoveredTraits);
   const schemaMap = useSchemaStore((s) => s.schemas);
   const setDiscoveredTraits = useSchemaStore((s) => s.setDiscoveredTraits);
@@ -205,6 +293,9 @@ export function MyTraitsView({ onNavigate, readOnly = false }: MyTraitsViewProps
   const { wasm, isReady: wasmReady } = useOpaqueWasm();
   const { isSetup, getMasterKeys } = useKeys();
   const cluster = getCluster();
+  const online = useOnlineStatus();
+  const enqueueTraitScan = useOfflineQueueStore((s) => s.enqueueTraitScan);
+  const proofHistoryEntries = useProofHistoryStore((s) => s.entries);
   const currentConfig = getConfigForCluster(cluster);
   const scanner = useScanner({
     cluster,
@@ -218,6 +309,7 @@ export function MyTraitsView({ onNavigate, readOnly = false }: MyTraitsViewProps
   const [activeProofTrait, setActiveProofTrait] = useState<V2DiscoveredTrait | null>(null);
   const [filter, setFilter] = useState<"all" | "active" | "revoked">("all");
   const [traitsPage, setTraitsPage] = useState(1);
+  const [activeView, setActiveView] = useState<"traits" | "history">("traits");
 
   const allTraits = useMemo(
     () => Object.values(discoveredTraitsMap),
@@ -244,6 +336,14 @@ export function MyTraitsView({ onNavigate, readOnly = false }: MyTraitsViewProps
     return filteredV2.slice(start, start + ITEMS_PER_PAGE);
   }, [filteredV2, traitsPage]);
 
+  const proofHistory = useMemo(
+    () =>
+      proofHistoryEntries
+        .filter((entry) => entry.cluster === cluster)
+        .sort((a, b) => b.timestamp - a.timestamp),
+    [proofHistoryEntries, cluster],
+  );
+
   // Reset page when filter changes
   useEffect(() => {
     setTraitsPage(1);
@@ -251,6 +351,11 @@ export function MyTraitsView({ onNavigate, readOnly = false }: MyTraitsViewProps
 
   const rescan = useCallback(async () => {
     if (!cluster) {
+      return;
+    }
+
+    if (!online) {
+      enqueueTraitScan({ cluster });
       return;
     }
 
@@ -355,6 +460,8 @@ export function MyTraitsView({ onNavigate, readOnly = false }: MyTraitsViewProps
     }
   }, [
     cluster,
+    online,
+    enqueueTraitScan,
     isSetup,
     wasmReady,
     wasm,
@@ -373,6 +480,12 @@ export function MyTraitsView({ onNavigate, readOnly = false }: MyTraitsViewProps
     hasAutoScannedRef.current = true;
     void rescan();
   }, [cluster, isSetup, wasmReady, wasm, rescan]);
+
+  useEffect(() => {
+    if (!retryOfflineScan || !online) return;
+    onOfflineScanRetried?.();
+    void rescan();
+  }, [retryOfflineScan, online, onOfflineScanRetried, rescan]);
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-8 space-y-8">
@@ -394,7 +507,7 @@ export function MyTraitsView({ onNavigate, readOnly = false }: MyTraitsViewProps
             <button
               type="button"
               onClick={() => onNavigate("attest")}
-              className="rounded-xl bg-white text-black border border-white px-4 py-2 text-xs font-semibold hover:bg-black hover:text-white transition-colors"
+              className="rounded-xl bg-sol-gradient text-white border border-transparent px-4 py-2 text-xs font-semibold hover:opacity-90 transition-colors"
             >
               Issue Attestation
             </button>
@@ -418,7 +531,7 @@ export function MyTraitsView({ onNavigate, readOnly = false }: MyTraitsViewProps
   <button
     type="button"
     onClick={() => void scanner.retrySync()}
-    className="rounded-xl bg-neutral-700 px-3 py-1 text-xs font-medium text-white hover:bg-black hover:text-white transition-colors"
+    className="rounded-xl bg-neutral-700 px-3 py-1 text-xs font-medium text-white hover:opacity-90 transition-colors"
   >
     Full Rescan
   </button>
@@ -426,6 +539,27 @@ export function MyTraitsView({ onNavigate, readOnly = false }: MyTraitsViewProps
         </div>
       </div>
 
+      <div className="flex gap-2">
+        {(["traits", "history"] as const).map((view) => (
+          <button
+            key={view}
+            type="button"
+            onClick={() => setActiveView(view)}
+            className={`rounded-lg px-3 py-1.5 text-xs font-medium capitalize transition-colors ${
+              activeView === view
+                ? "border border-white/30 bg-ink-800 text-white"
+                : "border border-ink-700 bg-ink-900 text-mist hover:text-white"
+            }`}
+          >
+            {view === "traits" ? "Traits" : `Proof History (${proofHistory.length})`}
+          </button>
+        ))}
+      </div>
+
+      {activeView === "history" ? (
+        <ProofHistoryList entries={proofHistory} />
+      ) : (
+        <>
       {/* Filter tabs */}
       {v2Traits.length > 0 && (
         <div className="flex gap-2">
@@ -436,7 +570,7 @@ export function MyTraitsView({ onNavigate, readOnly = false }: MyTraitsViewProps
               onClick={() => setFilter(f)}
               className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors capitalize ${
                 filter === f
-                  ? "bg-white text-black border border-white"
+                  ? "bg-sol-gradient text-white border border-transparent"
                   : "bg-ink-900 border border-ink-700 text-mist hover:text-white"
               }`}
             >
@@ -499,6 +633,8 @@ export function MyTraitsView({ onNavigate, readOnly = false }: MyTraitsViewProps
             ))}
           </div>
         </section>
+      )}
+        </>
       )}
 
       {/* Proof generator modal */}

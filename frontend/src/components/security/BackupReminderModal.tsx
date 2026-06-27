@@ -28,9 +28,9 @@ export const BackupReminderModal: React.FC<{ type: "send" | "receive"; onProceed
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[90]">
-      <div className="bg-white text-gray-900 rounded-lg p-6 max-w-md w-full shadow-2xl">
+      <div className="bg-ink-900 text-white rounded-lg p-6 max-w-md w-full shadow-2xl">
         <h2 className="text-xl font-bold mb-4">⚠️ Backup Reminder</h2>
-        <p className="mb-6 text-gray-600">
+        <p className="mb-6 text-mist">
           Stealth address recovery relies entirely on your local keys. Without a backup, if you lose your device, your funds are permanently lost.{" "}
           <RecoveryDocLink section="what-to-backup" className="text-neutral-500 hover:underline font-medium">
             What to back up
@@ -51,7 +51,7 @@ export const BackupReminderModal: React.FC<{ type: "send" | "receive"; onProceed
         <div className="flex space-x-4">
           <button
             onClick={onCancel}
-            className="flex-1 py-2 rounded font-medium bg-gray-200 hover:bg-gray-300 transition-colors"
+            className="flex-1 py-2 rounded font-medium bg-ink-800 hover:bg-ink-700 transition-colors"
           >
             Cancel
           </button>

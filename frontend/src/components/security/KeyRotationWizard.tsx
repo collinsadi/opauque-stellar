@@ -100,6 +100,7 @@ export const KeyRotationWizard: React.FC = () => {
   }
 
   return (
+
     <div className="rounded-2xl border border-ink-700 bg-ink-900 p-6">
       <h3 className="font-display text-xl font-bold text-white mb-2">
         Key Rotation &amp; Migration
@@ -133,10 +134,24 @@ export const KeyRotationWizard: React.FC = () => {
                 {isCompleted ? "✓" : step.id}
               </div>
               <span className="hidden sm:inline">{step.title}</span>
+
+    <div className="bg-ink-900 p-6 rounded-lg shadow-md border border-ink-700">
+      <h3 className="text-xl font-bold mb-4">Key Rotation & Migration</h3>
+      <p className="text-mist mb-6 text-sm">
+        If you suspect your stealth keys are compromised, you can rotate to a new meta-address. Old funds will remain recoverable.
+      </p>
+
+      <div className="flex mb-8 justify-between">
+        {steps.map((step) => (
+          <div key={step.id} className={`flex-1 text-center text-sm font-semibold ${currentStep === step.id ? 'text-neutral-500' : currentStep > step.id ? 'text-neutral-500' : 'text-white/60'}`}>
+            <div className={`mx-auto w-8 h-8 rounded-full flex items-center justify-center mb-2 ${currentStep === step.id ? 'bg-ink-800' : currentStep > step.id ? 'bg-ink-800' : 'bg-black'}`}>
+              {step.id}
+
             </div>
           );
         })}
       </div>
+
 
       {/* Step content */}
       <div className="rounded-xl border border-ink-700 bg-ink-800/60 p-5 min-h-[120px] flex flex-col justify-center mb-6 gap-3">
@@ -178,6 +193,15 @@ export const KeyRotationWizard: React.FC = () => {
             >
               {loading ? "Exporting…" : "Export Backup (.opq)"}
             </button>
+
+      <div className="bg-ink-950 p-4 rounded mb-6 min-h-[100px] flex items-center justify-center">
+        {currentStep === 1 && <p>Click next to generate a new secure meta-address.</p>}
+        {currentStep === 2 && (
+          <div className="text-center">
+            <p>Your new address has been generated.</p>
+            <p className="font-mono bg-sol-gradient px-2 py-1 border rounded mt-2">{newAddress}</p>
+            <p className="mt-4 text-sm">Please proceed to export a new backup.</p>
+
           </div>
         )}
         {currentStep === 3 && (

@@ -23,6 +23,7 @@ import {
   type ProofWorkerStage,
 } from "../lib/proofWorker/proofWorkerClient";
 import { createPortableProof, exportProofToFile } from "../lib/proofExport";
+import { useProofHistoryStore, type ProofHistoryStatus } from "../store/proofHistoryStore";
 
 // =============================================================================
 // Types
@@ -81,7 +82,32 @@ export function ProofGeneratorModal({ trait, onClose }: ProofGeneratorModalProps
   const [txSig, setTxSig] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [progressStage, setProgressStage] = useState<ProofWorkerStage>("preparing-witness");
+  const upsertProofHistory = useProofHistoryStore((s) => s.upsert);
   const proofAbortRef = useRef<AbortController | null>(null);
+
+  const recordProofHistory = useCallback(
+    (
+      proofData: GeneratedProof,
+      status: ProofHistoryStatus,
+      opts: { txHash?: string; error?: string } = {},
+    ) => {
+      const cluster = getCluster() || "unknown";
+      upsertProofHistory({
+        cluster,
+        schemaId: proofData.schemaId,
+        schemaName: trait.schemaName ?? "Unknown Schema",
+        nullifierHash: proofData.nullifierHash,
+        externalNullifier: proofData.publicSignals[2] ?? "",
+        merkleRoot: proofData.publicSignals[0] ?? "",
+        attestationId: proofData.publicSignals[1] ?? "",
+        txHash: opts.txHash,
+        status,
+        error: opts.error,
+        source: status === "verified" ? "on-chain" : "local",
+      });
+    },
+    [trait.schemaName, upsertProofHistory],
+  );
 
   const handleCancelGenerate = useCallback(() => {
     proofAbortRef.current?.abort();
@@ -182,6 +208,7 @@ export function ProofGeneratorModal({ trait, onClose }: ProofGeneratorModalProps
       };
 
       setProof(generatedProof);
+      recordProofHistory(generatedProof, "generated");
       setStep("done");
     } catch (e) {
       if (e instanceof ProofGenerationCancelledError) {
@@ -249,7 +276,9 @@ export function ProofGeneratorModal({ trait, onClose }: ProofGeneratorModalProps
       })();
       const proofRootBigInt = stringToBigInt(proof.publicSignals[0]);
       if (fetchedRootBigInt !== proofRootBigInt) {
-        setError("Merkle root mismatch: proof does not correspond to current on-chain root.");
+        const details = "Merkle root mismatch: proof does not correspond to current on-chain root.";
+        recordProofHistory(proof, "failed", { error: details });
+        setError(details);
         setStep("error");
         return;
       }
@@ -277,9 +306,11 @@ export function ProofGeneratorModal({ trait, onClose }: ProofGeneratorModalProps
       });
 
       setTxSig(signature);
+      recordProofHistory(proof, "verified", { txHash: signature });
       setStep("verified");
     } catch (e) {
       const details = e instanceof Error ? e.message : "On-chain verification failed";
+      recordProofHistory(proof, "failed", { error: details });
       setError(`Soroban proof verification failed: ${details}`);
       setStep("error");
     }
@@ -366,7 +397,7 @@ export function ProofGeneratorModal({ trait, onClose }: ProofGeneratorModalProps
                 type="button"
                 onClick={handleGenerate}
                 disabled={!externalNullifier.trim() || !wasmReady}
-                className="w-full rounded-xl bg-white text-black border border-white py-3 text-sm font-semibold hover:bg-black hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="w-full rounded-xl bg-sol-gradient text-white border border-transparent py-3 text-sm font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 {!wasmReady ? "Loading cryptography module…" : "Generate Proof in Browser"}
               </button>
@@ -391,7 +422,7 @@ export function ProofGeneratorModal({ trait, onClose }: ProofGeneratorModalProps
               </p>
               <div className="h-1.5 w-full max-w-xs bg-ink-800 rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-white rounded-full transition-all duration-700 ease-out"
+                  className="h-full bg-sol-gradient rounded-full transition-all duration-700 ease-out"
                   style={{ width: `${progress}%` }}
                 />
               </div>
@@ -474,7 +505,7 @@ export function ProofGeneratorModal({ trait, onClose }: ProofGeneratorModalProps
                 type="button"
                 onClick={handleSubmitOnChain}
                 disabled={!publicKey}
-                className="w-full rounded-xl bg-white text-black border border-white py-2.5 text-sm font-semibold hover:bg-black hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="w-full rounded-xl bg-sol-gradient text-white border border-transparent py-2.5 text-sm font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 Submit On-Chain
               </button>

@@ -313,7 +313,7 @@ function ExplainStep({
         <button
           type="button"
           onClick={onConfirm}
-          className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-black bg-white border border-white hover:bg-black hover:text-white transition-colors"
+          className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-sol-gradient border border-transparent hover:opacity-90 transition-colors"
         >
           Generate Proof
         </button>
@@ -465,7 +465,7 @@ function ReadyStep({
         <button
           type="button"
           onClick={onSubmit}
-          className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-black bg-white border border-white hover:bg-black hover:text-white transition-colors"
+          className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-sol-gradient border border-transparent hover:opacity-90 transition-colors"
         >
           Submit On-Chain
         </button>
@@ -514,7 +514,7 @@ function SubmittedStep({ txHash, onClose }: { txHash: string | null; onClose: ()
       <button
         type="button"
         onClick={onClose}
-        className="w-full px-4 py-2.5 rounded-xl text-sm font-semibold text-black bg-white border border-white hover:bg-black hover:text-white transition-colors"
+        className="w-full px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-sol-gradient border border-transparent hover:opacity-90 transition-colors"
       >
         Done
       </button>
@@ -549,7 +549,7 @@ function ErrorStep({
         <button
           type="button"
           onClick={onRetry}
-          className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-black bg-white border border-white hover:bg-black hover:text-white transition-colors"
+          className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-sol-gradient border border-transparent hover:opacity-90 transition-colors"
         >
           Retry
         </button>

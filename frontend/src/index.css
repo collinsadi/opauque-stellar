@@ -105,28 +105,24 @@
 
   .bg-grid-fade {
     background-image:
-      linear-gradient(to bottom, transparent 0%, #000000 100%),
-      linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px),
-      linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+      linear-gradient(to bottom, transparent 0%, var(--color-ink-950) 100%),
+      linear-gradient(90deg, rgba(153, 69, 255, 0.03) 1px, transparent 1px),
+      linear-gradient(rgba(153, 69, 255, 0.03) 1px, transparent 1px);
   }
 
   .bg-sol-gradient {
-    background: #ffffff;
-    color: #000000;
+    background: linear-gradient(135deg, var(--color-sol-gradient-start), var(--color-sol-gradient-end));
   }
 
   .text-sol-gradient {
-    color: #ffffff;
-    -webkit-text-fill-color: #ffffff;
-    background: none;
+    background: linear-gradient(135deg, var(--color-sol-gradient-start), var(--color-sol-gradient-end));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
   }
 
   .border-sol-gradient {
-    border-color: #ffffff;
-  }
-
-  .bg-white.text-white {
-    color: #000000;
+    border-image: linear-gradient(135deg, var(--color-sol-gradient-start), var(--color-sol-gradient-end)) 1;
   }
 
   .hover\:bg-sol-purple\/90:hover {

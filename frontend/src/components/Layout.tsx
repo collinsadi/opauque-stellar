@@ -107,7 +107,7 @@ function DesktopNav({
               onClick={onConnect}
               disabled={isConnecting}
               data-tour="connect"
-              className="rounded-lg bg-white border border-white px-4 py-1.5 text-sm font-semibold text-black transition-all hover:bg-black hover:text-white disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-white focus-visible:outline-offset-2"
+              className="rounded-lg bg-sol-gradient border border-transparent px-4 py-1.5 text-sm font-semibold text-white transition-all hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-white focus-visible:outline-offset-2"
             >
               {isConnecting ? "Connecting…" : "Connect"}
             </button>

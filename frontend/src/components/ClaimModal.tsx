@@ -181,7 +181,7 @@ export function ClaimModal({
             !quote ||
             quote.spendableStroops <= 0n
           }
-          className={`px-4 py-2 rounded-xl text-sm font-semibold bg-white border border-white text-black hover:bg-black hover:text-white disabled:opacity-40 disabled:cursor-not-allowed ${claiming ? "loading" : ""}`}
+          className={`px-4 py-2 rounded-xl text-sm font-semibold bg-sol-gradient border border-transparent text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed ${claiming ? "loading" : ""}`}
         >
           {claiming ? "Claiming…" : "Confirm"}
         </button>

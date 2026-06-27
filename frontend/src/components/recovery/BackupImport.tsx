@@ -38,35 +38,35 @@ export const BackupImport: React.FC = () => {
   };
 
   return (
-    <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
+    <div className="bg-ink-900 p-6 rounded-lg shadow-md border border-ink-700">
       <h3 className="text-xl font-bold mb-4">Import Recovery Backup</h3>
-      <p className="text-gray-600 mb-6 text-sm">
+      <p className="text-mist mb-6 text-sm">
         Restore your keys from a previously exported `.opq` backup file.
       </p>
       
       {success ? (
-        <div className="bg-neutral-200 text-neutral-800 p-4 rounded mb-4">
+        <div className="bg-success/10 text-success p-4 rounded mb-4">
           ✅ Backup restored successfully.
         </div>
       ) : (
         <form onSubmit={handleImport} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700">Backup File (.opq)</label>
+            <label className="block text-sm font-medium text-mist">Backup File (.opq)</label>
             <input
               type="file"
               accept=".opq,.json"
               onChange={(e) => setFile(e.target.files?.[0] || null)}
-              className="mt-1 block w-full text-sm text-white/50 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-neutral-100 file:text-neutral-700 hover:file:bg-neutral-200"
+              className="mt-1 block w-full text-sm text-white/50 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-ink-800 file:text-mist hover:file:bg-ink-700"
               required
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700">Password</label>
+            <label className="block text-sm font-medium text-mist">Password</label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border"
+              className="mt-1 block w-full rounded-md border-ink-600 shadow-sm p-2 border"
               required
             />
           </div>
