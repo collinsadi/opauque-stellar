@@ -22,7 +22,11 @@ const EVENT_VERSION: u32 = 1;
 /// v2 events carry an extended payload; emitted alongside v1 during the deprecation window.
 /// See docs/rfcs/0002-event-schema-v2-migration.md for the sunset timeline.
 const EVENT_VERSION_V2: u32 = 2;
-const MAX_ATTESTATION_PAYLOAD_LEN: u32 = 512;
+/// Hard cap on attestation payload bytes. Enforced before any schema-level validation
+/// so that oversized submissions never reach expensive cross-contract calls.
+/// Schema authors must ensure the worst-case encoded size of their field definitions
+/// stays below this ceiling. See docs/integrators/schema-authoring-guide.md.
+pub const MAX_ATTESTATION_PAYLOAD_LEN: u32 = 512;
 
 #[contracttype]
 #[derive(Clone)]
@@ -67,6 +71,9 @@ pub enum AttestationError {
     SchemaDeprecated = 13,
     SchemaExpired = 14,
     SchemaNotFound = 15,
+    /// Attestation metadata payload exceeds MAX_ATTESTATION_PAYLOAD_LEN.
+    /// Callers should pre-validate on the client side before submitting.
+    MetadataTooLarge = 16,
 }
 
 fn attestation_key(uid: &BytesN<32>) -> (Symbol, BytesN<32>) {
@@ -302,7 +309,7 @@ impl AttestationEngineV2 {
             return Err(AttestationError::Paused);
         }
         if data.len() > MAX_ATTESTATION_PAYLOAD_LEN {
-            return Err(AttestationError::DataTooLarge);
+            return Err(AttestationError::MetadataTooLarge);
         }
         let ledger = env.ledger().sequence();
         if expiration_ledger != 0 && expiration_ledger <= ledger {
@@ -400,6 +407,14 @@ impl AttestationEngineV2 {
                 .unwrap_or(0),
             max_attestation_data_len: MAX_ATTESTATION_PAYLOAD_LEN,
         }
+    }
+
+    /// Returns the maximum byte length allowed for attestation payload data.
+    /// Clients should call this before composing an attestation to determine
+    /// the available byte budget and surface it to users. Exceeding this limit
+    /// at issuance time will return `MetadataTooLarge`.
+    pub fn query_metadata_size_limit(_env: Env) -> u32 {
+        MAX_ATTESTATION_PAYLOAD_LEN
     }
 
     pub fn revoke_attestation(
@@ -1082,7 +1097,16 @@ mod test {
             &0u32,
             &ref_uid,
         );
-        assert_eq!(result, Err(Ok(AttestationError::DataTooLarge)));
+        assert_eq!(result, Err(Ok(AttestationError::MetadataTooLarge)));
+    }
+
+    #[test]
+    fn test_query_metadata_size_limit() {
+        let (_env, _authority, _engine_id, _schema_client, engine_client) = setup();
+        assert_eq!(
+            engine_client.query_metadata_size_limit(),
+            MAX_ATTESTATION_PAYLOAD_LEN
+        );
     }
 
     #[test]
