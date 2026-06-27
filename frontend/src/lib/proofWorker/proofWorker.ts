@@ -6,7 +6,7 @@ import "../../polyfills";
 import { formatProofWorkerError } from "./errors";
 import { buildV1Witness } from "./witnessV1";
 import { buildV2Witness } from "./witnessV2";
-import type { ProofWorkerStage, WorkerRequest, WorkerResponse } from "./types";
+import type { ProofWorkerStage, ProofWorkerTimeoutConfig, WorkerRequest, WorkerResponse } from "./types";
 
 // @ts-expect-error snarkjs has no bundled types
 import * as snarkjs from "snarkjs";
@@ -16,6 +16,11 @@ const V1_ZKEY_PATH = "/circuits/sa_final.zkey";
 const V2_CIRCUIT_WASM_PATH = "/circuits/v2/stealth_reputation.wasm";
 const V2_ZKEY_PATH = "/circuits/v2/stealth_reputation_final.zkey";
 
+const DEFAULT_TIMEOUT: ProofWorkerTimeoutConfig = {
+  witnessTimeoutMs: 30000,
+  proofTimeoutMs: 120000,
+};
+
 const cancelledJobs = new Set<string>();
 
 function post(msg: WorkerResponse): void {
@@ -24,6 +29,10 @@ function post(msg: WorkerResponse): void {
 
 function postProgress(id: string, stage: ProofWorkerStage, percent: number): void {
   post({ id, type: "progress", stage, percent });
+}
+
+function postTimeout(id: string, stage: ProofWorkerStage, timeoutMs: number): void {
+  post({ id, type: "timeout", stage, timeoutMs });
 }
 
 function isCancelled(id: string): boolean {
@@ -44,11 +53,31 @@ function toUserError(err: unknown): string {
   return formatProofWorkerError(raw);
 }
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => void): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      onTimeout();
+      reject(new Error(`Operation timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    promise
+      .then((result) => {
+        clearTimeout(timer);
+        resolve(result);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
+
 async function runGroth16Prove(
   id: string,
   witness: Record<string, unknown>,
   wasmPath: string,
   zkeyPath: string,
+  timeoutConfig: ProofWorkerTimeoutConfig,
 ): Promise<{ proof: { pi_a: string[]; pi_b: string[][]; pi_c: string[] }; publicSignals: string[] }> {
   postProgress(id, "generating-proof", 75);
 
@@ -64,11 +93,12 @@ async function runGroth16Prove(
     trace: () => {},
   };
 
-  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
-    witness,
-    wasmPath,
-    zkeyPath,
-    logger,
+  const proofTimeoutMs = timeoutConfig.proofTimeoutMs ?? DEFAULT_TIMEOUT.proofTimeoutMs!;
+
+  const { proof, publicSignals } = await withTimeout(
+    snarkjs.groth16.fullProve(witness, wasmPath, zkeyPath, logger),
+    proofTimeoutMs,
+    () => postTimeout(id, "generating-proof", proofTimeoutMs),
   );
 
   postProgress(id, "generating-proof", 95);
@@ -84,27 +114,41 @@ async function runGroth16Prove(
 }
 
 async function handleGenerateV1(id: string, payload: WorkerRequest & { type: "generate-v1" }): Promise<void> {
+  const timeoutConfig = { ...DEFAULT_TIMEOUT, ...payload.timeout };
+  const witnessTimeoutMs = timeoutConfig.witnessTimeoutMs!;
+
   postProgress(id, "preparing-witness", 10);
   assertNotCancelled(id);
 
-  const witness = await buildV1Witness(payload.payload);
+  const witness = await withTimeout(
+    buildV1Witness(payload.payload),
+    witnessTimeoutMs,
+    () => postTimeout(id, "preparing-witness", witnessTimeoutMs),
+  );
   postProgress(id, "preparing-witness", 70);
   assertNotCancelled(id);
 
-  const result = await runGroth16Prove(id, witness, V1_CIRCUIT_WASM_PATH, V1_ZKEY_PATH);
+  const result = await runGroth16Prove(id, witness, V1_CIRCUIT_WASM_PATH, V1_ZKEY_PATH, timeoutConfig);
   assertNotCancelled(id);
   post({ id, type: "success", result });
 }
 
 async function handleGenerateV2(id: string, payload: WorkerRequest & { type: "generate-v2" }): Promise<void> {
+  const timeoutConfig = { ...DEFAULT_TIMEOUT, ...payload.timeout };
+  const witnessTimeoutMs = timeoutConfig.witnessTimeoutMs!;
+
   postProgress(id, "preparing-witness", 10);
   assertNotCancelled(id);
 
-  const witness = await buildV2Witness(payload.payload);
+  const witness = await withTimeout(
+    buildV2Witness(payload.payload),
+    witnessTimeoutMs,
+    () => postTimeout(id, "preparing-witness", witnessTimeoutMs),
+  );
   postProgress(id, "preparing-witness", 70);
   assertNotCancelled(id);
 
-  const result = await runGroth16Prove(id, witness, V2_CIRCUIT_WASM_PATH, V2_ZKEY_PATH);
+  const result = await runGroth16Prove(id, witness, V2_CIRCUIT_WASM_PATH, V2_ZKEY_PATH, timeoutConfig);
   assertNotCancelled(id);
   post({ id, type: "success", result });
 }

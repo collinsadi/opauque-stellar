@@ -5,6 +5,22 @@ export class ProofGenerationCancelledError extends Error {
   }
 }
 
+export class ProofGenerationTimeoutError extends Error {
+  public readonly stage: string;
+  public readonly timeoutMs: number;
+
+  constructor(stage: string, timeoutMs: number) {
+    const stageLabel = stage === "preparing-witness" ? "witness generation" : "proof generation";
+    super(
+      `Proof ${stageLabel} timed out after ${Math.round(timeoutMs / 1000)}s. ` +
+      "Try again with fewer attestations or use a device with more processing power.",
+    );
+    this.name = "ProofGenerationTimeoutError";
+    this.stage = stage;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
 const MEMORY_ERROR_PATTERN =
   /out of memory|allocation failed|cannot enlarge memory|memory access out of bounds|array buffer allocation failed|reached wasm memory limit/i;
 

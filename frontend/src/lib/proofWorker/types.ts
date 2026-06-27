@@ -29,16 +29,26 @@ export interface Groth16ProofResult {
 
 export type ProofWorkerStage = "preparing-witness" | "generating-proof";
 
+/** Timeout configuration for proof generation. */
+export interface ProofWorkerTimeoutConfig {
+  /** Maximum time in milliseconds for witness preparation. Default: 30000 (30s). */
+  witnessTimeoutMs?: number;
+  /** Maximum time in milliseconds for proof generation. Default: 120000 (2min). */
+  proofTimeoutMs?: number;
+}
+
 export type WorkerRequest =
   | {
       id: string;
       type: "generate-v1";
       payload: V1WitnessParams;
+      timeout?: ProofWorkerTimeoutConfig;
     }
   | {
       id: string;
       type: "generate-v2";
       payload: V2WitnessParams;
+      timeout?: ProofWorkerTimeoutConfig;
     }
   | {
       id: string;
@@ -61,4 +71,10 @@ export type WorkerResponse =
       id: string;
       type: "error";
       message: string;
+    }
+  | {
+      id: string;
+      type: "timeout";
+      stage: ProofWorkerStage;
+      timeoutMs: number;
     };
