@@ -6,14 +6,28 @@
  * Falls back cleanly when federation is unreachable or the name is unknown.
  */
 
-import { getNetwork } from "./chain";
+import { getNetwork, type StellarNetwork } from "./chain";
 
-const FEDERATION_SERVERS: Record<string, string | undefined> = {
+/** Networks that have known federation infrastructure available. */
+export const FEDERATION_SUPPORTED_NETWORKS: ReadonlySet<StellarNetwork> = new Set([
+  "mainnet",
+  "testnet",
+]);
+
+/** Well-known fallback federation servers per network (used when identifier has no domain). */
+const FEDERATION_SERVERS: Record<StellarNetwork, string | undefined> = {
   mainnet: "https://federation.stellar.org",
-  testnet: undefined,
+  testnet: "https://federation.stellar.org",
   futurenet: undefined,
   local: undefined,
 };
+
+/** Returns true when the current (or given) network supports federation lookups. */
+export function isFederationSupportedForNetwork(
+  network: StellarNetwork = getNetwork(),
+): boolean {
+  return FEDERATION_SUPPORTED_NETWORKS.has(network);
+}
 
 export const STELLAR_ADDRESS_RE = /^[a-z0-9_-]+(?:\*[a-z0-9_.-]+)?$/i;
 export const FEDERATION_LOOKUP_RE = /^[a-z0-9_-]+\*[a-z0-9_.-]+$/i;

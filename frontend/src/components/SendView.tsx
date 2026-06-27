@@ -1,8 +1,10 @@
 import { useState, useEffect, useMemo } from "react";
 import { motion } from "framer-motion";
 import {
+  Asset,
   BASE_FEE,
   Contract,
+  Operation,
   TransactionBuilder,
   nativeToScVal,
   StrKey,
@@ -34,6 +36,7 @@ import { useProtocolLog } from "../context/ProtocolLogContext";
 import { useTxHistoryStore } from "../store/txHistoryStore";
 import { PrivacyWarningCallout } from "./PrivacyWarningCallout";
 import { SEND_PRIVACY_WARNING } from "../lib/privacyThreatModel";
+import { getSupportedAssets, hasTrustline, type TokenInfo } from "../lib/tokens";
 
 const STROOP_FEE_BUFFER = 100_000n;
 
@@ -62,18 +65,27 @@ export function SendView() {
   const currentConfig = getConfigForCluster(network);
   const address = publicKey;
 
+  const supportedAssets = useMemo(() => getSupportedAssets(network), [network]);
+
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("");
+  const [selectedAsset, setSelectedAsset] = useState<TokenInfo>(supportedAssets[0]);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [steps, setSteps] = useState<ProtocolStep[]>([]);
   const [activeBalance, setActiveBalance] = useState<bigint | null>(null);
+  const [tokenBalance, setTokenBalance] = useState<bigint | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
+
+  useEffect(() => {
+    setSelectedAsset(supportedAssets[0]);
+  }, [supportedAssets]);
 
   useEffect(() => {
     if (!address) {
       setActiveBalance(null);
+      setTokenBalance(null);
       return;
     }
     let cancelled = false;
@@ -88,8 +100,27 @@ export function SendView() {
           ),
         );
         if (!cancelled) setActiveBalance(stroops);
+
+        if (selectedAsset.issuer) {
+          const trustlineBal = account.balances.find(
+            (b) =>
+              (b as { asset_code?: string }).asset_code === selectedAsset.symbol &&
+              (b as { asset_issuer?: string }).asset_issuer === selectedAsset.issuer,
+          );
+          const tStroops = BigInt(
+            Math.round(
+              parseFloat((trustlineBal as { balance?: string } | undefined)?.balance ?? "0") * 1e7,
+            ),
+          );
+          if (!cancelled) setTokenBalance(tStroops);
+        } else {
+          if (!cancelled) setTokenBalance(null);
+        }
       } catch {
-        if (!cancelled) setActiveBalance(null);
+        if (!cancelled) {
+          setActiveBalance(null);
+          setTokenBalance(null);
+        }
       } finally {
         if (!cancelled) setBalanceLoading(false);
       }
@@ -97,14 +128,21 @@ export function SendView() {
     return () => {
       cancelled = true;
     };
-  }, [address]);
+  }, [address, selectedAsset]);
+
+  const isNative = selectedAsset.issuer === null;
+
+  const displayBalance = isNative ? activeBalance : tokenBalance;
 
   const maxSendableBalance = useMemo(() => {
-    if (activeBalance == null) return null;
-    return activeBalance > STROOP_FEE_BUFFER
-      ? activeBalance - STROOP_FEE_BUFFER
-      : 0n;
-  }, [activeBalance]);
+    if (isNative) {
+      if (activeBalance == null) return null;
+      return activeBalance > STROOP_FEE_BUFFER
+        ? activeBalance - STROOP_FEE_BUFFER
+        : 0n;
+    }
+    return tokenBalance ?? null;
+  }, [isNative, activeBalance, tokenBalance]);
 
   const inputStroops = useMemo(() => {
     const raw = amount.trim();
@@ -135,7 +173,7 @@ export function SendView() {
     setError(null);
     setTxHash(null);
     if (!currentConfig || !publicKey || !signTransaction || !connected) {
-      setError("Connect Freighter on a supported network.");
+      setError("Connect your wallet on a supported network.");
       return;
     }
     let recipientMeta = recipient.trim();
@@ -213,12 +251,44 @@ export function SendView() {
       const source = await horizon.loadAccount(publicKey);
       const announcer = new Contract(deployedAddresses.stealthAnnouncer);
 
-      // Fresh stealth accounts don't exist yet, so create them on first send
-      // instead of issuing a plain payment that would fail.
-      const transferOp = await buildNativeTransferOperation({
-        destination: stealthStellarAddress,
-        amountStroops: value,
-      });
+      let transferOp: ReturnType<typeof Operation.payment> | ReturnType<typeof Operation.createAccount>;
+
+      if (isNative) {
+        // Fresh stealth accounts don't exist yet; createAccount on first send.
+        transferOp = await buildNativeTransferOperation({
+          destination: stealthStellarAddress,
+          amountStroops: value,
+        });
+      } else {
+        // Non-native (e.g. USDC): check recipient trustline before sending.
+        addStep("wait", `Checking ${selectedAsset.symbol} trustline on stealth account…`);
+        const trustlineOk = await hasTrustline(
+          stealthStellarAddress,
+          selectedAsset.symbol,
+          selectedAsset.issuer!,
+          (addr) => horizon.loadAccount(addr),
+        );
+        if (!trustlineOk) {
+          setError(
+            `The derived stealth address does not have a ${selectedAsset.symbol} trustline. ` +
+            `The recipient must first establish a trustline for ${selectedAsset.symbol} ` +
+            `(issuer: ${selectedAsset.issuer!.slice(0, 8)}…) on their stealth account.`,
+          );
+          setSteps((prev) => {
+            const last = prev[prev.length - 1];
+            return prev.slice(0, -1).concat([{ ...last, status: "error" as const }]);
+          });
+          setSending(false);
+          return;
+        }
+        addStep("ok", `${selectedAsset.symbol} trustline confirmed.`);
+
+        transferOp = Operation.payment({
+          destination: stealthStellarAddress,
+          asset: new Asset(selectedAsset.symbol, selectedAsset.issuer!),
+          amount: (Number(value) / 1e7).toFixed(7),
+        });
+      }
 
       let tx = new TransactionBuilder(source, {
         fee: BASE_FEE,
@@ -239,7 +309,7 @@ export function SendView() {
         .build();
 
       tx = await soroban.prepareTransaction(tx);
-      addStep("wait", "Awaiting Freighter signature…");
+      addStep("wait", "Awaiting wallet signature…");
       const signedXdr = await signTransaction(tx.toXDR());
       const signed = TransactionBuilder.fromXDR(signedXdr, passphrase);
       const send = await soroban.sendTransaction(signed);
@@ -265,8 +335,8 @@ export function SendView() {
           "…" +
           stealthStellarAddress.slice(-4),
         amountStroops: value.toString(),
-        tokenSymbol: "XLM",
-        tokenAddress: null,
+        tokenSymbol: selectedAsset.symbol,
+        tokenAddress: selectedAsset.issuer,
         amount: formatXlm(value),
         txHash: send.hash,
       });
@@ -296,15 +366,49 @@ export function SendView() {
 
   return (
     <motion.div className="card max-w-lg mx-auto">
-      <h2 className="text-lg font-semibold text-white mb-1">Send XLM</h2>
+      <h2 className="text-lg font-semibold text-white mb-1">
+        Send {selectedAsset.symbol}
+      </h2>
       <p className="text-sm text-neutral-500 mb-4">
-        Send XLM to a stealth meta-address. The app derives a one-time Stellar
-        account and publishes a Soroban announcement.
+        Send privately to a stealth meta-address. The app derives a one-time
+        Stellar account and publishes a Soroban announcement.
       </p>
 
       <PrivacyWarningCallout message={SEND_PRIVACY_WARNING} className="mb-6" />
 
       <motion.div className="space-y-4">
+        {supportedAssets.length > 1 && (
+          <div>
+            <label className="block text-sm text-neutral-400 mb-1">Asset</label>
+            <div className="flex gap-2">
+              {supportedAssets.map((asset) => (
+                <button
+                  key={asset.symbol}
+                  type="button"
+                  onClick={() => {
+                    setSelectedAsset(asset);
+                    setAmount("");
+                    setError(null);
+                    setTxHash(null);
+                  }}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                    selectedAsset.symbol === asset.symbol
+                      ? "border-white text-white bg-neutral-800"
+                      : "border-neutral-700 text-neutral-400 hover:border-neutral-500"
+                  }`}
+                >
+                  {asset.symbol}
+                </button>
+              ))}
+            </div>
+            {!isNative && (
+              <p className="text-xs text-neutral-500 mt-1.5">
+                Issuer: <span className="font-mono">{selectedAsset.issuer!.slice(0, 10)}…</span>
+              </p>
+            )}
+          </div>
+        )}
+
         <div>
           <label className="block text-sm text-neutral-400 mb-1">
             Recipient address or meta-address
@@ -324,7 +428,7 @@ export function SendView() {
         </div>
         <div>
           <label className="block text-sm text-neutral-400 mb-1">
-            Amount (XLM)
+            Amount ({selectedAsset.symbol})
           </label>
           <div className="flex gap-2">
             <input
@@ -345,9 +449,9 @@ export function SendView() {
           </div>
           {balanceLoading ? (
             <p className="text-xs text-neutral-500 mt-1">Loading balance…</p>
-          ) : formattedMaxBalance != null ? (
+          ) : displayBalance != null ? (
             <p className="text-xs text-neutral-500 mt-1">
-              Available: {formattedMaxBalance} XLM
+              Available: {formattedMaxBalance} {selectedAsset.symbol}
             </p>
           ) : null}
         </div>
@@ -375,7 +479,7 @@ export function SendView() {
           disabled={sending || isInsufficientBalance || !connected}
           className="w-full py-2.5 rounded-lg bg-neutral-600 text-white font-medium hover:bg-black hover:text-white disabled:opacity-50"
         >
-          {sending ? "Sending…" : "Send privately"}
+          {sending ? "Sending…" : `Send ${selectedAsset.symbol} privately`}
         </button>
       </motion.div>
     </motion.div>

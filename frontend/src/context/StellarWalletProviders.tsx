@@ -2,13 +2,11 @@ import { createContext, useCallback, useEffect, useMemo, useRef, useState, type 
 import {
   getPublicKey,
   isConnected as freighterIsConnected,
-  requestAccess,
-  signBlob,
-  signTransaction,
 } from "@stellar/freighter-api";
 import { getNetworkPassphrase } from "../lib/chain";
 import { getSorobanServer } from "../lib/stellar";
 import type { SignTxFn } from "../lib/stellar";
+import { FreighterAdapter, type WalletAdapter } from "../lib/walletAdapters";
 
 export type ScannerSelfTestStatus = "idle" | "running" | "pass" | "fail";
 
@@ -16,6 +14,14 @@ export type StellarWalletContextValue = {
   publicKey: string | null;
   connected: boolean;
   connecting: boolean;
+  /** Id of the currently active wallet adapter (e.g. "freighter", "lobstr"). */
+  activeWalletId: string | null;
+  /**
+   * Connect using a specific adapter. When omitted, opens the wallet picker
+   * (callers should render WalletPickerModal and call connectWithAdapter directly).
+   */
+  connectWithAdapter: (adapter: WalletAdapter) => Promise<string>;
+  /** Legacy: connects with the default Freighter adapter — keeps existing callers working. */
   connect: () => Promise<string>;
   disconnect: () => void;
   signTransaction: SignTxFn;
@@ -27,13 +33,10 @@ export type StellarWalletContextValue = {
 
 /** Runs once per session after wallet connect: WASM init probe + ledger RPC probe. */
 async function runScannerSelfTest(): Promise<void> {
-  // WASM init probe — same dynamic import as useOpaqueWasm, browser caches the module.
   const loadedModule = await (Function('return import("/pkg/cryptography.js")')() as Promise<
     Record<string, unknown> & { default: () => Promise<void> }
   >);
   await loadedModule.default();
-
-  // Ledger RPC probe — confirms the Soroban RPC endpoint is reachable.
   const server = getSorobanServer();
   await server.getLatestLedger();
 }
@@ -44,6 +47,8 @@ export function StellarWalletProviders({ children }: { children: ReactNode }) {
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [activeWalletId, setActiveWalletId] = useState<string | null>(null);
+  const activeAdapterRef = useRef<WalletAdapter>(FreighterAdapter);
   const connectInFlightRef = useRef(false);
 
   const [selfTestStatus, setSelfTestStatus] = useState<ScannerSelfTestStatus>("idle");
@@ -62,44 +67,47 @@ export function StellarWalletProviders({ children }: { children: ReactNode }) {
       });
   }, [connected]);
 
-  const connect = useCallback(async (): Promise<string> => {
+  const connectWithAdapter = useCallback(async (adapter: WalletAdapter): Promise<string> => {
     if (connectInFlightRef.current) {
-      const pk = await getPublicKey();
-      return pk;
+      return publicKey ?? "";
     }
     connectInFlightRef.current = true;
     setConnecting(true);
     try {
-      const alreadyAuthorized = await freighterIsConnected();
-      if (!alreadyAuthorized) {
-        await requestAccess();
-      }
-      const pk = await getPublicKey();
+      const pk = await adapter.connect();
+      activeAdapterRef.current = adapter;
       setPublicKey(pk);
       setConnected(true);
+      setActiveWalletId(adapter.id);
       return pk;
     } finally {
       setConnecting(false);
       connectInFlightRef.current = false;
     }
-  }, []);
+  }, [publicKey]);
+
+  /** Backwards-compatible connect() always uses Freighter. */
+  const connect = useCallback(() => connectWithAdapter(FreighterAdapter), [connectWithAdapter]);
 
   const disconnect = useCallback(() => {
     setPublicKey(null);
     setConnected(false);
+    setActiveWalletId(null);
+    activeAdapterRef.current = FreighterAdapter;
+    selfTestRanRef.current = false;
   }, []);
 
   const signTx: SignTxFn = useCallback(async (xdr: string) => {
-    return signTransaction(xdr, {
+    return activeAdapterRef.current.signTransaction(xdr, {
       networkPassphrase: getNetworkPassphrase(),
       accountToSign: publicKey ?? undefined,
     });
   }, [publicKey]);
 
   const signMessage = useCallback(async (message: Uint8Array) => {
-    const b64 = Buffer.from(message).toString("base64");
-    const signed = await signBlob(b64, { accountToSign: publicKey ?? undefined });
-    return Uint8Array.from(Buffer.from(signed, "base64"));
+    return activeAdapterRef.current.signMessage(message, {
+      accountToSign: publicKey ?? undefined,
+    });
   }, [publicKey]);
 
   const value = useMemo(
@@ -107,6 +115,8 @@ export function StellarWalletProviders({ children }: { children: ReactNode }) {
       publicKey,
       connected,
       connecting,
+      activeWalletId,
+      connectWithAdapter,
       connect,
       disconnect,
       signTransaction: signTx,
@@ -114,7 +124,7 @@ export function StellarWalletProviders({ children }: { children: ReactNode }) {
       selfTestStatus,
       selfTestError,
     }),
-    [publicKey, connected, connecting, connect, disconnect, signTx, signMessage, selfTestStatus, selfTestError],
+    [publicKey, connected, connecting, activeWalletId, connectWithAdapter, connect, disconnect, signTx, signMessage, selfTestStatus, selfTestError],
   );
 
   return (
