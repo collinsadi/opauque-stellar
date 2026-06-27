@@ -9,9 +9,10 @@ if (!globalThis.crypto) {
 describe("KeyRotationManager", () => {
   it("should generate a new meta address and distinguish it", async () => {
     const newAddress = await KeyRotationManager.generateNewMetaAddress("OLD_ADDR");
-    
+
     expect(newAddress).toBeDefined();
-    expect(newAddress).toContain("G_NEW_META_");
+    // Real Stellar StrKey public keys start with "G" and are 56 characters
+    expect(newAddress).toMatch(/^G[A-Z2-7]{55}$/);
     expect(newAddress).not.toEqual("OLD_ADDR");
   });
 
