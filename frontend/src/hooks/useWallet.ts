@@ -16,6 +16,8 @@ export function useWallet() {
     publicKey,
     connected,
     connecting,
+    activeWalletId,
+    connectWithAdapter,
     connect,
     disconnect,
     signTransaction,
@@ -51,7 +53,9 @@ export function useWallet() {
     () => ({
       getBalance: async (address: string) => {
         const account = await getHorizonServer().loadAccount(address);
-        const native = account.balances.find((b) => b.asset_type === "native");
+        const native = account.balances.find(
+          (b: { asset_type?: string }) => b.asset_type === "native",
+        );
         return BigInt(
           Math.round(parseFloat((native as { balance: string })?.balance ?? "0") * 1e7),
         );
@@ -72,6 +76,8 @@ export function useWallet() {
   return {
     ...state,
     connected,
+    activeWalletId,
+    connectWithAdapter,
     connect,
     disconnect,
     connection,

@@ -1,7 +1,6 @@
 import { useState } from "react";
-import { isFederationIdentifier, resolveDomain } from "../lib/ens";
-import { FeatureDisabledNotice } from "./FeatureDisabledNotice";
-import { isFeatureEnabled } from "../lib/featureFlags";
+import { isFederationIdentifier, resolveDomain, isFederationSupportedForNetwork } from "../lib/ens";
+import { getNetwork } from "../lib/chain";
 
 type SubENSViewProps = {
   onBack: () => void;
@@ -31,7 +30,8 @@ export function SubENSView({ onBack }: SubENSViewProps) {
   const [resolvedAddress, setResolvedAddress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const federationEnabled = isFeatureEnabled("demoVerifierLinks");
+  const network = getNetwork();
+  const federationSupported = isFederationSupportedForNetwork(network);
 
   const handleLookup = async () => {
     const trimmed = input.trim();
@@ -53,23 +53,30 @@ export function SubENSView({ onBack }: SubENSViewProps) {
         setResolvedAddress(address);
         setStoredName(trimmed);
       } else {
-        setError("Federation lookup returned no address.");
+        setError("Federation lookup returned no address for this identifier.");
       }
     } catch {
-      setError("Federation lookup failed.");
+      setError("Federation lookup failed. The server may be unreachable.");
     } finally {
       setResolving(false);
     }
   };
 
-  if (!federationEnabled) {
+  if (!federationSupported) {
     return (
       <div className="w-full max-w-lg mx-auto">
         <h2 className="text-lg font-semibold text-white mb-1">Federation / Identifier Lookup</h2>
         <p className="text-sm text-neutral-500 mb-6">
           Resolve Stellar federation identifiers (name*domain.com) to addresses.
         </p>
-        <FeatureDisabledNotice feature="demoVerifierLinks" />
+        <div className="rounded-2xl border border-neutral-500/30 bg-neutral-500/10 px-5 py-4 text-sm">
+          <p className="font-semibold text-neutral-300">Federation not available on {network}</p>
+          <p className="mt-2 text-neutral-300/80 text-xs leading-relaxed">
+            Federation servers are only available on <strong>mainnet</strong> and{" "}
+            <strong>testnet</strong>. Switch to a supported network to look up
+            federation identifiers.
+          </p>
+        </div>
         <button
           type="button"
           onClick={onBack}
@@ -121,7 +128,7 @@ export function SubENSView({ onBack }: SubENSViewProps) {
       <div className="flex gap-2">
         <button
           type="button"
-          onClick={handleLookup}
+          onClick={() => void handleLookup()}
           disabled={resolving || !input.trim()}
           className="py-2.5 px-4 rounded-lg text-sm font-medium btn-primary disabled:opacity-40"
         >

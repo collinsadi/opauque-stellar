@@ -13,20 +13,28 @@ import {
   setRememberSignaturePreference,
 } from "../lib/signatureSession";
 import { RecoveryDocLink } from "./RecoveryDocLink";
+import { WalletPickerModal } from "./WalletPickerModal";
+import type { WalletAdapter } from "../lib/walletAdapters";
 
 type Phase = "idle" | "connecting" | "signing" | "checking" | "register" | "registering" | "done" | "error";
 
 export function LandingView() {
   const { setFromSignature, isSetup, stealthMetaAddressHex } = useKeys();
-  const { publicKey, connected, connecting, connect, signMessage, signTransaction } = useWallet();
+  const { publicKey, connected, connecting, connectWithAdapter, signMessage, signTransaction } = useWallet();
   const cluster = getCluster();
   const currentConfig = getConfigForCluster(cluster);
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [txSig, setTxSig] = useState<string | null>(null);
   const [rememberSession, setRememberSession] = useState<boolean>(() => getRememberSignaturePreference());
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerConnecting, setPickerConnecting] = useState(false);
+  const [pickerConnectingId, setPickerConnectingId] = useState<string | undefined>();
+  const [pickerError, setPickerError] = useState<string | null>(null);
   const flowInFlightRef = useRef(false);
   const silentRestoreAttemptedRef = useRef(false);
+  // Holds the adapter chosen from the picker so we can resume the flow after selection.
+  const pendingAdapterRef = useRef<WalletAdapter | null>(null);
 
   const getDomainMessage = useCallback((addr: string) => {
     return buildDomainSeparatedMessage({
@@ -81,7 +89,7 @@ export function LandingView() {
       setPhase("signing");
       const encoded = new TextEncoder().encode(domainMessage);
       const sigBytes = await signMessage(encoded);
-      const hex = `0x${Array.from(sigBytes).map((b) => b.toString(16).padStart(2, "0")).join("")}` as `0x${string}`;
+      const hex = `0x${Array.from(sigBytes).map((b) => (b as number).toString(16).padStart(2, "0")).join("")}` as `0x${string}`;
       await saveSignatureSession({
         signatureHex: hex,
         address: addr,
@@ -94,7 +102,20 @@ export function LandingView() {
     [cluster, getDomainMessage, rememberSession, signMessage],
   );
 
-  // Silent restore only: if Freighter is already connected and we have a cached signature, skip prompts.
+  const runFlowWithAddress = useCallback(async (addr: string) => {
+    try {
+      const signatureHex = await resolveSignature(addr);
+      if (!signatureHex) throw new Error("Failed to obtain setup signature.");
+      await finalizeFromSignature(addr, signatureHex);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Setup failed");
+      setPhase("error");
+    } finally {
+      flowInFlightRef.current = false;
+    }
+  }, [resolveSignature, finalizeFromSignature]);
+
+  // Silent restore: if wallet is already connected and we have a cached signature, skip prompts.
   useEffect(() => {
     if (isSetup || !connected || !address || silentRestoreAttemptedRef.current) return;
     silentRestoreAttemptedRef.current = true;
@@ -102,44 +123,54 @@ export function LandingView() {
     let cancelled = false;
     const run = async () => {
       const domainMessage = getDomainMessage(address);
-      const saved = await loadSignatureSession({
-        address,
-        cluster,
-        message: domainMessage,
-      });
+      const saved = await loadSignatureSession({ address, cluster, message: domainMessage });
       if (cancelled || !saved) return;
       await finalizeFromSignature(address, saved);
     };
     void run();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [isSetup, connected, address, cluster, getDomainMessage, finalizeFromSignature]);
 
-  const handleEnterVault = async () => {
-    if (flowInFlightRef.current || connecting) return;
+  const handleWalletSelected = async (adapter: WalletAdapter) => {
+    if (flowInFlightRef.current) return;
     flowInFlightRef.current = true;
-    setError(null);
-    setTxSig(null);
+    setPickerError(null);
+    setPickerConnecting(true);
+    setPickerConnectingId(adapter.id);
 
     try {
-      let activeAddress = address;
-      if (!connected || !activeAddress) {
-        setPhase("connecting");
-        activeAddress = await connect();
-      }
-
-      const signatureHex = await resolveSignature(activeAddress);
-      if (!signatureHex) {
-        throw new Error("Failed to obtain setup signature.");
-      }
-      await finalizeFromSignature(activeAddress, signatureHex);
+      setPhase("connecting");
+      const addr = await connectWithAdapter(adapter);
+      setPickerOpen(false);
+      setPickerConnecting(false);
+      setPickerConnectingId(undefined);
+      pendingAdapterRef.current = null;
+      await runFlowWithAddress(addr);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Setup failed");
-      setPhase("error");
-    } finally {
+      setPickerError(e instanceof Error ? e.message : "Connection failed.");
+      setPickerConnecting(false);
+      setPickerConnectingId(undefined);
+      setPhase("idle");
       flowInFlightRef.current = false;
     }
+  };
+
+  const handleEnterVault = () => {
+    if (flowInFlightRef.current || connecting) return;
+
+    if (connected && address) {
+      // Already connected — run the flow directly.
+      flowInFlightRef.current = true;
+      setError(null);
+      setTxSig(null);
+      void runFlowWithAddress(address);
+      return;
+    }
+
+    // Not connected — open wallet picker.
+    setError(null);
+    setPickerError(null);
+    setPickerOpen(true);
   };
 
   const handleRegister = async () => {
@@ -180,15 +211,15 @@ export function LandingView() {
         </h1>
 
         <p className="mt-4 text-mist">
-          Connect Freighter and derive stealth keys to begin. Keys are generated on-device and never leave
-          your browser.
+          Connect your Stellar wallet and derive stealth keys to begin. Keys are
+          generated on-device and never leave your browser.
         </p>
 
         {phase === "idle" && (
           <>
             <button
               type="button"
-              onClick={() => void handleEnterVault()}
+              onClick={handleEnterVault}
               disabled={connecting || flowInFlightRef.current}
               className="mt-8 w-full rounded-xl bg-sol-gradient border border-transparent px-6 py-3.5 text-sm font-semibold text-white transition-all hover:opacity-90 hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
             >
@@ -255,10 +286,7 @@ export function LandingView() {
             </div>
             <button
               type="button"
-              onClick={() => {
-                setPhase("idle");
-                setError(null);
-              }}
+              onClick={() => { setPhase("idle"); setError(null); }}
               className="w-full rounded-xl border border-ink-600 px-6 py-3 text-sm font-medium text-mist hover:text-white"
             >
               Try again
@@ -270,6 +298,20 @@ export function LandingView() {
           <p className="mt-4 font-mono text-xs text-mist/60 break-all">{txSig}</p>
         )}
       </div>
+
+      <WalletPickerModal
+        open={pickerOpen}
+        onSelect={(adapter) => void handleWalletSelected(adapter)}
+        onClose={() => {
+          setPickerOpen(false);
+          setPickerError(null);
+          setPickerConnecting(false);
+          setPickerConnectingId(undefined);
+        }}
+        connecting={pickerConnecting}
+        connectingId={pickerConnectingId}
+        error={pickerError}
+      />
     </div>
   );
 }
