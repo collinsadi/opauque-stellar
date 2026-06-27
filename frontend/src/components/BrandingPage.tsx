@@ -333,7 +333,7 @@ export function BrandingPage() {
               type="button"
               onClick={onDownloadZip}
               disabled={zipLoading || loading || assets.length === 0}
-              className="rounded-xl bg-white border border-white px-5 py-2.5 text-sm font-semibold text-black hover:bg-black hover:text-white transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded-xl bg-sol-gradient border border-transparent px-5 py-2.5 text-sm font-semibold text-white hover:opacity-90 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
             >
               {zipLoading ? "Building ZIP..." : "Download ZIP"}
             </button>

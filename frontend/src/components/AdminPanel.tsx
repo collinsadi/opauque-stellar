@@ -206,7 +206,7 @@ function AdminCard({ status, publicKey, signTransaction, onRefresh }: AdminCardP
             </p>
           </div>
           {status.isAdmin && (
-            <span className="inline-flex items-center gap-1 shrink-0 rounded-full border border-white/30 bg-white/10 px-2 py-0.5 text-[11px] font-medium text-white">
+            <span className="inline-flex items-center gap-1 shrink-0 rounded-full border border-white/30 bg-ink-800 px-2 py-0.5 text-[11px] font-medium text-white">
               You are admin
             </span>
           )}
@@ -237,7 +237,7 @@ function AdminCard({ status, publicKey, signTransaction, onRefresh }: AdminCardP
                   type="button"
                   onClick={handleAcceptAdmin}
                   disabled={isBusy || !signTransaction}
-                  className="rounded-lg bg-white text-black border border-white px-3 py-1.5 text-xs font-semibold hover:bg-black hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  className="rounded-lg bg-sol-gradient text-white border border-transparent px-3 py-1.5 text-xs font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
                   {busy === "accept_admin" ? "Accepting…" : "Accept Transfer"}
                 </button>
@@ -333,7 +333,7 @@ function AdminCard({ status, publicKey, signTransaction, onRefresh }: AdminCardP
             <button
               type="button"
               onClick={confirmTransfer}
-              className="flex-1 rounded-lg bg-white text-black border border-white px-4 py-2 text-sm font-semibold hover:bg-black hover:text-white transition-colors"
+              className="flex-1 rounded-lg bg-sol-gradient text-white border border-transparent px-4 py-2 text-sm font-semibold hover:opacity-90 transition-colors"
             >
               Confirm Proposal
             </button>

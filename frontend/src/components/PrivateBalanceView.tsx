@@ -932,7 +932,7 @@ export function PrivateBalanceView() {
           </div>
           <div className="h-1 rounded-full bg-ink-800 overflow-hidden">
             <div
-              className="h-full bg-white rounded-full transition-all duration-500"
+              className="h-full bg-sol-gradient rounded-full transition-all duration-500"
               style={{ width: `${scanner.progress.percent}%` }}
             />
           </div>
@@ -1217,7 +1217,7 @@ export function PrivateBalanceView() {
                         onClick={() => {
                           setClaimModalTx(tx);
                         }}
-                        className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-white text-black disabled:opacity-40 disabled:cursor-not-allowed hover:bg-black hover:text-white"
+                        className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-sol-gradient border border-transparent text-white disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90"
                       >
                         {claimingId === tx.id ? "Withdrawing…" : "Withdraw"}
                       </button>
@@ -1425,7 +1425,7 @@ export function PrivateBalanceView() {
                 setManualImportOpen(false);
                 showToast("Ghost address added. Checking for funds…");
               }}
-              className="rounded-xl bg-white border border-white px-4 py-2 text-sm font-semibold text-black hover:bg-black hover:text-white"
+              className="rounded-xl bg-sol-gradient border border-transparent px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
             >
               Add & check
             </button>

@@ -271,7 +271,7 @@ export function RegistrationWizard({ onComplete }: RegistrationWizardProps) {
                   type="button"
                   onClick={handleGenerateKeys}
                   disabled={signing}
-                  className="w-full py-3 px-4 rounded-lg text-sm font-medium bg-white text-black hover:bg-black hover:text-white disabled:opacity-50 transition-opacity"
+                  className="w-full py-3 px-4 rounded-lg text-sm font-medium bg-sol-gradient text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
                 >
                   {signing ? "Check your wallet…" : "Generate Stealth Keys"}
                 </button>

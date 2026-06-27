@@ -46,7 +46,7 @@ export function PaySuccessPage() {
           <button
             type="button"
             onClick={() => navigate("/app")}
-            className="w-full rounded-xl bg-white border border-white px-4 py-2.5 text-sm font-semibold text-black hover:bg-black hover:text-white"
+            className="w-full rounded-xl bg-sol-gradient border border-transparent px-4 py-2.5 text-sm font-semibold text-white hover:opacity-90"
           >
             Return to App
           </button>

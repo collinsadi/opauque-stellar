@@ -22,7 +22,7 @@ export const MainnetWarningModal: React.FC = () => {
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[100] p-4">
-      <div className="bg-white text-gray-900 rounded-lg p-6 max-w-lg w-full shadow-2xl">
+      <div className="bg-ink-900 text-white rounded-lg p-6 max-w-lg w-full shadow-2xl">
         <h2 className="text-2xl font-bold text-neutral-500 mb-4">Mainnet Warning</h2>
         <p className="mb-4 text-sm leading-relaxed">
           You are connecting to Stellar Mainnet. Privacy payment features here use{" "}
@@ -30,9 +30,9 @@ export const MainnetWarningModal: React.FC = () => {
           consume real funds. Review the legal documents below before proceeding.
         </p>
 
-        <div className="mb-4 rounded-md border border-neutral-300 bg-neutral-100 p-3 text-sm">
-          <p className="font-semibold text-neutral-800 mb-2">Privacy limits on mainnet</p>
-          <ul className="list-disc pl-4 space-y-1 text-neutral-800/90">
+        <div className="mb-4 rounded-md border border-ink-700 bg-ink-950 p-3 text-sm">
+          <p className="font-semibold text-white mb-2">Privacy limits on mainnet</p>
+          <ul className="list-disc pl-4 space-y-1 text-mist">
             {MAINNET_PRIVACY_WARNINGS.map((item) => (
               <li key={item}>{item}</li>
             ))}
@@ -42,7 +42,7 @@ export const MainnetWarningModal: React.FC = () => {
               to={THREAT_MODEL_ROUTE}
               target="_blank"
               rel="noopener noreferrer"
-              className="font-medium text-neutral-800 underline hover:text-neutral-950"
+              className="font-medium text-white underline hover:text-white"
             >
               Full privacy threat model
             </Link>
@@ -85,7 +85,7 @@ export const MainnetWarningModal: React.FC = () => {
           className={`w-full py-2 rounded font-bold transition-colors ${
             canProceed
               ? "bg-neutral-700 text-white hover:bg-neutral-800"
-              : "bg-gray-300 text-white/50 cursor-not-allowed"
+              : "bg-ink-700 text-white/50 cursor-not-allowed"
           }`}
         >
           Proceed to Mainnet

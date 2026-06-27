@@ -412,7 +412,7 @@ export function SchemaStudio() {
               key={opt.value}
               className={`flex items-start gap-3 rounded-xl border px-4 py-3 cursor-pointer transition-colors ${
                 resolverType === opt.value
-                  ? "border-white bg-white/5"
+                  ? "border-white bg-ink-800/50"
                   : "border-ink-700 bg-ink-900 hover:border-ink-600"
               }`}
             >
@@ -460,7 +460,7 @@ export function SchemaStudio() {
         type="button"
         onClick={handleSubmit}
         disabled={!canSubmit}
-        className="w-full rounded-xl bg-white text-black border border-white py-3 text-sm font-semibold hover:bg-black hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        className="w-full rounded-xl bg-sol-gradient text-white border border-transparent py-3 text-sm font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
       >
         {isSubmitting ? (
           <span className="flex items-center justify-center gap-2">

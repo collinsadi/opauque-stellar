@@ -82,7 +82,7 @@ export function LandingPage({ onEnterVault }: LandingPageProps) {
         />
 
         <span className="relative inline-flex items-center gap-2 rounded-full border border-white/30 bg-black/15 px-3.5 py-1 text-xs font-medium text-white mb-6">
-          <span className="h-1.5 w-1.5 rounded-full bg-white" aria-hidden />
+          <span className="h-1.5 w-1.5 rounded-full bg-glow" aria-hidden />
           Stellar · Stealth addresses
         </span>
 
@@ -103,7 +103,7 @@ export function LandingPage({ onEnterVault }: LandingPageProps) {
           <button
             type="button"
             onClick={onEnterVault}
-            className="group inline-flex items-center gap-2.5 rounded-xl bg-white px-7 py-3.5 text-sm font-semibold text-black border border-white transition-all hover:bg-black hover:text-white hover:scale-[1.02] active:scale-[0.98]"
+            className="group inline-flex items-center gap-2.5 rounded-xl bg-sol-gradient px-7 py-3.5 text-sm font-semibold text-white border border-white transition-all hover:opacity-90 hover:scale-[1.02] active:scale-[0.98]"
           >
             Open wallet
             <span className="transition-transform group-hover:translate-x-0.5" aria-hidden>

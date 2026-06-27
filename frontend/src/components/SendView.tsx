@@ -36,7 +36,11 @@ import { useProtocolLog } from "../context/ProtocolLogContext";
 import { useTxHistoryStore } from "../store/txHistoryStore";
 import { PrivacyWarningCallout } from "./PrivacyWarningCallout";
 import { SEND_PRIVACY_WARNING } from "../lib/privacyThreatModel";
+
 import { getSupportedAssets, hasTrustline, type TokenInfo } from "../lib/tokens";
+
+import { useOnlineStatus } from "../hooks/useOnlineStatus";
+import { isLikelyOfflineError, useOfflineQueueStore } from "../store/offlineQueueStore";
 
 const STROOP_FEE_BUFFER = 100_000n;
 
@@ -56,11 +60,20 @@ const isGAddress = (value: string): boolean => {
   }
 };
 
-export function SendView() {
+export type SendPrefill = {
+  recipient: string;
+  amount?: string;
+  queuedIntentId?: string;
+};
+
+export function SendView({ prefill }: { prefill?: SendPrefill }) {
   const { isSetup } = useKeys();
   const { publicKey, signTransaction, connected } = useWallet();
   const { push: logPush } = useProtocolLog();
   const pushTx = useTxHistoryStore((s) => s.push);
+  const online = useOnlineStatus();
+  const enqueueSend = useOfflineQueueStore((s) => s.enqueueSend);
+  const removeQueuedIntent = useOfflineQueueStore((s) => s.remove);
   const network = getNetwork();
   const currentConfig = getConfigForCluster(network);
   const address = publicKey;
@@ -79,8 +92,16 @@ export function SendView() {
   const [balanceLoading, setBalanceLoading] = useState(false);
 
   useEffect(() => {
+
     setSelectedAsset(supportedAssets[0]);
   }, [supportedAssets]);
+
+    if (!prefill) return;
+    setRecipient(prefill.recipient);
+    if (prefill.amount != null) setAmount(prefill.amount);
+    setError("Queued action loaded. Review the details, then submit when ready.");
+  }, [prefill]);
+
 
   useEffect(() => {
     if (!address) {
@@ -182,24 +203,8 @@ export function SendView() {
       return;
     }
 
-    // If a G-address is entered, resolve it to a meta-address via the registry.
-    if (isGAddress(recipientMeta)) {
-      setSending(true);
-      setSteps([]);
-      addStep("wait", "Resolving stealth meta-address from registry…");
-      const resolved = await resolveMetaAddress(recipientMeta);
-      if (!resolved) {
-        setError("Stellar address is not registered in the stealth registry.");
-        setSteps((prev) => {
-          const last = prev[prev.length - 1];
-          return prev.slice(0, -1).concat([{ ...last, status: "error" as const }]);
-        });
-        setSending(false);
-        return;
-      }
-      addStep("ok", "Meta-address resolved from registry.", resolved);
-      recipientMeta = resolved;
-    } else if (!isMetaAddress(recipientMeta)) {
+    const recipientIsGAddress = isGAddress(recipientMeta);
+    if (!recipientIsGAddress && !isMetaAddress(recipientMeta)) {
       setError(
         "Enter a valid Stellar address (G…) or stealth meta-address (0x + 132 hex chars).",
       );
@@ -218,8 +223,16 @@ export function SendView() {
       return;
     }
 
-    setSending(true);
-    setSteps([]);
+    const queueCurrentIntent = () => {
+      enqueueSend({ recipient: recipientMeta, amount, cluster: network });
+      setError("You are offline. This send intent was queued and will retry after you confirm.");
+      logPush("ui", "Send queued while offline.");
+    };
+
+    if (!online) {
+      queueCurrentIntent();
+      return;
+    }
 
     function addStep(
       status: ProtocolStep["status"],
@@ -229,6 +242,45 @@ export function SendView() {
       const id = `step-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       setSteps((prev) => prev.concat([{ id, status, label, detail }]));
     }
+
+    // If a G-address is entered, resolve it to a meta-address via the registry.
+    if (recipientIsGAddress) {
+      setSending(true);
+      setSteps([]);
+      addStep("wait", "Resolving stealth meta-address from registry…");
+      let resolved: `0x${string}` | null = null;
+      try {
+        resolved = await resolveMetaAddress(recipientMeta);
+      } catch (e) {
+        if (isLikelyOfflineError(e)) {
+          queueCurrentIntent();
+        } else {
+          setError(e instanceof Error ? e.message : "Failed to resolve Stellar address.");
+        }
+        setSteps((prev) => {
+          const last = prev[prev.length - 1];
+          return prev.slice(0, -1).concat([{ ...last, status: "error" as const }]);
+        });
+        setSending(false);
+        return;
+      }
+      if (!resolved) {
+        setError("Stellar address is not registered in the stealth registry.");
+        setSteps((prev) => {
+          const last = prev[prev.length - 1];
+          return prev.slice(0, -1).concat([{ ...last, status: "error" as const }]);
+        });
+        setSending(false);
+        return;
+      }
+      addStep("ok", "Meta-address resolved from registry.", resolved);
+      recipientMeta = resolved;
+    }
+
+    setSending(true);
+    if (!recipientIsGAddress) setSteps([]);
+
+    let signatureRequested = false;
 
     try {
       addStep("wait", "Deriving stealth destination…");
@@ -309,7 +361,12 @@ export function SendView() {
         .build();
 
       tx = await soroban.prepareTransaction(tx);
+
       addStep("wait", "Awaiting wallet signature…");
+
+      addStep("wait", "Awaiting Freighter signature…");
+      signatureRequested = true;
+
       const signedXdr = await signTransaction(tx.toXDR());
       const signed = TransactionBuilder.fromXDR(signedXdr, passphrase);
       const send = await soroban.sendTransaction(signed);
@@ -340,9 +397,18 @@ export function SendView() {
         amount: formatXlm(value),
         txHash: send.hash,
       });
+      if (prefill?.queuedIntentId) {
+        removeQueuedIntent(prefill.queuedIntentId);
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Send failed";
-      setError(msg);
+      if (!signatureRequested && isLikelyOfflineError(e)) {
+        queueCurrentIntent();
+      } else if (signatureRequested && isLikelyOfflineError(e)) {
+        setError("Network dropped after wallet signing. This intent was not queued to avoid duplicate submission. Check transaction history before retrying.");
+      } else {
+        setError(msg);
+      }
       setSteps((prev) => {
         if (prev.length === 0) return prev;
         const last = prev[prev.length - 1];
@@ -477,7 +543,7 @@ export function SendView() {
           type="button"
           onClick={() => void handleSend()}
           disabled={sending || isInsufficientBalance || !connected}
-          className="w-full py-2.5 rounded-lg bg-neutral-600 text-white font-medium hover:bg-black hover:text-white disabled:opacity-50"
+          className="w-full py-2.5 rounded-lg bg-neutral-600 text-white font-medium hover:opacity-90 disabled:opacity-50"
         >
           {sending ? "Sending…" : `Send ${selectedAsset.symbol} privately`}
         </button>
