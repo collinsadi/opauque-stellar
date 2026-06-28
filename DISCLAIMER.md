@@ -37,6 +37,16 @@ Default configuration targets **Stellar testnet**. Test XLM has no monetary valu
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+## Data Handling & Privacy
+
+For information on how Opaque handles personal data, collects telemetry, and complies with privacy regulations such as GDPR, see [docs/PRIVACY_GDPR_APPENDIX.md](docs/PRIVACY_GDPR_APPENDIX.md).
+
+**Key Points:**
+- Most user data (keys, addresses, history) stays on your device.
+- Telemetry is **opt-in** and disabled by default.
+- No personal data is sold to third parties.
+- EU users and data subjects have standard GDPR rights (access, deletion, portability).
+
 ---
 
 By using this software, you acknowledge that you have read, understood, and accepted the risks described above.
