@@ -12,8 +12,12 @@ import { useSecurityStore } from "../store/securityStore";
 import { getFeatureFlags } from "../lib/featureFlags";
 import { FeatureDisabledNotice } from "./FeatureDisabledNotice";
 import { makeOpaquePaymentLink } from "../lib/deepLinks";
+import { copySensitiveValue, formatClipboardClearTimeout } from "../lib/clipboardSafety";
+import { ModalShell } from "./ModalShell";
 
 type Mode = "choose" | "payment_link" | "manual_ghost";
+type CopyTarget = "meta" | "link" | "opaque" | "ghost";
+type PendingSensitiveCopy = { value: string; type: CopyTarget; label: string };
 
 function bytesToHex(b: Uint8Array): string {
   return "0x" + Array.from(b).map((x) => x.toString(16).padStart(2, "0")).join("");
@@ -30,9 +34,12 @@ export function ReceiveView({ initialMode, onBack }: { initialMode?: Extract<Mod
     stealthAddress: string;
     ephemeralPrivKeyHex: string;
   } | null>(null);
+  const [pendingSensitiveCopy, setPendingSensitiveCopy] = useState<PendingSensitiveCopy | null>(null);
   const addGhost = useGhostAddressStore((s) => s.add);
   const watchlistAdd = useWatchlistStore((s) => s.add);
   const hasAcknowledgedReceiveRisk = useSecurityStore((s) => s.hasAcknowledgedReceiveRisk);
+  const sensitiveCopyWarningEnabled = useSecurityStore((s) => s.sensitiveCopyWarningEnabled);
+  const clipboardClearTimeoutMs = useSecurityStore((s) => s.clipboardClearTimeoutMs);
   const [showReceiveRiskModal, setShowReceiveRiskModal] = useState(false);
   const cluster = getCluster();
   const manualGhostEnabled = getFeatureFlags().manualGhostAddresses;
@@ -51,26 +58,72 @@ export function ReceiveView({ initialMode, onBack }: { initialMode?: Extract<Mod
     if (initialMode) setMode(initialMode);
   }, [initialMode]);
 
-  const handleCopy = useCallback(async (value: string, type: "meta" | "link" | "opaque" | "ghost") => {
-    try {
-      await navigator.clipboard.writeText(value);
-      if (type === "meta") {
-        setCopiedMeta(true);
-        window.setTimeout(() => setCopiedMeta(false), 1200);
-      } else if (type === "link") {
-        setCopiedLink(true);
-        window.setTimeout(() => setCopiedLink(false), 1200);
-      } else if (type === "opaque") {
-        setCopiedOpaqueLink(true);
-        window.setTimeout(() => setCopiedOpaqueLink(false), 1200);
-      } else {
-        setCopiedGhost(true);
-        window.setTimeout(() => setCopiedGhost(false), 1200);
-      }
-    } catch {
-      // ignore
+  const markCopied = useCallback((type: CopyTarget) => {
+    if (type === "meta") {
+      setCopiedMeta(true);
+      window.setTimeout(() => setCopiedMeta(false), 1200);
+    } else if (type === "link") {
+      setCopiedLink(true);
+      window.setTimeout(() => setCopiedLink(false), 1200);
+    } else if (type === "opaque") {
+      setCopiedOpaqueLink(true);
+      window.setTimeout(() => setCopiedOpaqueLink(false), 1200);
+    } else {
+      setCopiedGhost(true);
+      window.setTimeout(() => setCopiedGhost(false), 1200);
     }
   }, []);
+
+  const executeSensitiveCopy = useCallback(async (copy: PendingSensitiveCopy) => {
+    try {
+      await copySensitiveValue(copy.value, { clearAfterMs: clipboardClearTimeoutMs });
+      markCopied(copy.type);
+    } catch {
+      // ignore
+    } finally {
+      setPendingSensitiveCopy(null);
+    }
+  }, [clipboardClearTimeoutMs, markCopied]);
+
+  const handleCopy = useCallback(async (value: string, type: CopyTarget, label: string) => {
+    const copy = { value, type, label };
+    if (sensitiveCopyWarningEnabled) {
+      setPendingSensitiveCopy(copy);
+      return;
+    }
+    await executeSensitiveCopy(copy);
+  }, [executeSensitiveCopy, sensitiveCopyWarningEnabled]);
+
+  const sensitiveCopyModal = pendingSensitiveCopy ? (
+    <ModalShell
+      open
+      title="Copy sensitive receive value?"
+      description={`This ${pendingSensitiveCopy.label} can expose private payment metadata if pasted into the wrong app.`}
+      onClose={() => setPendingSensitiveCopy(null)}
+    >
+      <div className="space-y-4">
+        <p className="text-sm text-mist">
+          Opaque will try to clear your clipboard after {formatClipboardClearTimeout(clipboardClearTimeoutMs)}. Clipboard clearing is best-effort and may be blocked by your browser.
+        </p>
+        <div className="flex flex-wrap justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setPendingSensitiveCopy(null)}
+            className="rounded-xl border border-ink-600 bg-ink-950/30 px-3.5 py-2 text-sm font-medium text-mist transition-colors hover:border-white/30 hover:text-white"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => void executeSensitiveCopy(pendingSensitiveCopy)}
+            className="rounded-xl bg-sol-gradient border border-transparent px-3.5 py-2 text-sm font-semibold text-white hover:opacity-90"
+          >
+            Copy and auto-clear
+          </button>
+        </div>
+      </div>
+    </ModalShell>
+  ) : null;
 
   if (!isSetup || !stealthMetaAddressHex) {
     return (
@@ -183,26 +236,27 @@ export function ReceiveView({ initialMode, onBack }: { initialMode?: Extract<Mod
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={() => handleCopy(stealthMetaAddressHex, "meta")}
+            onClick={() => handleCopy(stealthMetaAddressHex, "meta", "meta-address")}
             className="rounded-xl border border-ink-600 bg-ink-950/30 px-3.5 py-2 text-sm font-medium text-mist transition-colors hover:border-white/30 hover:text-white"
           >
             {copiedMeta ? "Copied!" : "Copy meta-address"}
           </button>
           <button
             type="button"
-            onClick={() => handleCopy(paymentLink, "link")}
+            onClick={() => handleCopy(paymentLink, "link", "web payment link")}
             className="rounded-xl bg-sol-gradient border border-transparent px-3.5 py-2 text-sm font-semibold text-white hover:opacity-90"
           >
             {copiedLink ? "Copied!" : "Copy web link"}
           </button>
           <button
             type="button"
-            onClick={() => handleCopy(opaquePaymentLink, "opaque")}
+            onClick={() => handleCopy(opaquePaymentLink, "opaque", "opaque app link")}
             className="rounded-xl border border-ink-600 bg-ink-950/30 px-3.5 py-2 text-sm font-medium text-mist transition-colors hover:border-white/30 hover:text-white"
           >
             {copiedOpaqueLink ? "Copied!" : "Copy opaque link"}
           </button>
         </div>
+        {sensitiveCopyModal}
         <button
           type="button"
           onClick={() => setMode("choose")}
@@ -306,7 +360,7 @@ export function ReceiveView({ initialMode, onBack }: { initialMode?: Extract<Mod
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={() => handleCopy(ghostResult.stealthAddress, "ghost")}
+            onClick={() => handleCopy(ghostResult.stealthAddress, "ghost", "manual ghost address")}
             className="rounded-xl bg-sol-gradient border border-transparent px-3.5 py-2 text-sm font-semibold text-white hover:opacity-90"
           >
             {copiedGhost ? "Copied!" : "Copy address"}
@@ -319,6 +373,7 @@ export function ReceiveView({ initialMode, onBack }: { initialMode?: Extract<Mod
             Download QR Code
           </button>
         </div>
+        {sensitiveCopyModal}
         <button
           type="button"
           onClick={() => setMode("choose")}
