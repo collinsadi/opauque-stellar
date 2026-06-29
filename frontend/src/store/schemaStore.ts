@@ -138,6 +138,7 @@ export const useSchemaStore = create<SchemaStoreState>()(
       partialize: (state) => ({
         schemas: state.schemas,
         discoveredTraits: state.discoveredTraits,
+        attestations: state.attestations,
         lastScannedSlot: state.lastScannedSlot,
       }),
     }
