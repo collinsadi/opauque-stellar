@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWallet } from "../hooks/useWallet";
 import { getCluster } from "../lib/chain";
 import { useSchemaStore, type V2DiscoveredTrait } from "../store/schemaStore";
+import { useReputationStore } from "../store/reputationStore";
 import { useOpaqueWasm } from "../hooks/useOpaqueWasm";
 import { useKeys } from "../context/KeysContext";
 import { useScanner } from "../hooks/useScanner";
@@ -30,6 +31,12 @@ import { useOnlineStatus } from "../hooks/useOnlineStatus";
 import { useOfflineQueueStore } from "../store/offlineQueueStore";
 import { useProofHistoryStore, type ProofHistoryEntry } from "../store/proofHistoryStore";
 import { getExplorerTxUrl } from "../lib/explorer";
+import {
+  decryptAttestationPortfolio,
+  downloadAttestationPortfolio,
+  encryptAttestationPortfolio,
+  type EncryptedAttestationPortfolio,
+} from "../lib/attestationPortfolio";
 
 // =============================================================================
 // Constants
@@ -284,11 +291,16 @@ export function MyTraitsView({
 }: MyTraitsViewProps = {}) {
   const discoveredTraitsMap = useSchemaStore((s) => s.discoveredTraits);
   const schemaMap = useSchemaStore((s) => s.schemas);
+  const attestationMap = useSchemaStore((s) => s.attestations);
+  const setSchemas = useSchemaStore((s) => s.setSchemas);
   const setDiscoveredTraits = useSchemaStore((s) => s.setDiscoveredTraits);
+  const setAttestations = useSchemaStore((s) => s.setAttestations);
   const isScanning = useSchemaStore((s) => s.isScanning);
   const setIsScanning = useSchemaStore((s) => s.setIsScanning);
   const lastScannedSlot = useSchemaStore((s) => s.lastScannedSlot);
   const setLastScannedSlot = useSchemaStore((s) => s.setLastScannedSlot);
+  const legacyTraits = useReputationStore((s) => s.discoveredTraits);
+  const setLegacyTraits = useReputationStore((s) => s.setDiscoveredTraits);
   const { connection } = useWallet();
   const { wasm, isReady: wasmReady } = useOpaqueWasm();
   const { isSetup, getMasterKeys } = useKeys();
@@ -310,6 +322,13 @@ export function MyTraitsView({
   const [filter, setFilter] = useState<"all" | "active" | "revoked">("all");
   const [traitsPage, setTraitsPage] = useState(1);
   const [activeView, setActiveView] = useState<"traits" | "history">("traits");
+  const [exportPassphrase, setExportPassphrase] = useState("");
+  const [exportConfirm, setExportConfirm] = useState("");
+  const [importPassphrase, setImportPassphrase] = useState("");
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [portfolioBusy, setPortfolioBusy] = useState<"export" | "import" | null>(null);
+  const [portfolioMessage, setPortfolioMessage] = useState<string | null>(null);
+  const [portfolioError, setPortfolioError] = useState<string | null>(null);
 
   const allTraits = useMemo(
     () => Object.values(discoveredTraitsMap),
@@ -343,6 +362,90 @@ export function MyTraitsView({
         .sort((a, b) => b.timestamp - a.timestamp),
     [proofHistoryEntries, cluster],
   );
+
+  const handlePortfolioExport = useCallback(async () => {
+    setPortfolioMessage(null);
+    setPortfolioError(null);
+
+    if (exportPassphrase !== exportConfirm) {
+      setPortfolioError("Passphrases do not match.");
+      return;
+    }
+    if (exportPassphrase.length < 8) {
+      setPortfolioError("Passphrase must be at least 8 characters.");
+      return;
+    }
+
+    try {
+      setPortfolioBusy("export");
+      const exportedAt = new Date().toISOString();
+      const encrypted = await encryptAttestationPortfolio(exportPassphrase, {
+        schemas: Object.values(schemaMap),
+        discoveredTraits: Object.values(discoveredTraitsMap),
+        attestations: Object.values(attestationMap),
+        legacyTraits,
+        lastScannedSlot,
+        exportedAt,
+      });
+      downloadAttestationPortfolio(encrypted);
+      setExportPassphrase("");
+      setExportConfirm("");
+      setPortfolioMessage("Encrypted attestation portfolio exported.");
+    } catch (err) {
+      setPortfolioError(err instanceof Error ? err.message : "Failed to export portfolio.");
+    } finally {
+      setPortfolioBusy(null);
+    }
+  }, [
+    attestationMap,
+    discoveredTraitsMap,
+    exportConfirm,
+    exportPassphrase,
+    lastScannedSlot,
+    legacyTraits,
+    schemaMap,
+  ]);
+
+  const handlePortfolioImport = useCallback(async () => {
+    setPortfolioMessage(null);
+    setPortfolioError(null);
+
+    if (!importFile) {
+      setPortfolioError("Choose an attestation portfolio file.");
+      return;
+    }
+    if (!importPassphrase) {
+      setPortfolioError("Enter the portfolio passphrase.");
+      return;
+    }
+
+    try {
+      setPortfolioBusy("import");
+      const parsed = JSON.parse(await importFile.text()) as EncryptedAttestationPortfolio;
+      const payload = await decryptAttestationPortfolio(importPassphrase, parsed);
+
+      setSchemas(payload.schemas ?? []);
+      setDiscoveredTraits(payload.discoveredTraits ?? []);
+      setAttestations(payload.attestations ?? []);
+      setLegacyTraits(payload.legacyTraits ?? []);
+      setLastScannedSlot(payload.lastScannedSlot ?? 0);
+      setImportFile(null);
+      setImportPassphrase("");
+      setPortfolioMessage("Attestation portfolio restored.");
+    } catch (err) {
+      setPortfolioError(err instanceof Error ? err.message : "Failed to import portfolio.");
+    } finally {
+      setPortfolioBusy(null);
+    }
+  }, [
+    importFile,
+    importPassphrase,
+    setAttestations,
+    setDiscoveredTraits,
+    setLastScannedSlot,
+    setLegacyTraits,
+    setSchemas,
+  ]);
 
   // Reset page when filter changes
   useEffect(() => {
@@ -555,6 +658,84 @@ export function MyTraitsView({
           </button>
         ))}
       </div>
+
+      <section className="rounded-xl border border-ink-800 bg-ink-900/50 p-4 space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-white">Data Portability</h2>
+            <p className="mt-1 text-xs text-mist">
+              Export or restore schemas and attestations with a local passphrase.
+            </p>
+          </div>
+          <div className="text-xs text-mist">
+            {allTraits.length} traits · {Object.keys(schemaMap).length} schemas
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-white">Export</p>
+            <input
+              type="password"
+              value={exportPassphrase}
+              onChange={(event) => setExportPassphrase(event.target.value)}
+              placeholder="Passphrase"
+              className="w-full rounded-lg border border-ink-700 bg-ink-950 px-3 py-2 text-sm text-white placeholder-ink-500 focus:outline-none focus:border-white"
+            />
+            <input
+              type="password"
+              value={exportConfirm}
+              onChange={(event) => setExportConfirm(event.target.value)}
+              placeholder="Confirm passphrase"
+              className="w-full rounded-lg border border-ink-700 bg-ink-950 px-3 py-2 text-sm text-white placeholder-ink-500 focus:outline-none focus:border-white"
+            />
+            <button
+              type="button"
+              onClick={() => void handlePortfolioExport()}
+              disabled={portfolioBusy !== null}
+              className="w-full rounded-lg border border-white/20 bg-ink-800 px-3 py-2 text-xs font-semibold text-white hover:bg-ink-700 disabled:opacity-40 transition-colors"
+            >
+              {portfolioBusy === "export" ? "Encrypting..." : "Download encrypted portfolio"}
+            </button>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-white">Import</p>
+            <input
+              type="file"
+              accept=".json,.opq-attestations.json"
+              onChange={(event) => setImportFile(event.target.files?.[0] ?? null)}
+              className="block w-full text-xs text-mist file:mr-3 file:rounded-lg file:border-0 file:bg-ink-800 file:px-3 file:py-2 file:text-xs file:font-medium file:text-white hover:file:bg-ink-700"
+            />
+            <input
+              type="password"
+              value={importPassphrase}
+              onChange={(event) => setImportPassphrase(event.target.value)}
+              placeholder="Passphrase"
+              className="w-full rounded-lg border border-ink-700 bg-ink-950 px-3 py-2 text-sm text-white placeholder-ink-500 focus:outline-none focus:border-white"
+            />
+            <button
+              type="button"
+              onClick={() => void handlePortfolioImport()}
+              disabled={portfolioBusy !== null || !importFile}
+              className="w-full rounded-lg border border-white/20 bg-ink-800 px-3 py-2 text-xs font-semibold text-white hover:bg-ink-700 disabled:opacity-40 transition-colors"
+            >
+              {portfolioBusy === "import" ? "Decrypting..." : "Restore portfolio"}
+            </button>
+          </div>
+        </div>
+
+        {portfolioMessage && (
+          <p className="rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-xs text-success">
+            {portfolioMessage}
+          </p>
+        )}
+        {portfolioError && (
+          <p className="rounded-lg border border-neutral-500/30 bg-neutral-500/10 px-3 py-2 text-xs text-neutral-400">
+            {portfolioError}
+          </p>
+        )}
+      </section>
 
       {activeView === "history" ? (
         <ProofHistoryList entries={proofHistory} />
