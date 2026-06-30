@@ -28,6 +28,12 @@ export function Footer() {
         >
           Abuse policy
         </Link>
+        <Link
+          to="/accessibility"
+          className="hover:text-white transition-colors"
+        >
+          Accessibility
+        </Link>
         <a
           href="https://status.stellar.org"
           target="_blank"

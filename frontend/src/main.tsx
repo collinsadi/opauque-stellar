@@ -10,6 +10,7 @@ import { PrivacyPage } from "./components/PrivacyPage.tsx";
 import { TermsPage } from "./components/TermsPage.tsx";
 import { DisclaimerPage } from "./components/DisclaimerPage.tsx";
 import { AbusePolicyPage } from "./components/AbusePolicyPage.tsx";
+import { AccessibilityPage } from "./components/AccessibilityPage.tsx";
 import { PayPage } from "./components/PayPage.tsx";
 import { PaySuccessPage } from "./components/PaySuccessPage.tsx";
 import { getConfiguredNetwork, getNetworkEnvValue } from "./lib/chain.ts";
@@ -57,6 +58,7 @@ createRoot(document.getElementById("root")!).render(
           <Route path="/terms" element={<TermsPage />} />
           <Route path="/disclaimer" element={<DisclaimerPage />} />
           <Route path="/abuse-policy" element={<AbusePolicyPage />} />
+          <Route path="/accessibility" element={<AccessibilityPage />} />
           <Route path="/pay/success" element={<PaySuccessPage />} />
           <Route path="/pay/:identifier" element={<KeysProvider><PayPage /></KeysProvider>} />
           <Route path="/link" element={<DeepLinkRoute />} />
