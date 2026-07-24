@@ -133,6 +133,26 @@ export class PrivacyPool {
     return Number(count);
   }
 
+  /**
+   * Read whether a withdrawal nullifier has already been spent on-chain. Use
+   * this to reconcile local note state after an ambiguous RPC failure (a
+   * withdrawal whose submission was sent but whose confirmation was lost): a
+   * `true` result means the withdrawal landed and the note must be treated as
+   * spent; `false` means it is safe to retry.
+   */
+  async isNullifierSpent(opts: {
+    source: string;
+    nullifierHash: Uint8Array;
+  }): Promise<boolean> {
+    const spent = await this.rpc.readNative<boolean | undefined>({
+      source: opts.source,
+      contractId: this.contractId,
+      method: "is_spent",
+      args: [bytesToScVal(opts.nullifierHash)],
+    });
+    return Boolean(spent);
+  }
+
   /** Read the latest published state (or ASP) root, or null if none. */
   async getLatestRoot(opts: {
     source: string;

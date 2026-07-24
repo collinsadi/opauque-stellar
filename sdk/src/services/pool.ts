@@ -74,7 +74,23 @@ export class PoolService {
     return { note, txHash };
   }
 
-  /** Withdraw using a precomputed proof bundle. Marks the note spent on success. */
+  /**
+   * Withdraw using a precomputed proof bundle. Marks the note spent **only after**
+   * the on-chain withdrawal is confirmed successful.
+   *
+   * Fault safety: {@link PrivacyPool.withdraw} resolves only once the transaction
+   * has been polled to a `SUCCESS` result, so any fault before that point (a
+   * network error before submission, an RPC error/timeout during submission, or a
+   * lost confirmation after submission) rejects here and the note is left
+   * **unspent** — a note is never burned for a withdrawal that did not land.
+   *
+   * The remaining ambiguous window is a submission that actually landed on-chain
+   * but whose confirmation was lost client-side: the note stays locally unspent,
+   * yet a naive retry cannot double-pay because the pool rejects the reused
+   * nullifier ({@link ContractError} `NullifierUsed`). Use
+   * {@link reconcileWithdrawal} (or {@link isNullifierSpent}) to reconcile local
+   * note state with on-chain truth after such a failure.
+   */
   async withdraw(opts: {
     proof: WithdrawProofBundle;
     recipient: string;
@@ -93,6 +109,41 @@ export class PoolService {
     });
     if (opts.noteCommitment) await this.ctx.notes.markSpent(opts.noteCommitment);
     return txHash;
+  }
+
+  /**
+   * Whether a withdrawal's nullifier is already spent on-chain. Cheap read used
+   * to determine, after an ambiguous submission failure, whether the withdrawal
+   * actually landed (`true`) or is safe to retry (`false`).
+   */
+  async isNullifierSpent(opts: {
+    nullifierHash: Uint8Array;
+    source?: string;
+  }): Promise<boolean> {
+    return this.ctx.contracts.privacyPool.isNullifierSpent({
+      source: await this.source(opts.source),
+      nullifierHash: opts.nullifierHash,
+    });
+  }
+
+  /**
+   * Reconcile a note's local spent-state with on-chain nullifier state after an
+   * ambiguous withdrawal failure. Marks the note spent iff its nullifier is spent
+   * on-chain; otherwise leaves it untouched (safe to retry). Retry-safe and
+   * idempotent — it never burns a note whose withdrawal did not land, and never
+   * triggers a payout. Returns whether the note is (now) considered spent.
+   */
+  async reconcileWithdrawal(opts: {
+    proof: WithdrawProofBundle;
+    noteCommitment: string;
+    source?: string;
+  }): Promise<{ spent: boolean }> {
+    const spent = await this.isNullifierSpent({
+      nullifierHash: opts.proof.nullifierHash,
+      source: opts.source,
+    });
+    if (spent) await this.ctx.notes.markSpent(opts.noteCommitment);
+    return { spent };
   }
 
   /** Read the next deposit leaf index. */
