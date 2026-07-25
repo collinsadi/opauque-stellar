@@ -48,6 +48,7 @@ export default defineConfig({
           items: [
             { text: "OpaqueClient", link: "/reference/client" },
             { text: "Security Model", link: "/reference/security" },
+            { text: "Versioning & Deprecation", link: "/reference/versioning" },
             { text: "Full API", link: "/api/" },
           ],
         },
