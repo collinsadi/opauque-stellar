@@ -115,6 +115,34 @@ schema / attestation codecs (`computeSchemaId`, `encodeAttestationData`), encryp
 backups (`encryptGhostEntries`), payment links (`createPaymentLink`), and memo
 validation (`validateMemo`).
 
+## Testing
+
+```sh
+npm test          # runs the full vitest suite with coverage (enforced thresholds)
+npm run test:e2e  # end-to-end tests only
+```
+
+`npm test` generates a coverage report and fails if per-module thresholds are
+breached (strictest on the proof- and note-handling modules). Tests that need the
+v3 circuit artifacts or a live network are skipped automatically when their
+inputs are absent.
+
+### Release gate
+
+`tests/e2e/flagship-flow.e2e.test.ts` exercises the flagship flow end to end —
+**announce → scan → deposit → prove → relayed withdrawal** — asserting balances,
+nullifier state, and emitted `Deposit` / `Withdraw` events. It is an in-process
+simulation of the pool contract (there is no local Soroban sandbox network in
+this repo), driving the real SDK services, crypto, and relayer-protocol code.
+**This test must pass before cutting a release.**
+
+## Versioning
+
+This package follows semantic versioning and a published deprecation policy —
+see [Versioning & Deprecation Policy](./docs/reference/versioning.md) and
+[`CHANGELOG.md`](./CHANGELOG.md). Every change to the public API ships with a
+changeset and a changelog entry.
+
 ## License
 
 MIT
