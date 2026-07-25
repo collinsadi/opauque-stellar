@@ -1,5 +1,30 @@
 # @opaquecash/stellar
 
+The format follows [Changesets](https://github.com/changesets/changesets) output
+and the project's [Versioning & Deprecation Policy](./docs/reference/versioning.md).
+Unreleased work accumulates below until the next release.
+
+## Unreleased
+
+### Minor Changes
+
+- Add `PoolService.isNullifierSpent` and `PoolService.reconcileWithdrawal`, plus
+  the underlying `PrivacyPool.isNullifierSpent` binding, so callers can reconcile
+  local note state with on-chain nullifier state after an ambiguous withdrawal
+  RPC failure (a submission that may or may not have landed). No note is ever
+  marked spent for a withdrawal that did not confirm on-chain.
+
+### Patch Changes
+
+- Document the withdrawal flow's fault-recovery guarantee and add fault-injection
+  coverage for RPC failures before, during, and after submission (no burned note,
+  no double payout).
+- Enforce per-module test-coverage thresholds in CI (strictest on the proof- and
+  note-handling modules); `npm test` now emits a coverage report.
+- Add a Versioning & Deprecation Policy (`docs/reference/versioning.md`) and an
+  end-to-end release-gate test (announce -> scan -> deposit -> prove -> relayed
+  withdrawal).
+
 ## 0.2.0
 
 ### Minor Changes
