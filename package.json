@@ -23,7 +23,7 @@
     "check:scanner-stability": "tsx scripts/check-scanner-byte-stability.ts"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "^15.1.0"
+    "@stellar/stellar-sdk": "^16.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
