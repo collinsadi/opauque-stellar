@@ -27,7 +27,7 @@
     "audit:supply-chain": "npm audit --omit=dev --audit-level=high && npm audit --omit=dev --audit-level=high --prefix frontend"
   },
   "devDependencies": {
-    "@types/node": "^22.15.0",
+    "@types/node": "^26.2.0",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3"
   }
