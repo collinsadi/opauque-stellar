@@ -31,7 +31,7 @@
     "test:a11y": "npx playwright test e2e/a11y.spec.ts --project=chromium"
   },
   "dependencies": {
-    "@noble/curves": "1.9.7",
+    "@noble/curves": "2.3.0",
     "@noble/hashes": "1.8.0",
     "@stellar/freighter-api": "6.0.1",
     "@stellar/stellar-sdk": "15.1.0",
