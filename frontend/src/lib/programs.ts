@@ -12,6 +12,19 @@ import {
 } from "./stellar";
 import type { SignTxFn } from "./stellar";
 
+/** BytesN values use the ScVal Bytes wire representation. */
+export function encodeBytesNScVal(value: Uint8Array): ReturnType<typeof nativeToScVal> {
+  return nativeToScVal(Buffer.from(value), { type: "bytes" });
+}
+
+export function encodeVecScVal(value: unknown[]): ReturnType<typeof nativeToScVal> {
+  return nativeToScVal(value);
+}
+
+export function encodeMapScVal(value: Record<string, unknown>): ReturnType<typeof nativeToScVal> {
+  return nativeToScVal(value);
+}
+
 export const SCHEMA_REGISTRY_CONTRACT_ID = deployedAddresses.schemaRegistry;
 export const ATTESTATION_ENGINE_V2_CONTRACT_ID = deployedAddresses.attestationEngineV2;
 export const GROTH16_VERIFIER_CONTRACT_ID = deployedAddresses.groth16Verifier;
