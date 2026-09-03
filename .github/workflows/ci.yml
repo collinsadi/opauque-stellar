@@ -121,6 +121,15 @@ jobs:
       - name: Run circuit regression suite
         if: steps.changes.outputs.circuits == 'true'
         run: npx tsx circuits/test/regression.ts --witness-only
+        
+      - name: Guard against Solidity/Anchor leftovers (#800)
+        run: |
+          if grep -rniE "solidity|anchor" circuits \
+            --include="*.json" --include="*.md" --include="*.ts" --include="*.js" \
+            --exclude="package-lock.json" ; then
+            echo "::error::Found Solidity/Anchor reference in circuits/ — this is a Stellar/Soroban repo. See issue #800."
+            exit 1
+          fi
 
   # ── Scanner WASM: Rust stable + Node 20 ─────────────────────────────
   scanner:
