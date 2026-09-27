@@ -43,7 +43,11 @@ const DB_NAME = "OpaqueCache";
 // announcement, so incremental syncs never re-fetch them. Bumping the version
 // drops the stale stores on upgrade, forcing one clean backfill from the
 // deployment ledger with the corrected two-segment topic filter.
-const DB_VERSION = 3;
+// v4: announcement IDs changed from `${txHash}:${ledger}` (which collapsed
+// multiple announcements in the same transaction to one entry) to
+// `${cluster}-${txSig}-${logIndex}`. Bumping the version drops the stale
+// stores so they are rebuilt with correct per-event IDs.
+const DB_VERSION = 4;
 
 let dbPromise: Promise<IDBPDatabase<OpaqueCacheDBSchema>> | null = null;
 

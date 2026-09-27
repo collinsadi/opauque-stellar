@@ -21,7 +21,18 @@ import { NetworkGuard } from "./components/NetworkGuard";
 import { useWallet } from "./hooks/useWallet";
 import { useRegistrationStatus } from "./hooks/useRegistrationStatus";
 import { useVaultStore } from "./store/vaultStore";
-import { useGhostAddressStore, useGhostAddressPersistence } from "./store/ghostAddressStore";
+import { useGhostAddressStore, useGhostAddressPersistence, clearGhostPassword } from "./store/ghostAddressStore";
+import { useTxHistoryStore } from "./store/txHistoryStore";
+import { usePoolNoteStore } from "./store/poolNoteStore";
+import { useReputationStore } from "./store/reputationStore";
+import { useIssuedAttestationStore } from "./store/issuedAttestationStore";
+import { useSchemaStore } from "./store/schemaStore";
+import { useGhostAnnouncementStore } from "./store/ghostAnnouncementStore";
+import { useWatchlistStore } from "./hooks/useWatchlist";
+import { usePendingTxStore } from "./store/pendingTxStore";
+import { useSecuritySettingsStore } from "./store/securitySettingsStore";
+import { clearAllData as clearIndexedDB } from "./lib/opaqueCache";
+import { DisconnectConfirmModal } from "./components/DisconnectConfirmModal";
 import { getExplorerTxUrl } from "./lib/explorer";
 import { NetworkMismatchModal } from "./components/security/NetworkMismatchModal";
 import { SecuritySettings } from "./pages/settings/SecuritySettings";
@@ -68,6 +79,7 @@ function AppContent() {
   const { isSetup, clearKeys } = useKeys();
   const { isRegistered, isLoading: isRegistrationCheckLoading } = useRegistrationStatus(address, cluster);
   const clearVault = useVaultStore((s) => s.clear);
+  const [showDisconnectModal, setShowDisconnectModal] = useState(false);
 
   useGhostAddressPersistence();
 
@@ -130,11 +142,45 @@ function AppContent() {
   }, [connect]);
 
   const handleDisconnect = () => {
+    setShowDisconnectModal(true);
+  };
+
+  const executeDisconnect = useCallback(async (fullWipe: boolean) => {
+    setShowDisconnectModal(false);
     clearKeys();
     clearVault();
+    if (fullWipe) {
+      // Clear all persisted stores
+      useTxHistoryStore.getState().clear();
+      usePoolNoteStore.getState().clear();
+      useReputationStore.getState().clearTraits();
+      useIssuedAttestationStore.setState({ issued: [] });
+      useSchemaStore.setState({ schemas: {}, discoveredTraits: {}, attestations: {}, lastScannedSlot: 0 });
+      useGhostAnnouncementStore.setState({ keys: {} });
+      useGhostAddressStore.getState().setEntries([]);
+      useWatchlistStore.setState({ entries: [] });
+      usePendingTxStore.setState({ byHash: {} });
+      useSecuritySettingsStore.getState().clearPassphrase();
+      clearGhostPassword();
+      // Clear IndexedDB announcement cache
+      try {
+        await clearIndexedDB();
+      } catch {
+        // best-effort
+      }
+      // Remove all opaque-* localStorage keys
+      if (typeof localStorage !== "undefined") {
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key?.startsWith("opaque")) keysToRemove.push(key);
+        }
+        for (const key of keysToRemove) localStorage.removeItem(key);
+      }
+    }
     disconnect();
     setTab("dashboard");
-  };
+  }, [clearKeys, clearVault, disconnect]);
 
   const renderView = () => {
     const access = getTabAccess(tab);
@@ -245,20 +291,29 @@ function AppContent() {
   }
 
   return (
-    <Layout
-      tab={tab}
-      onTabChange={handleTab}
-      isConnected={isConnected}
-      address={address ?? undefined}
-      isConnecting={isConnecting}
-      onConnect={handleConnect}
-      onDisconnect={handleDisconnect}
-      protocolLog={protocolLogPanel}
-    >
-      <NetworkGuard>
-        <ViewErrorBoundary>{renderView()}</ViewErrorBoundary>
-      </NetworkGuard>
-    </Layout>
+    <>
+      <Layout
+        tab={tab}
+        onTabChange={handleTab}
+        isConnected={isConnected}
+        address={address ?? undefined}
+        isConnecting={isConnecting}
+        onConnect={handleConnect}
+        onDisconnect={handleDisconnect}
+        protocolLog={protocolLogPanel}
+      >
+        <NetworkGuard>
+          <ViewErrorBoundary>{renderView()}</ViewErrorBoundary>
+        </NetworkGuard>
+      </Layout>
+      {showDisconnectModal && (
+        <DisconnectConfirmModal
+          onDisconnectOnly={() => void executeDisconnect(false)}
+          onFullWipe={() => void executeDisconnect(true)}
+          onCancel={() => setShowDisconnectModal(false)}
+        />
+      )}
+    </>
   );
 }
 

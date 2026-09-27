@@ -85,6 +85,7 @@ export function GhostAnnounceModal({
           wasm,
           masterKeys,
           stealthMetaAddressHex,
+          ephemeralPrivKeyHex as string,
         );
         if (cancelled) return;
         setAnnouncerPreview(announcerAddr);
@@ -206,10 +207,21 @@ export function GhostAnnounceModal({
           anywhere, not only locally.
         </li>
         <li>
-          The transaction will be sent from a dedicated stealth signer named{" "}
-          <strong className="text-neutral-300">Announcer</strong>, so your{" "}
-          <strong className="text-neutral-300">main connected wallet</strong> is
-          not linked as the caller on-chain.
+          Each announcement uses a{" "}
+          <strong className="text-neutral-300">unique one-time Announcer</strong>{" "}
+          account derived from this ghost's ephemeral key, so your{" "}
+          <strong className="text-neutral-300">main wallet is not linked</strong>{" "}
+          and{" "}
+          <strong className="text-neutral-300">
+            multiple ghost announcements cannot be clustered
+          </strong>{" "}
+          to the same owner on-chain.
+        </li>
+        <li className="text-mist/70 text-xs">
+          <strong className="text-neutral-400">What is visible:</strong> the
+          announcement transaction, its timing, and the announcer's fee payment.{" "}
+          <strong className="text-neutral-400">What is not linked:</strong> your
+          connected wallet, other ghost addresses, or your stealth meta-address.
         </li>
       </ul>
 

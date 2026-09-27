@@ -36,8 +36,34 @@ import { deployedAddresses } from "../contracts/deployedAddresses";
 import {
   decodePaymentLink,
   isOpaquePaymentLink,
+  decodeWebPaymentLink,
   type PaymentLink,
 } from "../lib/paymentLink";
+
+import type { PaymentLinkError } from "../lib/paymentLink";
+
+/**
+ * Try to decode an identifier as a base64url-encoded `opaque://` URI.
+ * Returns null if the identifier is not valid base64url or doesn't decode to
+ * an opaque:// URI (callers should fall through to other resolution paths).
+ */
+function tryDecodeBase64UrlOpaqueUri(
+  identifier: string,
+  configuredNetwork: string,
+): { link: PaymentLink } | { error: PaymentLinkError } | null {
+  try {
+    let b64 = identifier.replace(/-/g, "+").replace(/_/g, "/");
+    while (b64.length % 4) b64 += "=";
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const decoded = new TextDecoder().decode(bytes);
+    if (!decoded.startsWith("opaque://")) return null;
+    return decodePaymentLink(decoded, configuredNetwork as import("../lib/paymentLink").Network);
+  } catch {
+    return null;
+  }
+}
 
 function isDirectMetaAddress(s: string): boolean {
   const t = s.trim().startsWith("0x") ? s.trim() : "0x" + s.trim();
@@ -91,22 +117,24 @@ export function PayPage() {
     let cancelled = false;
     (async () => {
       try {
-        // Check if it's an opaque payment link
-        if (isOpaquePaymentLink(id)) {
-          const result = decodePaymentLink(id, cluster);
-          if ("error" in result) {
+        // Try decoding as a base64url-encoded opaque:// URI (web payment link)
+        const webLinkResult = tryDecodeBase64UrlOpaqueUri(id, cluster);
+        const linkResult = webLinkResult ?? (isOpaquePaymentLink(id) ? decodePaymentLink(id, cluster) : null);
+
+        if (linkResult) {
+          if ("error" in linkResult) {
             if (!cancelled) {
-              if (result.error.type === "NETWORK_MISMATCH") {
+              if (linkResult.error.type === "NETWORK_MISMATCH") {
                 setResolveStatus("network_mismatch");
-                setError(result.error.message);
+                setError(linkResult.error.message);
               } else {
                 setResolveStatus("invalid_link");
-                setError(result.error.message);
+                setError(linkResult.error.message);
               }
             }
             return;
           }
-          const link = result.link;
+          const link = linkResult.link;
           setDecodedPaymentLink(link);
           setDisplayName(link.metaAddress);
           setResolvedMeta(link.metaAddress as Hex);

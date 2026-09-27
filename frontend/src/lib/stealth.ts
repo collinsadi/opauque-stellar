@@ -337,15 +337,25 @@ const ANNOUNCER_SALT = "opaque-announcer-v1";
 
 /**
  * Deterministic ephemeral scalar for the "Announcer" stealth signer.
+ *
+ * @param metaAddressHex - The recipient's stealth meta-address.
+ * @param perAnnouncementEntropy - Optional per-announcement entropy (e.g. the
+ *   ghost's ephemeral private key hex) that makes the derived announcer unique
+ *   per announcement, preventing on-chain clustering of a user's ghost
+ *   addresses. When omitted falls back to the legacy (linkable) derivation.
  */
 export function deriveAnnouncerEphemeralKey(
   metaAddressHex: Hex | string,
+  perAnnouncementEntropy?: string,
 ): Uint8Array {
   const raw =
     typeof metaAddressHex === "string" && metaAddressHex.startsWith("0x")
       ? metaAddressHex.slice(2)
       : metaAddressHex;
-  const seed = new TextEncoder().encode(raw + ANNOUNCER_SALT);
+  const entropyInput = perAnnouncementEntropy
+    ? raw + perAnnouncementEntropy + ANNOUNCER_SALT
+    : raw + ANNOUNCER_SALT;
+  const seed = new TextEncoder().encode(entropyInput);
   const okm = hkdf(sha256, seed, undefined, "opaque-announcer-ephemeral", 32);
   const n = CURVE.CURVE.n;
   let scalar = bytesToBigInt(okm) % n;

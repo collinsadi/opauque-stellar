@@ -179,14 +179,21 @@ function mapAnnouncementEvents(
   events: Awaited<ReturnType<ReturnType<typeof getSorobanServer>["getEvents"]>>["events"],
   cluster: StellarNetwork,
 ): CachedAnnouncement[] {
+  // Track per-tx event counts so each announcement within a single
+  // transaction gets a distinct logIndex (and therefore a distinct id).
+  const txEventIndex = new Map<string, number>();
   return events.map((ev) => {
+    const txKey = ev.txHash;
+    const idx = txEventIndex.get(txKey) ?? 0;
+    txEventIndex.set(txKey, idx + 1);
+
     // Event value is (scheme_id, stealth_address, caller, ephemeral_pub_key, metadata)
     const val = scValToNative(ev.value) as Uint8Array[];
     return {
-      id: `${ev.txHash}:${ev.ledger}`,
+      id: `${ev.txHash}:${ev.ledger}:${idx}`,
       cluster,
       transactionSignature: ev.txHash,
-      logIndex: 0,
+      logIndex: idx,
       slot: ev.ledger,
       args: {
         stealthAddress: "0x" + Buffer.from(val[1]).toString("hex"),

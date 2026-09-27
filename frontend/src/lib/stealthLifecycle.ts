@@ -395,12 +395,20 @@ export function deriveStealthPrivateKeyFromGhostEntry(
   return ("0x" + bytesToHex(stealthPrivKeyBytes)) as Hex;
 }
 
+/**
+ * Derive an announcer account for a ghost on-chain announcement.
+ *
+ * @param perAnnouncementEntropy - Per-ghost entropy (typically the ghost's
+ *   ephemeral private key hex) so each announcement uses a unique, unlinkable
+ *   announcer account. Prevents on-chain clustering of a user's ghosts.
+ */
 export function getAnnouncerAccount(
   wasm: StealthLifecycleWasm,
   masterKeys: MasterKeys,
   metaAddressHex: Hex | string,
+  perAnnouncementEntropy?: string,
 ): { address: string; privateKey: Hex } {
-  const ephemeralPriv = deriveAnnouncerEphemeralKey(metaAddressHex);
+  const ephemeralPriv = deriveAnnouncerEphemeralKey(metaAddressHex, perAnnouncementEntropy);
   const ephemeralPubKey = secp256k1.getPublicKey(ephemeralPriv, true);
   const announcerPrivKeyBytes = wasm.reconstruct_signing_key_wasm(
     masterKeys.spendPrivKey,
@@ -447,6 +455,7 @@ export async function executeGhostOnchainAnnouncement(
     wasm,
     getMasterKeys(),
     metaAddressHex,
+    typeof ephemeralPrivKeyHex === "string" ? ephemeralPrivKeyHex : undefined,
   );
   const announcerKeypair = deriveStealthStellarKeypairFromStealthPrivKey(
     hexToBytes(announcerAcc.privateKey.slice(2)),

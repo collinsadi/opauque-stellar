@@ -5,7 +5,7 @@ import { computeStealthAddressAndViewTag } from "../lib/stealth";
 import { getCluster } from "../lib/chain";
 import { useGhostAddressStore } from "../store/ghostAddressStore";
 import { useWatchlistStore } from "../hooks/useWatchlist";
-import { createPaymentLink } from "../lib/paymentLink";
+import { createPaymentLink, createWebPaymentLink } from "../lib/paymentLink";
 import { RecoveryDocLink } from "./RecoveryDocLink";
 import { BackupReminderModal } from "./security/BackupReminderModal";
 import { useSecurityStore } from "../store/securityStore";
@@ -29,6 +29,7 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
   const [mode, setMode] = useState<Mode>("choose");
   const [copiedMeta, setCopiedMeta] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedWebLink, setCopiedWebLink] = useState(false);
   const [copiedGhost, setCopiedGhost] = useState(false);
   const [ghostResult, setGhostResult] = useState<{
     stealthAddress: string;
@@ -75,7 +76,7 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
     downloadCleanPng(canvas, "meta-address-qr.png");
   }, [downloadCleanPng]);
 
-  const handleCopy = useCallback(async (value: string, type: "meta" | "link" | "ghost") => {
+  const handleCopy = useCallback(async (value: string, type: "meta" | "link" | "weblink" | "ghost") => {
     try {
       await navigator.clipboard.writeText(value);
       if (type === "meta") {
@@ -84,6 +85,9 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
       } else if (type === "link") {
         setCopiedLink(true);
         window.setTimeout(() => setCopiedLink(false), 1200);
+      } else if (type === "weblink") {
+        setCopiedWebLink(true);
+        window.setTimeout(() => setCopiedWebLink(false), 1200);
       } else {
         setCopiedGhost(true);
         window.setTimeout(() => setCopiedGhost(false), 1200);
@@ -102,6 +106,7 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
   }
 
   const paymentLink = createPaymentLink(stealthMetaAddressHex, cluster);
+  const webPaymentLink = createWebPaymentLink(stealthMetaAddressHex, cluster);
 
   if (mode === "choose") {
     return (
@@ -228,9 +233,13 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
           <p className="text-[11px] uppercase tracking-wider text-mist/70 mb-1">Meta-address</p>
           <div className="font-mono text-xs text-white/90 break-all">{stealthMetaAddressHex}</div>
         </div>
-        <div className="rounded-2xl border border-ink-700 bg-ink-900/20 p-4 mb-5">
-          <p className="text-[11px] uppercase tracking-wider text-mist/70 mb-1">Payment link</p>
+        <div className="rounded-2xl border border-ink-700 bg-ink-900/20 p-4 mb-3">
+          <p className="text-[11px] uppercase tracking-wider text-mist/70 mb-1">Payment link (app)</p>
           <div className="font-mono text-xs text-mist break-all">{paymentLink}</div>
+        </div>
+        <div className="rounded-2xl border border-ink-700 bg-ink-900/20 p-4 mb-5">
+          <p className="text-[11px] uppercase tracking-wider text-mist/70 mb-1">Web link (browser / chat / email)</p>
+          <div className="font-mono text-xs text-mist break-all">{webPaymentLink}</div>
         </div>
         <div className="flex flex-wrap gap-2">
           <button
@@ -245,7 +254,14 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
             onClick={() => handleCopy(paymentLink, "link")}
             className="rounded-xl bg-white border border-white px-3.5 py-2 text-sm font-semibold text-black hover:bg-black hover:text-white"
           >
-            {copiedLink ? "Copied!" : "Copy link"}
+            {copiedLink ? "Copied!" : "Copy app link"}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleCopy(webPaymentLink, "weblink")}
+            className="rounded-xl bg-white border border-white px-3.5 py-2 text-sm font-semibold text-black hover:bg-black hover:text-white"
+          >
+            {copiedWebLink ? "Copied!" : "Copy web link"}
           </button>
         </div>
         <button

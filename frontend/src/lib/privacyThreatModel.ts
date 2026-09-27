@@ -132,6 +132,13 @@ export const MITIGATIONS: ThreatMitigation[] = [
     implementation: "useScanner.ts",
   },
   {
+    id: "M22",
+    threat: "Ghost announcer clustering",
+    mitigation:
+      "Each on-chain ghost announcement uses a unique announcer account derived from the ghost's ephemeral key, so multiple announcements from the same user cannot be linked by a shared fee-payer. Residual risk: timing correlation between announcements and the funding of each announcer account.",
+    implementation: "stealth.ts (deriveAnnouncerEphemeralKey), stealthLifecycle.ts (getAnnouncerAccount)",
+  },
+  {
     id: "M14",
     threat: "Timing / amount linkage",
     mitigation: "User education (no on-chain hiding in v1)",

@@ -35,6 +35,12 @@ import { markPendingTx, resolvePendingTx, trackSubmission } from "../lib/txTrack
 import { PrivacyWarningCallout } from "./PrivacyWarningCallout";
 import { SEND_PRIVACY_WARNING } from "../lib/privacyThreatModel";
 import { QrScanner } from "./QrScanner";
+import {
+  decodePaymentLink,
+  isOpaquePaymentLink,
+  decodeWebPaymentLink,
+  type Network,
+} from "../lib/paymentLink";
 
 const STROOP_FEE_BUFFER = 100_000n;
 
@@ -53,6 +59,26 @@ const isGAddress = (value: string): boolean => {
     return false;
   }
 };
+
+/** Try to extract a meta-address from an opaque:// or web payment link. */
+function extractMetaFromPaymentLink(
+  value: string,
+  currentNetwork: string,
+): { metaAddress: string; amount?: string } | null {
+  const trimmed = value.trim();
+  // opaque:// URI
+  if (isOpaquePaymentLink(trimmed)) {
+    const result = decodePaymentLink(trimmed, currentNetwork as Network);
+    if ("link" in result) return { metaAddress: result.link.metaAddress, amount: result.link.params.amount };
+    return null;
+  }
+  // https web link
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    const result = decodeWebPaymentLink(trimmed, currentNetwork as Network);
+    if (result && "link" in result) return { metaAddress: result.link.metaAddress, amount: result.link.params.amount };
+  }
+  return null;
+}
 
 export function SendView() {
   const { isSetup } = useKeys();
@@ -159,8 +185,17 @@ export function SendView() {
       return;
     }
 
+    // Try to extract meta-address from a pasted payment link
+    const linkMeta = extractMetaFromPaymentLink(recipientMeta, network);
+    if (linkMeta) {
+      recipientMeta = linkMeta.metaAddress;
+      if (linkMeta.amount && !amount) {
+        setAmount(linkMeta.amount);
+      }
+    }
+
     // If a G-address is entered, resolve it to a meta-address via the registry.
-    if (isGAddress(recipientMeta)) {
+    if (!linkMeta && isGAddress(recipientMeta)) {
       setSending(true);
       setSteps([]);
       addStep("wait", "Resolving stealth meta-address from registry…");
@@ -176,9 +211,9 @@ export function SendView() {
       }
       addStep("ok", "Meta-address resolved from registry.", resolved);
       recipientMeta = resolved;
-    } else if (!isMetaAddress(recipientMeta)) {
+    } else if (!linkMeta && !isMetaAddress(recipientMeta)) {
       setError(
-        "Enter a valid Stellar address (G…) or stealth meta-address (0x + 132 hex chars).",
+        "Enter a valid Stellar address (G…), stealth meta-address (0x + 132 hex chars), or a payment link.",
       );
       return;
     }

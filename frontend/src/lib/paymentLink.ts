@@ -193,9 +193,13 @@ export function decodePaymentLink(
       };
     }
 
-    // Extract path components
-    const pathParts = url.pathname.split("/").filter(Boolean);
-    
+    // Extract path components.
+    // `new URL("opaque://v1/testnet/0x...")` puts `v1` in `url.host` and
+    // `/testnet/0x...` in `url.pathname`, so reconstruct the full path
+    // from host + pathname to get `["v1", "testnet", "0x..."]`.
+    const fullPath = (url.host ? url.host + "/" : "") + url.pathname.replace(/^\//, "");
+    const pathParts = fullPath.split("/").filter(Boolean);
+
     if (pathParts.length < 3) {
       return {
         error: {
@@ -405,6 +409,97 @@ export function isOpaquePaymentLink(linkString: string): boolean {
   } catch {
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Web-compatible payment links (https)
+// ---------------------------------------------------------------------------
+
+/**
+ * The base URL used for web payment links. In production this should be the
+ * deployed app origin. Falls back to `window.location.origin` at runtime.
+ */
+function getWebLinkOrigin(): string {
+  if (typeof window !== "undefined") return window.location.origin;
+  return "https://app.opaque.cash";
+}
+
+/**
+ * Encodes a payment link as an https URL that can be opened in a browser.
+ * The resulting URL resolves to `/pay/<encoded>` where `<encoded>` is the
+ * base64url-encoded opaque:// URI so slashes in the URI don't collide with
+ * path segments.
+ */
+export function encodeWebPaymentLink(link: PaymentLink): string {
+  const opaqueUri = encodePaymentLink(link);
+  const encoded = base64UrlEncode(opaqueUri);
+  return `${getWebLinkOrigin()}/pay/${encoded}`;
+}
+
+/**
+ * Creates a web payment link from meta-address and network.
+ */
+export function createWebPaymentLink(
+  metaAddress: string,
+  network: Network,
+  params: PaymentLinkParams = {},
+): string {
+  return encodeWebPaymentLink({
+    version: 1,
+    network,
+    metaAddress,
+    params,
+  });
+}
+
+/**
+ * Attempts to decode a web payment link (https://…/pay/<base64url>) back to
+ * a PaymentLink. Returns null if the URL is not a valid web payment link.
+ */
+export function decodeWebPaymentLink(
+  url: string,
+  configuredNetwork?: Network,
+): { link: PaymentLink } | { error: PaymentLinkError } | null {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    if (segments.length < 2 || segments[0] !== "pay") return null;
+    const encoded = segments[1];
+    const opaqueUri = base64UrlDecode(encoded);
+    if (!opaqueUri.startsWith("opaque://")) {
+      // The identifier might be a raw meta-address (existing route format)
+      return null;
+    }
+    return decodePaymentLink(opaqueUri, configuredNetwork);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Checks if a string is a web payment link.
+ */
+export function isWebPaymentLink(url: string): boolean {
+  const result = decodeWebPaymentLink(url);
+  return result !== null && "link" in result;
+}
+
+// Base64url helpers (RFC 4648 §5, no padding)
+function base64UrlEncode(input: string): string {
+  const bytes = new TextEncoder().encode(input);
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function base64UrlDecode(input: string): string {
+  let b64 = input.replace(/-/g, "+").replace(/_/g, "/");
+  while (b64.length % 4) b64 += "=";
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
 }
 
 /**
