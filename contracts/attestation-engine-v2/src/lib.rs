@@ -739,6 +739,12 @@ mod property_tests {
         );
         assert_ne!(uid1, uid2, "repeat attestation must yield a fresh UID");
         assert!(uid2.to_array() != [0u8; 32]);
+
+        // Revoking the second issuance must leave the first record untouched.
+        env.ledger().with_mut(|ledger| ledger.sequence_number += 1);
+        engine_client.revoke_attestation(&authority, &uid2);
+        assert_eq!(engine_client.get_attestation(&uid1).revocation_ledger, 0);
+        assert_ne!(engine_client.get_attestation(&uid2).revocation_ledger, 0);
     }
 
     /// Invariant: Schema expiry prevents new attestations past the expiry boundary.

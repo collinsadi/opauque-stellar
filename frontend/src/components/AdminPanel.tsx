@@ -28,17 +28,35 @@ import { isSimulationSuccess } from "../lib/sorobanErrors";
 import { deployedAddresses } from "../contracts/deployedAddresses";
 import { useWallet } from "../hooks/useWallet";
 import { ModalShell } from "./ModalShell";
+import { getPoolConfig } from "../contracts/poolConfig";
+import { getRelayerConfig } from "../contracts/relayerConfig";
+import { invokeUpdateAspRoot, invokeUpdateStateRoot } from "../lib/programs";
+import { isValidAdminAddress } from "../lib/adminInputValidation";
 
 // =============================================================================
 // Constants
 // =============================================================================
 
-/** Contracts that expose admin transfer methods. */
-const ADMIN_CONTRACTS: { id: string; name: string }[] = [
-  { id: deployedAddresses.reputationVerifier, name: "Reputation Verifier" },
-  { id: deployedAddresses.groth16Verifier, name: "Groth16 Verifier" },
-  { id: deployedAddresses.attestationEngineV2, name: "Attestation Engine V2" },
-  { id: deployedAddresses.schemaRegistry, name: "Schema Registry" },
+type AdminContract = {
+  id: string;
+  name: string;
+  readMethod: "get_admin" | "get_config" | null;
+  configHasAdmin?: boolean;
+  supportsTransfer: boolean;
+  directTransfer?: boolean;
+};
+
+const poolConfig = getPoolConfig();
+const relayerConfig = getRelayerConfig();
+const ADMIN_CONTRACTS: AdminContract[] = [
+  { id: deployedAddresses.reputationVerifier, name: "Reputation Verifier", readMethod: "get_config", configHasAdmin: true, supportsTransfer: true, directTransfer: true },
+  { id: deployedAddresses.groth16Verifier, name: "Groth16 Verifier", readMethod: null, supportsTransfer: false },
+  { id: deployedAddresses.attestationEngineV2, name: "Attestation Engine V2", readMethod: "get_config", configHasAdmin: true, supportsTransfer: true, directTransfer: true },
+  { id: deployedAddresses.schemaRegistry, name: "Schema Registry", readMethod: null, supportsTransfer: false },
+  ...(poolConfig ? [{ id: poolConfig.poolId, name: "Privacy Pool", readMethod: "get_config" as const, configHasAdmin: true, supportsTransfer: true, directTransfer: true }] : []),
+  ...(relayerConfig ? [{ id: relayerConfig.registryId, name: "Relayer Registry", readMethod: "get_config" as const, configHasAdmin: true, supportsTransfer: true, directTransfer: true }] : []),
+  { id: deployedAddresses.stealthRegistry, name: "Stealth Registry", readMethod: null, supportsTransfer: false },
+  { id: deployedAddresses.stealthAnnouncer, name: "Stealth Announcer", readMethod: null, supportsTransfer: false },
 ];
 
 // =============================================================================
@@ -89,6 +107,8 @@ interface AdminStatus {
   isAdmin: boolean;
   /** true if the connected wallet is the pending admin (can accept) */
   isPendingAdmin: boolean;
+  supportsTransfer: boolean;
+  directTransfer: boolean;
 }
 
 // =============================================================================
@@ -139,15 +159,19 @@ function AdminCard({ status, publicKey, signTransaction, onRefresh }: AdminCardP
   );
 
   const handleTransferAdmin = () => {
-    if (!transferInput.trim()) return;
+    if (!isValidAdminAddress(transferInput)) {
+      setError("Enter a valid Stellar account (G…) or contract (C…) address.");
+      return;
+    }
     setConfirmOpen(true);
   };
 
   const confirmTransfer = () => {
     setConfirmOpen(false);
-    void invokeAdmin("transfer_admin", [
-      nativeToScVal(transferInput.trim(), { type: "address" }),
-    ]);
+    const args = status.directTransfer
+      ? [nativeToScVal(publicKey, { type: "address" }), nativeToScVal(transferInput.trim(), { type: "address" })]
+      : [nativeToScVal(transferInput.trim(), { type: "address" })];
+    void invokeAdmin("transfer_admin", args);
   };
 
   const handleAcceptAdmin = () => {
@@ -187,7 +211,7 @@ function AdminCard({ status, publicKey, signTransaction, onRefresh }: AdminCardP
               {status.currentAdmin}
             </p>
           ) : (
-            <p className="text-xs text-mist italic">Not available: contract may not expose get_admin()</p>
+            <p className="text-xs text-mist italic">{status.supportsTransfer ? "Admin address unavailable from this contract." : "This contract has no admin controls."}</p>
           )}
         </div>
 
@@ -224,7 +248,7 @@ function AdminCard({ status, publicKey, signTransaction, onRefresh }: AdminCardP
         )}
 
         {/* Transfer admin form: only shown to current admin */}
-        {status.isAdmin && !status.pendingAdmin && (
+        {status.supportsTransfer && status.isAdmin && !status.pendingAdmin && (
           <div className="space-y-2 pt-1 border-t border-ink-800">
             <p className="text-xs text-ink-500 uppercase tracking-widest font-semibold pt-1">
               Initiate Admin Transfer
@@ -233,24 +257,28 @@ function AdminCard({ status, publicKey, signTransaction, onRefresh }: AdminCardP
               <input
                 id={`${uid}-new-admin`}
                 type="text"
-                placeholder="New admin address (G…)"
+                placeholder="New admin address (G… or C…)"
                 value={transferInput}
-                onChange={(e) => setTransferInput(e.target.value)}
+                onChange={(e) => {
+                  setTransferInput(e.target.value);
+                  setError(null);
+                }}
                 disabled={isBusy}
                 className="flex-1 rounded-lg border border-ink-700 bg-ink-800 px-3 py-1.5 text-xs text-white placeholder-ink-500 focus:outline-none focus:border-white transition-colors disabled:opacity-50 font-mono"
               />
               <button
                 type="button"
                 onClick={handleTransferAdmin}
-                disabled={isBusy || !transferInput.trim() || !signTransaction}
+                disabled={isBusy || !isValidAdminAddress(transferInput) || !signTransaction}
                 className="rounded-lg bg-ink-700 hover:bg-ink-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
-                {busy === "transfer_admin" ? "…" : "Propose"}
+                {busy === "transfer_admin" ? "…" : status.directTransfer ? "Transfer Admin" : "Propose"}
               </button>
             </div>
             <p className="text-[11px] text-mist/60">
-              The new admin must call accept_admin() to complete the transfer.
-              Until accepted, you remain admin and can cancel.
+              {status.directTransfer
+                ? "This contract transfers admin authority immediately when the transaction confirms."
+                : "The new admin must call accept_admin() to complete the transfer. Until accepted, you remain admin and can cancel."}
             </p>
           </div>
         )}
@@ -272,7 +300,7 @@ function AdminCard({ status, publicKey, signTransaction, onRefresh }: AdminCardP
       <ModalShell
         open={confirmOpen}
         title="Confirm Admin Transfer"
-        description="Propose a new admin for this contract."
+        description={status.directTransfer ? "Transfer admin authority directly for this contract." : "Propose a new admin for this contract."}
         onClose={() => setConfirmOpen(false)}
         closeOnBackdrop={!isBusy}
         maxWidthClassName="max-w-sm"
@@ -286,8 +314,9 @@ function AdminCard({ status, publicKey, signTransaction, onRefresh }: AdminCardP
             {transferInput}
           </p>
           <p className="text-xs text-mist/60">
-            The transfer is only finalised when the new admin calls accept_admin().
-            You can cancel at any time before acceptance.
+            {status.directTransfer
+              ? "This contract applies the transfer as soon as the transaction confirms."
+              : "The transfer is only finalised when the new admin calls accept_admin(). You can cancel at any time before acceptance."}
           </p>
           <div className="flex gap-3">
             <button
@@ -302,7 +331,7 @@ function AdminCard({ status, publicKey, signTransaction, onRefresh }: AdminCardP
               onClick={confirmTransfer}
               className="flex-1 rounded-lg bg-white text-black border border-white px-4 py-2 text-sm font-semibold hover:bg-black hover:text-white transition-colors"
             >
-              Confirm Proposal
+              {status.directTransfer ? "Transfer Admin" : "Confirm Proposal"}
             </button>
           </div>
         </div>
@@ -401,11 +430,18 @@ export function AdminPanel() {
       const results = await Promise.allSettled(
         ADMIN_CONTRACTS.map(async (c) => {
           const [adminRaw, pendingRaw] = await Promise.all([
-            simulateRead(server, passphrase, publicKey, c.id, "get_admin"),
-            simulateRead(server, passphrase, publicKey, c.id, "get_pending_admin"),
+            c.readMethod
+              ? simulateRead(server, passphrase, publicKey, c.id, c.readMethod)
+              : Promise.resolve(null),
+            c.supportsTransfer && !c.directTransfer
+              ? simulateRead(server, passphrase, publicKey, c.id, "get_pending_admin")
+              : Promise.resolve(null),
           ]);
 
-          const currentAdmin = typeof adminRaw === "string" ? adminRaw : null;
+          const adminValue = c.configHasAdmin && adminRaw && typeof adminRaw === "object"
+            ? (adminRaw as { admin?: unknown }).admin
+            : adminRaw;
+          const currentAdmin = typeof adminValue === "string" ? adminValue : null;
           const pendingAdmin = typeof pendingRaw === "string" ? pendingRaw : null;
 
           return {
@@ -415,6 +451,8 @@ export function AdminPanel() {
             pendingAdmin,
             isAdmin: currentAdmin === publicKey,
             isPendingAdmin: pendingAdmin === publicKey,
+            supportsTransfer: c.supportsTransfer,
+            directTransfer: c.directTransfer ?? false,
           } satisfies AdminStatus;
         }),
       );
@@ -430,6 +468,8 @@ export function AdminPanel() {
             pendingAdmin: null,
             isAdmin: false,
             isPendingAdmin: false,
+            supportsTransfer: ADMIN_CONTRACTS[i]!.supportsTransfer,
+            directTransfer: ADMIN_CONTRACTS[i]!.directTransfer ?? false,
           };
         }),
       );
@@ -501,6 +541,121 @@ export function AdminPanel() {
       )}
 
       <MultisigGuide />
+      <PoolOperations />
     </div>
+  );
+}
+
+function parseRoot(value: string): Uint8Array | null {
+  const hex = value.trim().replace(/^0x/i, "");
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) return null;
+  return Uint8Array.from(hex.match(/.{2}/g)!, (byte) => Number.parseInt(byte, 16));
+}
+
+function PoolOperations() {
+  const config = getPoolConfig();
+  const { publicKey, signTransaction } = useWallet();
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [depositsPaused, setDepositsPaused] = useState(false);
+  const [withdrawalsPaused, setWithdrawalsPaused] = useState(false);
+  const [withdrawalPausePending, setWithdrawalPausePending] = useState(false);
+  const [stateRoot, setStateRoot] = useState("");
+  const [aspRoot, setAspRoot] = useState("");
+  const [datasetHash, setDatasetHash] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    if (!config || !publicKey) return;
+    const server = getSorobanServer();
+    const passphrase = getNetworkPassphrase();
+    const [rawConfig, deposits, withdrawals, pauseRequest] = await Promise.all([
+      simulateRead(server, passphrase, publicKey, config.poolId, "get_config"),
+      simulateRead(server, passphrase, publicKey, config.poolId, "is_deposits_paused"),
+      simulateRead(server, passphrase, publicKey, config.poolId, "is_withdrawals_paused"),
+      simulateRead(server, passphrase, publicKey, config.poolId, "get_withdrawal_pause_request"),
+    ]);
+    const admin = rawConfig && typeof rawConfig === "object"
+      ? (rawConfig as { admin?: unknown }).admin
+      : null;
+    setIsAdmin(admin === publicKey);
+    setDepositsPaused(deposits === true);
+    setWithdrawalsPaused(withdrawals === true);
+    setWithdrawalPausePending(Array.isArray(pauseRequest) && Number(pauseRequest[0]) > 0 && withdrawals !== true);
+  }, [config, publicKey]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const invokePool = async (method: string) => {
+    if (!config || !publicKey || !signTransaction) return;
+    setBusy(method); setError(null); setMessage(null);
+    try {
+      const hash = await invokeContractMethod({
+        sourcePublicKey: publicKey,
+        contractId: config.poolId,
+        method,
+        args: [nativeToScVal(publicKey, { type: "address" })],
+        signTransaction,
+      });
+      setMessage(`${method} confirmed: ${hash.slice(0, 12)}…`);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : `${method} failed`);
+    } finally { setBusy(null); }
+  };
+
+  const publishRoot = async (kind: "state" | "asp") => {
+    if (!config || !publicKey || !signTransaction) return;
+    const root = parseRoot(kind === "state" ? stateRoot : aspRoot);
+    const dataset = parseRoot(datasetHash);
+    if (!root || !dataset) {
+      setError("Root and dataset hash must each be 32-byte hexadecimal values.");
+      return;
+    }
+    setBusy(`${kind}-root`); setError(null); setMessage(null);
+    try {
+      const submit = kind === "state" ? invokeUpdateStateRoot : invokeUpdateAspRoot;
+      const hash = await submit({ admin: publicKey, root, datasetHash: dataset, signTransaction });
+      setMessage(`${kind === "state" ? "State" : "ASP"} root published: ${hash.slice(0, 12)}…`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Root publication failed");
+    } finally { setBusy(null); }
+  };
+
+  if (!config) return null;
+  return (
+    <section className="rounded-xl border border-ink-700 bg-ink-900/40 p-5 space-y-4">
+      <div>
+        <h3 className="text-sm font-semibold text-white">Privacy Pool Controls</h3>
+        <p className="text-xs text-mist mt-1">Publish pool roots and manage pause controls.</p>
+      </div>
+      {!publicKey ? <p className="text-xs text-mist">Connect an admin wallet to view controls.</p> : !isAdmin ? (
+        <p className="text-xs text-mist">Controls are available to the configured pool admin.</p>
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" disabled={!signTransaction || busy !== null} onClick={() => void invokePool(depositsPaused ? "unpause_deposits" : "pause_deposits")} className="rounded-lg border border-ink-700 bg-ink-800 px-3 py-2 text-xs text-white disabled:opacity-50">
+              {busy?.includes("deposits") ? "Submitting…" : depositsPaused ? "Resume deposits" : "Pause deposits"}
+            </button>
+            <button type="button" disabled={!signTransaction || busy !== null} onClick={() => void invokePool(withdrawalsPaused || withdrawalPausePending ? "unpause_withdrawals" : "request_pause_withdrawals")} className="rounded-lg border border-ink-700 bg-ink-800 px-3 py-2 text-xs text-white disabled:opacity-50">
+              {busy?.includes("withdrawals") ? "Submitting…" : withdrawalsPaused ? "Resume withdrawals" : withdrawalPausePending ? "Cancel withdrawal pause request" : "Request withdrawal pause"}
+            </button>
+          </div>
+          <p className="text-[11px] text-mist">Deposits: {depositsPaused ? "paused" : "active"} · Withdrawals: {withdrawalsPaused ? "paused" : withdrawalPausePending ? "pause pending" : "active"}. Withdrawal pauses use the contract timelock.</p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label className="text-xs text-mist">State root (32-byte hex)<input value={stateRoot} onChange={(e) => setStateRoot(e.target.value)} className="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 font-mono text-white" /></label>
+            <label className="text-xs text-mist">ASP root (32-byte hex)<input value={aspRoot} onChange={(e) => setAspRoot(e.target.value)} className="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 font-mono text-white" /></label>
+          </div>
+          <label className="block text-xs text-mist">Dataset hash (32-byte hex)<input value={datasetHash} onChange={(e) => setDatasetHash(e.target.value)} className="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 font-mono text-white" /></label>
+          <div className="flex gap-2">
+            <button type="button" disabled={!parseRoot(stateRoot) || !parseRoot(datasetHash) || busy !== null || !signTransaction} onClick={() => void publishRoot("state")} className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-black disabled:opacity-50">Publish state root</button>
+            <button type="button" disabled={!parseRoot(aspRoot) || !parseRoot(datasetHash) || busy !== null || !signTransaction} onClick={() => void publishRoot("asp")} className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-black disabled:opacity-50">Publish ASP root</button>
+          </div>
+        </>
+      )}
+      {error && <p role="alert" className="text-xs text-neutral-300">{error}</p>}
+      {message && <p className="text-xs text-mist">{message}</p>}
+    </section>
   );
 }

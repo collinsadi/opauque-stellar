@@ -23,6 +23,8 @@ import { addressToAuthorityBytes } from "../lib/schemaEncoding";
 import { announceStealthTransfer, SCHEME_ID_SECP256K1 } from "../lib/contracts";
 import { getFeatureFlags } from "../lib/featureFlags";
 import { FeatureDisabledNotice } from "./FeatureDisabledNotice";
+import { fetchAttestationUidForTransaction } from "../lib/chainSync";
+import { isMetaAddressRecipient, recipientDiscoveryMessage } from "../lib/attestationRecipients";
 
 // =============================================================================
 // Component
@@ -66,6 +68,18 @@ export function AttestationManager({
   const [resolvedStealthAddress, setResolvedStealthAddress] = useState<
     string | null
   >(null);
+  const [hasAnnouncement, setHasAnnouncement] = useState(false);
+  const [announcementError, setAnnouncementError] = useState<string | null>(null);
+  const [pendingAnnouncement, setPendingAnnouncement] = useState<{
+    issuer: string;
+    stealthAddress: string;
+    ephemeralPubKey: Uint8Array;
+    viewTag: number;
+    schemaId: Uint8Array;
+    uid: Uint8Array;
+    expirySlot: number;
+  } | null>(null);
+  const [isRetryingAnnouncement, setIsRetryingAnnouncement] = useState(false);
 
   const uid = useId();
 
@@ -91,6 +105,43 @@ export function AttestationManager({
 
   const handleFieldChange = (name: string, value: string) => {
     setFieldValues((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const publishAnnouncement = async (request: NonNullable<typeof pendingAnnouncement>) => {
+    if (!signTransaction) throw new Error("Wallet cannot sign announcement transactions.");
+    const issuerBytes = addressToAuthorityBytes(request.issuer);
+    const nonce = crypto.getRandomValues(new Uint8Array(32));
+    const metadata = new Uint8Array(134);
+    metadata[0] = request.viewTag;
+    metadata[1] = 0xb2;
+    metadata.set(request.schemaId, 2);
+    metadata.set(issuerBytes, 34);
+    metadata.set(request.uid, 66);
+    metadata.set(nonce, 98);
+    new DataView(metadata.buffer).setUint32(130, request.expirySlot >>> 0, false);
+    await announceStealthTransfer({
+      sourcePublicKey: request.issuer,
+      schemeId: SCHEME_ID_SECP256K1,
+      stealthAddress: hexToBytes(request.stealthAddress),
+      ephemeralPubKey: request.ephemeralPubKey,
+      metadata,
+      signTransaction,
+    });
+  };
+
+  const retryAnnouncement = async () => {
+    if (!pendingAnnouncement) return;
+    setIsRetryingAnnouncement(true);
+    setAnnouncementError(null);
+    try {
+      await publishAnnouncement(pendingAnnouncement);
+      setPendingAnnouncement(null);
+      setHasAnnouncement(true);
+    } catch (e) {
+      setAnnouncementError(e instanceof Error ? e.message : "Announcement failed. Retry it.");
+    } finally {
+      setIsRetryingAnnouncement(false);
+    }
   };
 
   const resolveStealthAddressHash = (
@@ -189,61 +240,47 @@ export function AttestationManager({
           .map((x) => x.toString(16).padStart(2, "0"))
           .join("");
 
-      // The engine derives the attestation UID as
-      // sha256(schema_id || stealth_address_hash || u64_be(issuance_sequence)).
-      // Each attestation derives a fresh stealth address, so the sequence is 1.
-      const seqBytes = new Uint8Array(8);
-      seqBytes[7] = 1;
-      const uidInput = new Uint8Array(
-        schemaIdBytes.length + stealthHashBytes.length + seqBytes.length,
-      );
-      uidInput.set(schemaIdBytes, 0);
-      uidInput.set(stealthHashBytes, schemaIdBytes.length);
-      uidInput.set(seqBytes, schemaIdBytes.length + stealthHashBytes.length);
-      const uidBytes = new Uint8Array(
-        await crypto.subtle.digest("SHA-256", uidInput),
-      );
+      let uidBytes: Uint8Array | null = null;
+      if (cluster) {
+        for (let attempt = 0; attempt < 8 && !uidBytes; attempt++) {
+          uidBytes = await fetchAttestationUidForTransaction(cluster, signature);
+          if (!uidBytes && attempt < 7) {
+            await new Promise((resolve) => setTimeout(resolve, 750));
+          }
+        }
+      }
+      if (!uidBytes) {
+        setAnnouncementError("The attestation is confirmed, but its on-chain UID is not available yet. Refresh Manage before revoking or announcing it.");
+      }
 
       // If we derived the stealth address from a meta-address, we have the ephemeral key
       // and can create an announcement so the recipient's scanner can discover this attestation.
       // The metadata MUST be the full V2 payload, or the scanner drops it:
       //   view_tag(1) || 0xB2(1) || schema_id(32) || issuer(32) || uid(32) || nonce(32) || expiry_be(4)
-      if (ephemeralPubKey && stealthAddressHex && viewTag !== undefined) {
+      if (uidBytes && ephemeralPubKey && stealthAddressHex && viewTag !== undefined) {
+        const request = {
+          issuer,
+          stealthAddress: stealthAddressHex,
+          ephemeralPubKey,
+          viewTag,
+          schemaId: schemaIdBytes,
+          uid: uidBytes,
+          expirySlot: expirySlotNum,
+        };
+        setPendingAnnouncement(request);
         try {
-          const issuerBytes = addressToAuthorityBytes(issuer);
-          const nonce = crypto.getRandomValues(new Uint8Array(32));
-
-          const metadata = new Uint8Array(134);
-          metadata[0] = viewTag;
-          metadata[1] = 0xb2;
-          metadata.set(schemaIdBytes, 2);
-          metadata.set(issuerBytes, 34);
-          metadata.set(uidBytes, 66);
-          metadata.set(nonce, 98);
-          new DataView(metadata.buffer).setUint32(130, expirySlotNum >>> 0, false);
-
-          await announceStealthTransfer({
-            sourcePublicKey: issuer,
-            schemeId: SCHEME_ID_SECP256K1,
-            stealthAddress: hexToBytes(stealthAddressHex),
-            ephemeralPubKey,
-            metadata,
-            signTransaction,
-          });
+          await publishAnnouncement(request);
+          setPendingAnnouncement(null);
+          setHasAnnouncement(true);
         } catch (announceErr) {
-          // Announcement failure is non-fatal: attestation is still on-chain.
-          // The recipient can still discover it if they have the stealth address stored.
-          console.warn(
-            "[AttestationManager] Announcement failed (non-fatal):",
-            announceErr,
-          );
+          setAnnouncementError(announceErr instanceof Error ? announceErr.message : "Announcement failed. Retry it.");
         }
       }
 
       setTxSig(signature);
 
       // Record the issuance locally so the Manage page can list and revoke it.
-      if (cluster) {
+      if (cluster && uidBytes) {
         let createdAtSlot = 0;
         try {
           createdAtSlot = await connection.getSlot();
@@ -316,9 +353,18 @@ export function AttestationManager({
         <div>
           <p className="text-white font-semibold text-lg">Attestation issued</p>
           <p className="text-mist text-sm mt-1">
-            The recipient's scanner will detect this attestation on the next
-            scan.
+            {recipientDiscoveryMessage(hasAnnouncement && isMetaAddressRecipient(recipientInput))}
           </p>
+          {announcementError && (
+            <div className="mt-3 space-y-2" role="alert">
+              <p className="text-xs text-neutral-300">{pendingAnnouncement ? "Attestation issued, but announcement failed:" : "Attestation issued:"} {announcementError}</p>
+              {pendingAnnouncement && (
+                <button type="button" onClick={() => void retryAnnouncement()} disabled={isRetryingAnnouncement} className="rounded-lg border border-ink-700 bg-ink-900 px-3 py-1.5 text-xs text-white disabled:opacity-50">
+                  {isRetryingAnnouncement ? "Retrying…" : "Retry announcement"}
+                </button>
+              )}
+            </div>
+          )}
           <a
             href={getExplorerTxUrl(txSig)}
             target="_blank"
@@ -334,6 +380,9 @@ export function AttestationManager({
             setTxSig(null);
             setRecipientInput("");
             setResolvedStealthAddress(null);
+            setHasAnnouncement(false);
+            setAnnouncementError(null);
+            setPendingAnnouncement(null);
             setFieldValues({});
             setHasExpiry(false);
             setExpiryDateTime("");

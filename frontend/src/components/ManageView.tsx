@@ -27,6 +27,8 @@ import { getCluster } from "../lib/chain";
 import {
   fetchSchemasFromChain,
   fetchIssuedAttestationsFromChain,
+  fetchAttestationFromChain,
+  isVerifiedAttestationRevocationTarget,
 } from "../lib/chainSync";
 import { useIssuedAttestationStore } from "../store/issuedAttestationStore";
 import type { Tab } from "./Layout";
@@ -479,6 +481,10 @@ export function ManageView({ onNavigate, readOnly = false }: ManageViewProps = {
   const [attestationPage, setAttestationPage] = useState(1);
   const [schemaPage, setSchemaPage] = useState(1);
 
+  useEffect(() => {
+    if (readOnly && section === "admin") setSection("schemas");
+  }, [readOnly, section]);
+
   // Schemas this wallet has authority over, sorted newest first
   const mySchemas = useMemo(() => {
     if (!walletAddress) return [];
@@ -601,6 +607,21 @@ export function ManageView({ onNavigate, readOnly = false }: ManageViewProps = {
     async (att: ManagedAttestation) => {
       if (!publicKey || !signTransaction) {
         throw new Error("Connect your wallet to revoke.");
+      }
+      const chainAttestation = await fetchAttestationFromChain(
+        cluster,
+        att.uid,
+        publicKey,
+      );
+      if (!chainAttestation) {
+        throw new Error("Could not verify this attestation on chain. Refresh and try again.");
+      }
+      if (!isVerifiedAttestationRevocationTarget(chainAttestation, {
+        uidHex: att.uidHex,
+        schemaIdHex: att.schemaIdHex,
+        stealthAddressHashHex: bytesToHex(att.stealthAddressHash),
+      }, publicKey)) {
+        throw new Error("The on-chain attestation no longer matches this row. Refresh before revoking.");
       }
       await invokeRevokeAttestation({
         revoker: publicKey,
@@ -727,9 +748,7 @@ export function ManageView({ onNavigate, readOnly = false }: ManageViewProps = {
 
       {/* Section tabs */}
       <div className="flex flex-wrap gap-2">
-        {/* "admin" tab temporarily hidden; restore with
-            ...(readOnly ? [] : ["admin" as const]) to bring it back. */}
-        {(["schemas", "attestations"] as const).map((s) => (
+        {(["schemas", "attestations", ...(!readOnly ? ["admin" as const] : [])] as const).map((s) => (
           <button
             key={s}
             type="button"
@@ -740,9 +759,9 @@ export function ManageView({ onNavigate, readOnly = false }: ManageViewProps = {
                 : "bg-ink-900 border border-ink-700 text-mist hover:text-white"
             }`}
           >
-            {s === "schemas" ? "My Schemas" : "Attestations Issued"}
+            {s === "schemas" ? "My Schemas" : s === "attestations" ? "Attestations Issued" : "Admin"}
             <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${section === s ? "bg-white/20" : "bg-ink-700"}`}>
-              {s === "schemas" ? mySchemas.length : attestations.length}
+              {s === "schemas" ? mySchemas.length : s === "attestations" ? attestations.length : "⚙"}
             </span>
           </button>
         ))}
@@ -903,7 +922,7 @@ export function ManageView({ onNavigate, readOnly = false }: ManageViewProps = {
       )}
 
       {/* ── Admin section ── */}
-      {section === "admin" && (
+      {section === "admin" && !readOnly && (
         <div className="space-y-8">
           <AdminPanel />
           <div className="border-t border-ink-800 pt-6">

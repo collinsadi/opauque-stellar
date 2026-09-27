@@ -7,6 +7,7 @@
  */
 
 import { useState, useId } from "react";
+import { StrKey } from "@stellar/stellar-sdk";
 import { useWallet } from "../hooks/useWallet";
 import {
   fieldDefsToString,
@@ -36,7 +37,7 @@ const FIELD_TYPES: FieldType[] = [
   "pubkey",
 ];
 
-type ResolverType = "none" | "whitelist" | "payment" | "nft" | "custom";
+type ResolverType = "none" | "custom";
 
 const RESOLVER_OPTIONS: {
   value: ResolverType;
@@ -47,21 +48,6 @@ const RESOLVER_OPTIONS: {
     value: "none",
     label: "No resolver",
     description: "Anyone with authority can attest",
-  },
-  {
-    value: "whitelist",
-    label: "Whitelist resolver",
-    description: "Only approved wallets can issue",
-  },
-  {
-    value: "payment",
-    label: "Payment resolver",
-    description: "Issuers pay a fee per attestation",
-  },
-  {
-    value: "nft",
-    label: "NFT Gate resolver",
-    description: "Recipient must hold a collection NFT",
   },
   {
     value: "custom",
@@ -97,11 +83,14 @@ export function SchemaStudio() {
   const fieldDefsString = fieldDefsToString(fields);
   const nameValid = name.trim().length > 0 && name.length <= 64;
   const fieldDefsValid = fieldDefsString.length <= 256;
+  const customResolverValid =
+    resolverType !== "custom" || StrKey.isValidContract(customResolver.trim());
   const canSubmit =
     walletAddress != null &&
     publicKey != null &&
     nameValid &&
     fieldDefsValid &&
+    customResolverValid &&
     !isSubmitting;
 
   const addField = () => {
@@ -225,6 +214,7 @@ export function SchemaStudio() {
           <p className="text-mist text-sm mt-1">
             <strong className="text-white">{name}</strong> is now live on-chain.
           </p>
+          <p className="text-xs text-mist mt-2">Resolver: {customResolver.trim() && resolverType === "custom" ? <code className="break-all text-white">{customResolver.trim()}</code> : "None"}</p>
           <a
             href={getExplorerTxUrl(txSig)}
             target="_blank"
@@ -429,11 +419,16 @@ export function SchemaStudio() {
         {resolverType === "custom" && (
           <input
             type="text"
-            placeholder="Resolver program ID (base58)"
+            placeholder="Soroban contract ID (C…)"
             value={customResolver}
             onChange={(e) => setCustomResolver(e.target.value)}
             className="w-full rounded-xl border border-ink-700 bg-ink-900 px-4 py-3 text-white placeholder-ink-500 focus:outline-none focus:border-white text-sm font-mono"
           />
+        )}
+        {resolverType === "custom" && customResolver.trim() && !customResolverValid && (
+          <p className="text-xs text-neutral-300" role="alert">
+            Enter a valid Stellar Soroban contract ID beginning with C.
+          </p>
         )}
       </section>
 
