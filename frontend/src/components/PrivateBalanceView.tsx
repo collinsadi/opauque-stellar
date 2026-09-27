@@ -54,6 +54,7 @@ import { getNativeToken } from "../lib/tokens";
 import type { TokenInfo } from "../lib/tokens";
 import { ExplorerLink } from "./ExplorerLink";
 import { PrivacyWarningCallout } from "./PrivacyWarningCallout";
+import { UnscannedRangeNotice } from "./UnscannedRangeNotice";
 import { SCANNER_PRIVACY_WARNING } from "../lib/privacyThreatModel";
 import {
   ghostAnnouncementEntryKey,
@@ -1185,6 +1186,7 @@ export function PrivateBalanceView() {
             </div>
           )}
         </div>
+        <UnscannedRangeNotice range={scanner.progress.unscannedRange} className="mt-3" />
       </div>
 
       {claimError && (

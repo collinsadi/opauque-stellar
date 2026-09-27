@@ -23,7 +23,9 @@ import {
   clearSyncState,
   putAnnouncements,
   clearClusterCache,
+  recordUnscannedRange,
   type CachedAnnouncement,
+  type UnscannedRange,
 } from "../lib/opaqueCache";
 import { getSorobanServer } from "../lib/stellar";
 import {
@@ -53,7 +55,18 @@ export type ScanProgress = {
   toBlock: bigint;
   currentBlock: bigint;
   error: string | null;
+  /**
+   * Ledgers in the requested scan range that could not be read because the
+   * RPC no longer retains them. Payments announced there are NOT reflected in
+   * `announcements`; the UI must tell the user. `null` when coverage is complete.
+   */
+  unscannedRange: UnscannedRange | null;
 };
+
+export type { UnscannedRange };
+
+/** Called when part of the requested range lies outside RPC retention and is skipped. */
+export type OnUnscannedRange = (range: UnscannedRange) => void | Promise<void>;
 
 export type UseScannerOptions = {
   cluster: StellarNetwork | null;
@@ -210,6 +223,7 @@ async function fetchPage(
   announcerAddress: string,
   range: PageRange,
   cluster: StellarNetwork,
+  onUnscanned?: OnUnscannedRange,
 ): Promise<{ from: bigint; to: bigint; logs: CachedAnnouncement[] }> {
   const getEventsArgs = {
     startLedger: Number(range.from),
@@ -238,6 +252,12 @@ async function fetchPage(
     // bound it reports.
     const oldest = parseOldestLedgerFromRangeError(err);
     if (oldest != null && Number(range.from) < oldest) {
+      // Ledgers [range.from, oldest - 1] are gone; report them rather than
+      // pretending this page was fully scanned.
+      await onUnscanned?.({
+        fromLedger: Number(range.from),
+        toLedger: Math.min(oldest - 1, Number(range.to)),
+      });
       getEventsArgs.startLedger = oldest;
       response = await publicClient.getEvents(getEventsArgs);
     } else {
@@ -255,6 +275,10 @@ async function fetchPage(
  * buffered and flushed to `onChunk` strictly in ascending range order, so
  * downstream consumers (cache writes, sync-state, progress) see identical
  * results to the previous fully-sequential implementation.
+ *
+ * Any part of the range older than the RPC retention window cannot be read.
+ * It is skipped, and reported through `onUnscanned` before any chunk is
+ * delivered, so callers can persist the gap before advancing their cursor.
  */
 export async function fetchLogsAdaptive(
   announcerAddress: string,
@@ -263,13 +287,16 @@ export async function fetchLogsAdaptive(
   _cluster: StellarNetwork,
   onChunk: (from: bigint, to: bigint, logs: CachedAnnouncement[]) => Promise<void>,
   concurrency: number = DEFAULT_FETCH_CONCURRENCY,
+  onUnscanned?: OnUnscannedRange,
 ): Promise<void> {
   const publicClient = getSorobanServer();
   let effectiveFrom = fromBlock;
 
   // Soroban RPC only retains a sliding window of ledgers. Asking for events
   // from a startLedger older than the oldest retained ledger fails with
-  // -32600, so clamp the start to the oldest retained ledger and proceed.
+  // -32600, so clamp the start to the oldest retained ledger and proceed,
+  // reporting the skipped ledgers so the user is told what was not scanned.
+  let clampedTo: bigint | null = null;
   try {
     const health = await publicClient.getHealth();
     const oldest = BigInt(health.oldestLedger);
@@ -278,10 +305,16 @@ export async function fetchLogsAdaptive(
         "[useScanner] startLedger below RPC retention window, clamping",
         { requested: String(effectiveFrom), oldestLedger: String(oldest) },
       );
+      clampedTo = oldest;
       effectiveFrom = oldest;
     }
   } catch {
     // Health unavailable, proceed with the requested start ledger.
+  }
+
+  if (clampedTo != null && onUnscanned && fromBlock <= toBlock) {
+    const lastSkipped = clampedTo - 1n < toBlock ? clampedTo - 1n : toBlock;
+    await onUnscanned({ fromLedger: Number(fromBlock), toLedger: Number(lastSkipped) });
   }
 
   if (effectiveFrom > toBlock) return;
@@ -309,7 +342,7 @@ export async function fetchLogsAdaptive(
       if (index >= ranges.length) return;
       nextToDispatch += 1;
       try {
-        const result = await fetchPage(publicClient, announcerAddress, ranges[index], _cluster);
+        const result = await fetchPage(publicClient, announcerAddress, ranges[index], _cluster, onUnscanned);
         results.set(index, result);
         // Only the worker that completes the current in-order chunk needs to
         // drain; others just buffer their result and return to pick up more work.
@@ -411,6 +444,7 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
     toBlock: 0n,
     currentBlock: 0n,
     error: null,
+    unscannedRange: null,
   });
   const [isBackfilling, setIsBackfilling] = useState(false);
   const refreshKeyRef = useRef(0);
@@ -446,7 +480,12 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
             message: cacheEmpty ? `Optimizing Vault… [${percent}%]` : `Syncing… ${percent}%`,
             currentBlock: end,
           }));
-        }
+        },
+        DEFAULT_FETCH_CONCURRENCY,
+        async (range) => {
+          const merged = await recordUnscannedRange(cluster!, range);
+          setProgress((p: ScanProgress) => ({ ...p, unscannedRange: merged }));
+        },
       );
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- opts only appears in type annotations
@@ -463,6 +502,8 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
 
       if (clearCache) {
         await clearClusterCache(cluster);
+        // A full rescan re-evaluates retention coverage from scratch.
+        await clearSyncState(cluster);
         setAnnouncements([]);
       }
 
@@ -471,6 +512,10 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
       const cached = await getAnnouncementsForCluster(cluster);
       const sync = await getSyncState(cluster);
       const lastScanned = sync?.lastScannedSlot ?? null;
+      // Surface a previously recorded retention gap even when this run is a
+      // no-op incremental sync; those ledgers are still unscanned.
+      const knownUnscanned = sync?.unscannedRange ?? null;
+      setProgress((p: ScanProgress) => ({ ...p, unscannedRange: knownUnscanned }));
       // Gap detection: ensure cached announcements cover up to lastScannedSlot
       if (cached.length > 0 && lastScanned != null) {
         const maxCachedSlot = Math.max(...cached.map((a) => a.slot));
