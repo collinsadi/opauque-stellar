@@ -268,6 +268,39 @@ async function fetchPage(
   return { from: range.from, to: range.to, logs: mapAnnouncementEvents(response.events, cluster) };
 }
 
+// Views may request the same ledger page during a tab transition. Keep one
+// in-flight Soroban request per chain/contract/range and fan retention gaps
+// out to every scanner consumer.
+type SharedPageRequest = {
+  promise: ReturnType<typeof fetchPage>;
+  listeners: Set<OnUnscannedRange>;
+};
+const sharedPageRequests = new Map<string, SharedPageRequest>();
+
+function fetchPageShared(
+  publicClient: ReturnType<typeof getSorobanServer>,
+  announcerAddress: string,
+  range: PageRange,
+  cluster: StellarNetwork,
+  onUnscanned?: OnUnscannedRange,
+): ReturnType<typeof fetchPage> {
+  const key = `${cluster}:${announcerAddress}:${range.from}:${range.to}`;
+  const existing = sharedPageRequests.get(key);
+  if (existing) {
+    if (onUnscanned) existing.listeners.add(onUnscanned);
+    return existing.promise;
+  }
+  const listeners = new Set(onUnscanned ? [onUnscanned] : []);
+  const promise = fetchPage(publicClient, announcerAddress, range, cluster, async (gap) => {
+    await Promise.all([...listeners].map((listener) => listener(gap)));
+  }).finally(() => {
+    sharedPageRequests.delete(key);
+  });
+  const request: SharedPageRequest = { promise, listeners };
+  sharedPageRequests.set(key, request);
+  return request.promise;
+}
+
 /**
  * Fetches announcement pages with bounded concurrency while preserving
  * in-order delivery to `onChunk` (#603). Ranges are dispatched up to
@@ -342,7 +375,7 @@ export async function fetchLogsAdaptive(
       if (index >= ranges.length) return;
       nextToDispatch += 1;
       try {
-        const result = await fetchPage(publicClient, announcerAddress, ranges[index], _cluster, onUnscanned);
+        const result = await fetchPageShared(publicClient, announcerAddress, ranges[index], _cluster, onUnscanned);
         results.set(index, result);
         // Only the worker that completes the current in-order chunk needs to
         // drain; others just buffer their result and return to pick up more work.

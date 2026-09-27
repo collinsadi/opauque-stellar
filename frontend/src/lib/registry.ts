@@ -33,14 +33,17 @@ export async function resolveMetaAddress(address: string): Promise<Hex | null> {
       .build();
     tx = await server.prepareTransaction(tx);
     const sim = await server.simulateTransaction(tx);
-    if (!("result" in sim) || !sim.result) return null;
+    if (!("result" in sim) || !sim.result) {
+      if ("error" in sim) throw new Error(`Registry lookup failed: ${sim.error}`);
+      return null;
+    }
     const retval = sim.result.retval;
     if (!retval) return null;
     const bytes = scValToBytes(retval);
     if (!bytes || bytes.length !== 66) return null;
     return ("0x" + bytesToHex(bytes)) as Hex;
-  } catch {
-    return null;
+  } catch (error) {
+    throw error instanceof Error ? error : new Error("Registry lookup failed");
   }
 }
 
@@ -66,15 +69,27 @@ function scValToBytes(val: unknown): Uint8Array | null {
 declare global {
   interface Window {
     __OPAQUE_E2E_REGISTERED_META__?: Hex;
+    __OPAQUE_E2E_REGISTRY_STATE__?: "unregistered" | "error";
   }
 }
 
-export async function isRegistered(address: string): Promise<boolean> {
+export async function isRegistered(address: string, expectedMetaAddress?: Hex | null): Promise<boolean> {
+  if (typeof window !== "undefined" && window.__OPAQUE_E2E_REGISTRY_STATE__ === "error") {
+    throw new Error("Registry is temporarily unavailable (E2E fixture).");
+  }
+  if (typeof window !== "undefined" && window.__OPAQUE_E2E_REGISTRY_STATE__ === "unregistered") return false;
   if (typeof window !== "undefined" && window.__OPAQUE_E2E_REGISTERED_META__) {
+    if (expectedMetaAddress && window.__OPAQUE_E2E_REGISTERED_META__.toLowerCase() !== expectedMetaAddress.toLowerCase()) {
+      throw new Error("The registered meta-address does not match the keys derived for this wallet.");
+    }
     return true;
   }
   const meta = await resolveMetaAddress(address);
-  return meta != null && meta.length === 2 + 66 * 2;
+  if (!meta || meta.length !== 2 + 66 * 2) return false;
+  if (expectedMetaAddress && meta.toLowerCase() !== expectedMetaAddress.toLowerCase()) {
+    throw new Error("The registered meta-address does not match the keys derived for this wallet.");
+  }
+  return true;
 }
 
 export function getRegistryContractId(): string {

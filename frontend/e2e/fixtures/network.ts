@@ -92,6 +92,9 @@ export async function mockHorizonAccount(
  * registration/send flows to fail cleanly rather than hang.
  */
 export async function mockSorobanRpcNotRegistered(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    (window as unknown as { __OPAQUE_E2E_REGISTRY_STATE__: string }).__OPAQUE_E2E_REGISTRY_STATE__ = "unregistered";
+  });
   await page.route(`https://${SOROBAN_HOST}/`, async (route) => {
     const body = route.request().postDataJSON() as { method?: string; id?: number | string };
     const id = body?.id ?? 1;
@@ -116,5 +119,12 @@ export async function mockSorobanRpcNotRegistered(page: Page): Promise<void> {
         error: { code: -32600, message: "account not found (mocked, E2E fixture)" },
       }),
     });
+  });
+}
+
+/** E2E state for a temporary registry RPC outage, kept separate from a real empty registry result. */
+export async function mockSorobanRpcUnavailable(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    (window as unknown as { __OPAQUE_E2E_REGISTRY_STATE__: string }).__OPAQUE_E2E_REGISTRY_STATE__ = "error";
   });
 }

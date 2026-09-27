@@ -30,7 +30,7 @@ type KeysState = {
 
 type KeysContextValue = KeysState & {
   setFromSignature: (signatureHex: Hex) => void;
-  clearKeys: () => void;
+  clearKeys: (options?: { preserveSession?: boolean }) => void;
   /** Get master keys for scanner/spender; only available when isSetup. */
   getMasterKeys: () => MasterKeys;
 };
@@ -61,9 +61,9 @@ export function KeysProvider({ children }: { children: ReactNode }) {
     debugLog("🔑 [Opaque] Keys derived, setup complete", { metaAddressHex: metaHex.slice(0, 18) + "…" });
   }, []);
 
-  const clearKeys = useCallback(() => {
+  const clearKeys = useCallback((options?: { preserveSession?: boolean }) => {
     debugLog("🔑 [Opaque] Clearing keys (logout)");
-    clearSignatureSession();
+    if (!options?.preserveSession) clearSignatureSession();
     setState({ stealthMetaAddressHex: null, isSetup: false, masterKeys: null });
   }, []);
 

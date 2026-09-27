@@ -58,4 +58,15 @@ test.describe("Wallet connect + registration", () => {
     // the app doesn't happen to render.
     await expect(page.getByText(/account not found|error|failed/i).first()).toBeVisible({ timeout: 15_000 });
   });
+
+  test("can continue to receive without publishing a registry link", async ({ walletPage: page }) => {
+    await page.goto("/app");
+    await page.getByRole("button", { name: /connect wallet & initialize/i }).click();
+    await expect(page.getByRole("heading", { name: "Registration required" })).toBeVisible({ timeout: 15_000 });
+    await page.getByRole("button", { name: "Continue" }).click();
+    await page.getByRole("button", { name: /generate stealth keys/i }).click();
+    await expect(page.getByRole("button", { name: /^register on testnet$/i })).toBeVisible({ timeout: 10_000 });
+    await page.getByRole("button", { name: /continue without public registration/i }).click();
+    await expect(page.getByRole("button", { name: /receive/i }).first()).toBeVisible();
+  });
 });
