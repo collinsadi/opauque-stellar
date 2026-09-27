@@ -28,6 +28,7 @@ import {
 import { addressToAuthorityBytes } from "../lib/schemaEncoding";
 import { ProofGeneratorModal } from "./ProofGeneratorModal";
 import { FeatureDisabledNotice } from "./FeatureDisabledNotice";
+import { UnscannedRangeNotice } from "./UnscannedRangeNotice";
 import { getFeatureFlags } from "../lib/featureFlags";
 
 // =============================================================================
@@ -438,6 +439,8 @@ export function MyTraitsView({ onNavigate, readOnly = false }: MyTraitsViewProps
 )}
         </div>
       </div>
+
+      <UnscannedRangeNotice range={scanner.progress.unscannedRange} />
 
       {/* Filter tabs */}
       {v2Traits.length > 0 && (

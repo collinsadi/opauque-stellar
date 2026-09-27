@@ -19,9 +19,22 @@ export type CachedAnnouncement = {
   };
 };
 
+/** Inclusive ledger range the scanner could not read (e.g. pruned from RPC retention). */
+export type UnscannedRange = {
+  fromLedger: number;
+  toLedger: number;
+};
+
 export type SyncState = {
   cluster: string;
   lastScannedSlot: number;
+  /**
+   * Ledgers inside the scan range that were never fetched because they fell
+   * outside the RPC retention window. Announcements there are invisible to
+   * this device, so the UI must disclose the gap rather than imply a complete
+   * scan. Persisted so incremental syncs keep reporting it.
+   */
+  unscannedRange?: UnscannedRange | null;
 };
 
 interface OpaqueCacheDBSchema extends DBSchema {
@@ -130,7 +143,32 @@ export async function getSyncState(cluster: string): Promise<SyncState | null> {
 
 export async function setSyncState(cluster: string, lastScannedSlot: number): Promise<void> {
   const db = await getDB();
-  await db.put("syncState", { cluster, lastScannedSlot });
+  // Preserve any recorded unscanned range: advancing the cursor does not make
+  // pruned ledgers readable again.
+  const prev = await db.get("syncState", cluster);
+  await db.put("syncState", { ...prev, cluster, lastScannedSlot });
+}
+
+/**
+ * Merge `range` into the cluster's recorded unscanned range (union of the two
+ * spans). Creates the sync state record if none exists yet.
+ */
+export async function recordUnscannedRange(cluster: string, range: UnscannedRange): Promise<UnscannedRange> {
+  const db = await getDB();
+  const prev = await db.get("syncState", cluster);
+  const existing = prev?.unscannedRange ?? null;
+  const merged: UnscannedRange = existing
+    ? {
+        fromLedger: Math.min(existing.fromLedger, range.fromLedger),
+        toLedger: Math.max(existing.toLedger, range.toLedger),
+      }
+    : range;
+  await db.put("syncState", {
+    cluster,
+    lastScannedSlot: prev?.lastScannedSlot ?? 0,
+    unscannedRange: merged,
+  });
+  return merged;
 }
 
 export async function clearSyncState(cluster: string): Promise<void> {

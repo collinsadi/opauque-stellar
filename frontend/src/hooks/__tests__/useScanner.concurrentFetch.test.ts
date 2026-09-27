@@ -190,6 +190,64 @@ describe("fetchLogsAdaptive concurrency (#603)", () => {
     expect(seen).toEqual([{ from: 5000n }]);
   });
 
+  it("reports ledgers skipped by the retention clamp before delivering any chunk", async () => {
+    getHealthMock.mockResolvedValue({ oldestLedger: "5000" });
+    getEventsMock.mockImplementation(async ({ startLedger }: { startLedger: number }) => ({
+      events: [makeEvent(startLedger)],
+    }));
+
+    const order: string[] = [];
+    const onUnscanned = vi.fn(async () => {
+      order.push("unscanned");
+    });
+    await fetchLogsAdaptive(
+      "CANNOUNCER",
+      100n,
+      6000n,
+      "testnet" as never,
+      async () => {
+        order.push("chunk");
+      },
+      DEFAULT_FETCH_CONCURRENCY,
+      onUnscanned,
+    );
+
+    expect(onUnscanned).toHaveBeenCalledTimes(1);
+    expect(onUnscanned).toHaveBeenCalledWith({ fromLedger: 100, toLedger: 4999 });
+    expect(order).toEqual(["unscanned", "chunk"]);
+  });
+
+  it("caps the reported gap at toBlock when the whole range is pruned", async () => {
+    getHealthMock.mockResolvedValue({ oldestLedger: "5000" });
+    const onUnscanned = vi.fn();
+    const onChunk = vi.fn();
+    await fetchLogsAdaptive("CANNOUNCER", 100n, 2000n, "testnet" as never, onChunk, 2, onUnscanned);
+    expect(onUnscanned).toHaveBeenCalledWith({ fromLedger: 100, toLedger: 2000 });
+    expect(onChunk).not.toHaveBeenCalled();
+  });
+
+  it("does not report a gap when the range is fully retained", async () => {
+    getHealthMock.mockResolvedValue({ oldestLedger: "50" });
+    getEventsMock.mockResolvedValue({ events: [] });
+    const onUnscanned = vi.fn();
+    await fetchLogsAdaptive("CANNOUNCER", 100n, 2000n, "testnet" as never, async () => {}, 2, onUnscanned);
+    expect(onUnscanned).not.toHaveBeenCalled();
+  });
+
+  it("reports ledgers skipped when getEvents rejects a start below a slid window", async () => {
+    // getHealth says 0 is retained, but the window slides before getEvents.
+    getHealthMock.mockResolvedValue({ oldestLedger: "0" });
+    getEventsMock.mockImplementation(async ({ startLedger }: { startLedger: number }) => {
+      if (startLedger < 300) {
+        throw new Error("startLedger must be within the ledger range: 300 - 9000");
+      }
+      return { events: [] };
+    });
+    const onUnscanned = vi.fn();
+    await fetchLogsAdaptive("CANNOUNCER", 100n, 2000n, "testnet" as never, async () => {}, 1, onUnscanned);
+    expect(onUnscanned).toHaveBeenCalledWith({ fromLedger: 100, toLedger: 299 });
+  });
+
   it("does nothing when fromBlock is already past toBlock after clamping", async () => {
     getHealthMock.mockResolvedValue({ oldestLedger: "0" });
     const onChunk = vi.fn();
