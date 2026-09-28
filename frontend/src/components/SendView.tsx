@@ -27,6 +27,7 @@ import {
   parseXlmToStroops,
   u64ToScVal,
 } from "../lib/stellar";
+import { parseHorizonBalanceToStroops } from "../lib/decimalParser";
 import { deployedAddresses } from "../contracts/deployedAddresses";
 import { ProtocolStepper } from "./ProtocolStepper";
 import type { ProtocolStep } from "./ProtocolStepper";
@@ -110,11 +111,7 @@ export function SendView() {
       try {
         const account = await getHorizonServer().loadAccount(address);
         const native = account.balances.find((b) => b.asset_type === "native");
-        const stroops = BigInt(
-          Math.round(
-            parseFloat((native as { balance: string })?.balance ?? "0") * 1e7,
-          ),
-        );
+        const stroops = parseHorizonBalanceToStroops((native as { balance: string })?.balance ?? "0");
         if (!cancelled) setActiveBalance(stroops);
       } catch {
         if (!cancelled) setActiveBalance(null);
@@ -129,9 +126,12 @@ export function SendView() {
 
   const maxSendableBalance = useMemo(() => {
     if (activeBalance == null) return null;
-    return activeBalance > STROOP_FEE_BUFFER
-      ? activeBalance - STROOP_FEE_BUFFER
-      : 0n;
+    const BASE_RESERVE_STROOPS = 5_000_000n;
+    const SUBENTRY_RESERVE_STROOPS = 5_000_000n;
+    const MIN_TRANSACTION_FEE = 100n;
+    const estimatedSubentries = 2n;
+    const totalReserve = BASE_RESERVE_STROOPS + (estimatedSubentries * SUBENTRY_RESERVE_STROOPS) + MIN_TRANSACTION_FEE;
+    return activeBalance > totalReserve ? activeBalance - totalReserve : 0n;
   }, [activeBalance]);
 
   const inputStroops = useMemo(() => {
@@ -450,9 +450,14 @@ export function SendView() {
           {balanceLoading ? (
             <p className="text-xs text-neutral-500 mt-1">Loading balance…</p>
           ) : formattedMaxBalance != null ? (
-            <p className="text-xs text-neutral-500 mt-1">
-              Available: {formattedMaxBalance} XLM
-            </p>
+            <>
+              <p className="text-xs text-neutral-500 mt-1">
+                Available: {formattedMaxBalance} XLM
+              </p>
+              <p className="text-xs text-neutral-400 mt-1">
+                New stealth accounts require at least 1 XLM to be created.
+              </p>
+            </>
           ) : null}
         </div>
 
