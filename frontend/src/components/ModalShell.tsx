@@ -32,11 +32,11 @@ export function ModalShell({
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !busy) onClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, onClose, busy]);
 
   if (!open) return null;
 
@@ -47,7 +47,7 @@ export function ModalShell({
       aria-modal="true"
       aria-labelledby={title != null ? titleId : undefined}
       aria-describedby={description != null ? descId : undefined}
-      onClick={() => closeOnBackdrop && onClose()}
+      onClick={() => closeOnBackdrop && !busy && onClose()}
     >
       <div
         ref={containerRef}
@@ -97,6 +97,12 @@ export function ModalShell({
             </div>
           </div>
         )}
+
+        {busy ? (
+          <p className="px-6 pt-4 text-sm text-mist" role="status" aria-live="polite">
+            This dialog will remain open while the current transaction finishes.
+          </p>
+        ) : null}
 
         <div className="px-6 py-5">{children}</div>
       </div>
