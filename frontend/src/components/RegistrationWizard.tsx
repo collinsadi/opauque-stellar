@@ -291,6 +291,21 @@ export function RegistrationWizard({ onComplete }: RegistrationWizardProps) {
                   Publish your Stealth Meta-Address on-chain so others can send to you by your Stellar
                   address.
                 </p>
+                <div className="rounded-lg border border-ink-700 bg-ink-950/50 p-3 space-y-2">
+                  <p className="text-sm text-mist">
+                    You can keep the meta-address private from the public registry and share it directly.
+                    This avoids publicly linking it to your Stellar account, but anyone you share it with
+                    can associate the two addresses.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={onComplete}
+                    disabled={registerInProgress}
+                    className="w-full py-2.5 px-4 rounded-lg text-sm font-medium border border-ink-600 text-mist hover:text-white disabled:opacity-50"
+                  >
+                    Continue without public registration
+                  </button>
+                </div>
                 {error && <p className="text-sm text-neutral-400">{error}</p>}
                 <div className="space-y-2">
                   {progressSteps.map(({ label, active, done }) => (

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   getAddress,
   isAllowed,
@@ -56,6 +56,30 @@ export function StellarWalletProviders({ children }: { children: ReactNode }) {
   const [connecting, setConnecting] = useState(false);
   const [connectionError, setConnectionError] = useState<WalletConnectionErrorDetails | null>(null);
   const connectInFlightRef = useRef(false);
+
+  // Restore an already-authorized Freighter session without prompting. Polling
+  // detects account changes made in the extension while the app remains open.
+  useEffect(() => {
+    let active = true;
+    const syncAddress = async () => {
+      try {
+        const address = await tryRestoreFreighterSession();
+        if (!active) return;
+        if (address) {
+          setPublicKey((current) => current === address ? current : address);
+          setConnected(true);
+        } else if (connected) {
+          setPublicKey(null);
+          setConnected(false);
+        }
+      } catch {
+        // Keep the current session on transient extension errors.
+      }
+    };
+    void syncAddress();
+    const timer = window.setInterval(() => void syncAddress(), 1500);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [connected]);
 
   const connect = useCallback(async (): Promise<string> => {
     setConnectionError(null);

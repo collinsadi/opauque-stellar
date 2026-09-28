@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, lazy, Suspense } from "react";
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
 import { useLocation, useNavigate } from "react-router-dom";
 import { MotionConfig } from "framer-motion";
@@ -43,6 +43,7 @@ import { SessionTimeoutProvider } from "./components/security/SessionTimeoutProv
 import { useHistoryReconciliation } from "./hooks/useHistoryReconciliation";
 import { startPendingTxTracking } from "./lib/txTracking";
 import { horizonTxStatusFetcher } from "./lib/chainHistoryFetchers";
+import { loadSignatureSession } from "./lib/signatureSession";
 
 const SchemaStudio = lazy(() => import("./components/SchemaStudio").then((m) => ({ default: m.SchemaStudio })));
 const AttestationManager = lazy(() => import("./components/AttestationManager").then((m) => ({ default: m.AttestationManager })));
@@ -74,12 +75,31 @@ function AppContent() {
   const [registrationJustCompleted, setRegistrationJustCompleted] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
-  useKeys();
   const { isConnected, address, cluster, isConnecting, connect, disconnect } = useWallet();
-  const { isSetup, clearKeys } = useKeys();
-  const { isRegistered, isLoading: isRegistrationCheckLoading } = useRegistrationStatus(address, cluster);
+  const { isSetup, clearKeys, setFromSignature, stealthMetaAddressHex } = useKeys();
+  const { isRegistered, isLoading: isRegistrationCheckLoading, error: registrationError, retry: retryRegistrationCheck } = useRegistrationStatus(address, cluster, stealthMetaAddressHex);
   const clearVault = useVaultStore((s) => s.clear);
   const [showDisconnectModal, setShowDisconnectModal] = useState(false);
+  const activeWalletRef = useRef(address);
+
+  useEffect(() => {
+    if (activeWalletRef.current === address) return;
+    activeWalletRef.current = address;
+    setRegistrationJustCompleted(false);
+    clearKeys({ preserveSession: true });
+    if (!address || cluster == null) return;
+    let cancelled = false;
+    void loadSignatureSession({
+      address,
+      cluster,
+      message: "Sign this message to derive your Opaque Cash stealth keys on Stellar. This is not a transaction and does not move funds.",
+    }).then((signature) => {
+      if (!cancelled && signature) setFromSignature(signature);
+    }).catch(() => {
+      // A missing/expired remembered signature falls back to normal setup.
+    });
+    return () => { cancelled = true; };
+  }, [address, cluster, clearKeys, setFromSignature]);
 
   useGhostAddressPersistence();
 
@@ -268,6 +288,19 @@ function AppContent() {
         <div className="flex flex-col items-center justify-center min-h-[40vh] gap-4">
           <span className="h-7 w-7 animate-spin rounded-full border-2 border-ink-600 border-t-white" aria-hidden />
           <p className="text-sm text-mist">Authenticating with protocol…</p>
+        </div>
+      </Layout>
+    );
+  }
+
+  if (registrationError && address && cluster != null && !isRegistered) {
+    return (
+      <Layout tab="dashboard" onTabChange={handleTab} isConnected={isConnected} address={address ?? undefined}
+        isConnecting={isConnecting} onConnect={handleConnect} onDisconnect={handleDisconnect} protocolLog={protocolLogPanel}>
+        <div role="alert" className="card max-w-lg mx-auto space-y-3">
+          <h2 className="text-lg font-semibold text-white">Registration status unavailable</h2>
+          <p className="text-sm text-mist">The registry could not be reached, so onboarding is paused. Try again when the network is available.</p>
+          <button type="button" onClick={retryRegistrationCheck} className="btn-primary px-4 py-2 rounded-lg text-sm">Retry registry check</button>
         </div>
       </Layout>
     );
