@@ -30,6 +30,12 @@ import { getSorobanServer } from "./stellar";
 import { isSimulationSuccess } from "./sorobanErrors";
 import type { SchemaV2 } from "./schema";
 import type { IssuedAttestation } from "../store/issuedAttestationStore";
+import {
+  selectAttestationUidForTransaction,
+  type AttestationChainRecord,
+} from "./attestationChainUtils";
+export { isVerifiedAttestationRevocationTarget, selectAttestationUidForTransaction } from "./attestationChainUtils";
+export type { AttestationChainRecord } from "./attestationChainUtils";
 
 // =============================================================================
 // Byte / hex helpers
@@ -95,10 +101,11 @@ function startLedgerFor(cluster: StellarNetwork): number {
 async function scanContractEvents(
   cluster: StellarNetwork,
   contractId: string,
+  fromLedger?: number,
 ): Promise<DecodedEvent[]> {
   if (!contractId) return [];
   const server = getSorobanServer();
-  let from = startLedgerFor(cluster);
+  let from = fromLedger ?? startLedgerFor(cluster);
 
   // Clamp to the RPC retention window so a startLedger below it does not 400.
   try {
@@ -370,4 +377,59 @@ export async function fetchIssuedAttestationsFromChain(
   }
 
   return out;
+}
+
+/** Resolve the UID emitted by the confirmed AttestationCreated event for a transaction. */
+export async function fetchAttestationUidForTransaction(
+  cluster: StellarNetwork,
+  txHash: string,
+): Promise<Uint8Array | null> {
+  if (!getManifestForNetwork(cluster) || !txHash) return null;
+  const server = getSorobanServer();
+  let transactionLedger: number | undefined;
+  try {
+    const transaction = await server.getTransaction(txHash);
+    if (transaction.status === "SUCCESS") transactionLedger = Number(transaction.ledger);
+  } catch {
+    // Fall back to the manifest start ledger if the RPC cannot load the receipt.
+  }
+  const events = await scanContractEvents(cluster, deployedAddresses.attestationEngineV2, transactionLedger);
+  return selectAttestationUidForTransaction(events, txHash);
+}
+
+/** Read an attestation directly from chain before performing a privileged action. */
+export async function fetchAttestationFromChain(
+  cluster: StellarNetwork,
+  uid: Uint8Array,
+  sourcePublicKey?: string | null,
+): Promise<AttestationChainRecord | null> {
+  if (!getManifestForNetwork(cluster) || uid.length !== 32) return null;
+  const sourceKey = readSourceKey(cluster, sourcePublicKey);
+  if (!sourceKey) return null;
+  const raw = (await readContract(
+    deployedAddresses.attestationEngineV2,
+    "get_attestation",
+    uid,
+    sourceKey,
+  )) as Record<string, unknown> | null;
+  if (!raw) return null;
+  const onChainUid = toBytes(raw.uid);
+  const schemaId = toBytes(raw.schema_id);
+  const stealthHash = toBytes(raw.stealth_address_hash);
+  const issuer = raw.issuer;
+  if (
+    onChainUid.length !== 32 ||
+    schemaId.length !== 32 ||
+    stealthHash.length !== 32 ||
+    typeof issuer !== "string"
+  ) {
+    return null;
+  }
+  return {
+    uidHex: hex0x(onChainUid),
+    issuer,
+    schemaIdHex: hex0x(schemaId),
+    stealthAddressHashHex: hex0x(stealthHash),
+    revocationLedger: toNum(raw.revocation_ledger),
+  };
 }
