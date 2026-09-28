@@ -28,6 +28,7 @@ import {
   TransactionRejectedError,
   TransactionTimeoutError,
 } from "./errors";
+import { NetworkValidationService } from "../services/networkValidation";
 import {
   getDefaultRetryPolicy,
   extractStatus,
@@ -303,6 +304,9 @@ export async function invokeContractMethod(opts: {
       }
     }
 
+    // Pre-sign network validation (threat model M8)
+    await NetworkValidationService.requireValidNetwork();
+
     const signedXdr = await opts.signTransaction(tx.toXDR());
     const signed = TransactionBuilder.fromXDR(signedXdr, passphrase);
     const send = await server.sendTransaction(signed);
@@ -559,6 +563,8 @@ export async function sendNativePayment(opts: {
   let tx = builder.setTimeout(180).build();
 
   if (opts.signTransaction) {
+    // Pre-sign network validation (threat model M8)
+    await NetworkValidationService.requireValidNetwork();
     const server = getSorobanServer();
     const prepared = await server.prepareTransaction(tx);
     const signedXdr = await opts.signTransaction(prepared.toXDR());

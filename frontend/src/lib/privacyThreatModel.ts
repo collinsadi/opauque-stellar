@@ -96,7 +96,7 @@ export const MITIGATIONS: ThreatMitigation[] = [
     id: "M8",
     threat: "Wrong network signing",
     mitigation: "Pre-sign network validation",
-    implementation: "networkValidation.ts, NetworkMismatchModal.tsx",
+    implementation: "networkValidation.ts → stellar.ts:invokeContractMethod, stellar.ts:sendNativePayment, SendView.tsx",
   },
   {
     id: "M9",

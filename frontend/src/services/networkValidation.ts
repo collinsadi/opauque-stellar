@@ -26,22 +26,45 @@ export class NetworkValidationService {
   }
 
   /**
+   * Canonical mapping from Freighter's reported network identifiers to the
+   * application's internal names. Freighter may report "PUBLIC" for mainnet
+   * and "TESTNET" for testnet, while the app uses "mainnet"/"testnet".
+   */
+  private static readonly NETWORK_ALIASES: Record<string, string> = {
+    public: "mainnet",
+    "public network": "mainnet",
+    "test net": "testnet",
+    futurenet: "futurenet",
+    standalone: "local",
+    "standalone network": "local",
+  };
+
+  private static normalizeNetworkName(raw: string): string {
+    const lower = raw.toLowerCase().trim();
+    // Direct match
+    if (NetworkValidationService.NETWORK_ALIASES[lower]) {
+      return NetworkValidationService.NETWORK_ALIASES[lower];
+    }
+    // Freighter sometimes returns long passphrase-style names; check for keywords
+    if (lower.includes("public")) return "mainnet";
+    if (lower.includes("testnet") || lower.includes("test net")) return "testnet";
+    if (lower.includes("futurenet") || lower.includes("future")) return "futurenet";
+    if (lower.includes("standalone") || lower.includes("local")) return "local";
+    return lower;
+  }
+
+  /**
    * Verifies if the wallet network matches the application's configured expected network.
    */
   static async validateWalletContext(): Promise<{ valid: boolean; expected: string; actual: string }> {
     const expected = useSecurityStore.getState().expectedNetwork;
-    const actual = await this.getWalletNetwork();
-    
-    // Some normalization for local networks
-    const isLocalMatch = expected === "local" && (actual.includes("local") || actual.includes("standalone"));
-    
-    // Testnet can sometimes be TESTNET or testnet, same for others.
-    const isExactMatch = actual.includes(expected);
+    const rawActual = await this.getWalletNetwork();
+    const actual = this.normalizeNetworkName(rawActual);
 
     return {
-      valid: isExactMatch || isLocalMatch,
+      valid: actual === expected,
       expected,
-      actual
+      actual: rawActual,
     };
   }
 

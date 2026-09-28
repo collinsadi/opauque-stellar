@@ -15,7 +15,8 @@ export type DocId =
   | "ghost-threat-model"
   | "payment-link-format"
   | "privacy-pool"
-  | "proof-submission-privacy";
+  | "proof-submission-privacy"
+  | "pool-linkability";
 
 const DOC_PATHS: Record<DocId, string> = {
   "user-recovery": "README.md#honest-trade-offs",
@@ -23,6 +24,7 @@ const DOC_PATHS: Record<DocId, string> = {
   "payment-link-format": "README.md#what-opaque-does",
   "privacy-pool": "README.md#where-the-zero-knowledge-does-the-work",
   "proof-submission-privacy": "docs/PROOF_SUBMISSION_PRIVACY.md",
+  "pool-linkability": "docs/PRIVACY_GUARANTEES.md",
 };
 
 export function getDocUrl(doc: DocId): string {

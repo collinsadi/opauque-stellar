@@ -41,6 +41,7 @@ import {
   decodeWebPaymentLink,
   type Network,
 } from "../lib/paymentLink";
+import { NetworkValidationService } from "../services/networkValidation";
 
 const STROOP_FEE_BUFFER = 100_000n;
 
@@ -284,6 +285,8 @@ export function SendView() {
         .setTimeout(180)
         .build();
       addStep("wait", "Awaiting Freighter signature for the transfer…");
+      // Pre-sign network validation (threat model M8)
+      await NetworkValidationService.requireValidNetwork();
       const signedTransferXdr = await signTransaction(transferTx.toXDR());
       const signedTransfer = TransactionBuilder.fromXDR(
         signedTransferXdr,

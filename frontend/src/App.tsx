@@ -22,6 +22,7 @@ import { useWallet } from "./hooks/useWallet";
 import { useRegistrationStatus } from "./hooks/useRegistrationStatus";
 import { useVaultStore } from "./store/vaultStore";
 import { useGhostAddressStore, useGhostAddressPersistence, clearGhostPassword } from "./store/ghostAddressStore";
+import { useAccountScope } from "./hooks/useAccountScope";
 import { useTxHistoryStore } from "./store/txHistoryStore";
 import { usePoolNoteStore } from "./store/poolNoteStore";
 import { useReputationStore } from "./store/reputationStore";
@@ -102,6 +103,7 @@ function AppContent() {
   }, [address, cluster, clearKeys, setFromSignature]);
 
   useGhostAddressPersistence();
+  useAccountScope();
 
   useEffect(() => {
     useGhostAddressStore.getState().sanitizeGhostAddresses();
@@ -170,15 +172,15 @@ function AppContent() {
     clearKeys();
     clearVault();
     if (fullWipe) {
-      // Clear all persisted stores
-      useTxHistoryStore.getState().clear();
-      usePoolNoteStore.getState().clear();
+      // Clear all persisted stores (all accounts)
+      useTxHistoryStore.getState().clear({ allAccounts: true });
+      usePoolNoteStore.getState().clear({ allAccounts: true });
+      useWatchlistStore.getState().clear({ allAccounts: true });
       useReputationStore.getState().clearTraits();
       useIssuedAttestationStore.setState({ issued: [] });
       useSchemaStore.setState({ schemas: {}, discoveredTraits: {}, attestations: {}, lastScannedSlot: 0 });
       useGhostAnnouncementStore.setState({ keys: {} });
       useGhostAddressStore.getState().setEntries([]);
-      useWatchlistStore.setState({ entries: [] });
       usePendingTxStore.setState({ byHash: {} });
       useSecuritySettingsStore.getState().clearPassphrase();
       clearGhostPassword();

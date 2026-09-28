@@ -23,6 +23,8 @@ export type PoolNote = {
   cluster: string;
   /** Privacy-pool contract this note belongs to. Legacy notes may not have this. */
   poolId?: string;
+  /** Wallet public key that created this note. Legacy notes may not have this. */
+  account?: string;
   /** Deposited value, in stroops, as a decimal string. */
   value: string;
   /** Domain separator the deposit was made under. */
