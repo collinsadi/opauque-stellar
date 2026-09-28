@@ -12,6 +12,7 @@ import {
   downloadBlob,
   poolNoteBackupFilename,
 } from "../lib/poolNoteBackup";
+import { getDocUrl } from "../lib/docsLinks";
 import { deriveDeposit, newNoteSecrets, toHex32, unspentTotal, type PoolNote } from "../lib/poolNotes";
 import {
   invokePoolDeposit,
@@ -58,6 +59,9 @@ import {
 
 const STROOPS_PER_XLM = 10_000_000n;
 const RELAYER_SUBMISSION_POLL_MS = 2_000;
+
+/** Fallback denomination presets when the deployment manifest doesn't specify any. */
+const DEFAULT_DEPOSIT_PRESETS_XLM = [10, 100, 1000, 10000];
 
 function parseXlm(input: string): bigint | null {
   const s = input.trim();
@@ -245,6 +249,15 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
   const clusterNotes = notes.filter((n) => n.cluster === cluster && (!n.poolId || n.poolId === cfg?.poolId));
   const unspent = clusterNotes.filter((n) => !n.spent);
   const selectedRelayerBid = relayerBids.find((bid) => bid.operator === selectedRelayer) ?? null;
+
+  const depositPresets = cfg?.depositPresetsXlm.length ? cfg.depositPresetsXlm : DEFAULT_DEPOSIT_PRESETS_XLM;
+  const isNonPresetAmount = useMemo(() => {
+    const trimmed = amount.trim();
+    if (!trimmed) return false;
+    const parsed = parseFloat(trimmed);
+    if (Number.isNaN(parsed) || parsed <= 0) return false;
+    return !depositPresets.some((p) => p === parsed);
+  }, [amount, depositPresets]);
 
   const refreshChain = useCallback(async () => {
     if (!cfg || !publicKey) return;
@@ -463,6 +476,7 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
       const note: PoolNote = {
         cluster,
         poolId: cfg.poolId,
+        account: publicKey,
         value: value.toString(),
         scope: cfg.scope,
         leafIndex,
@@ -1039,26 +1053,27 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
       {/* Deposit */}
       <div className={card} data-tour="pool-deposit">
         <h2 className="text-sm font-semibold text-white">Deposit</h2>
-        {!!cfg?.depositPresetsXlm.length && (
-          <div className="mt-3 flex flex-wrap gap-2">
-            {cfg.depositPresetsXlm.map((preset) => (
-              <button
-                key={preset}
-                type="button"
-                onClick={() => setAmount(String(preset))}
-                disabled={readOnly || !!busy}
-                aria-pressed={amount === String(preset)}
-                className={`rounded-xl border px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-                  amount === String(preset)
-                    ? "border-glow bg-black/30 text-white"
-                    : "border-ink-700 text-mist hover:border-white/30"
-                }`}
-              >
-                {preset.toLocaleString()} XLM
-              </button>
-            ))}
-          </div>
-        )}
+        <p className="mt-1 text-xs text-mist/60">
+          Pick a common denomination so your deposit blends in with others.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {depositPresets.map((preset) => (
+            <button
+              key={preset}
+              type="button"
+              onClick={() => setAmount(String(preset))}
+              disabled={readOnly || !!busy}
+              aria-pressed={amount === String(preset)}
+              className={`rounded-xl border px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                amount === String(preset)
+                  ? "border-glow bg-black/30 text-white"
+                  : "border-ink-700 text-mist hover:border-white/30"
+              }`}
+            >
+              {preset.toLocaleString()} XLM
+            </button>
+          ))}
+        </div>
         <div className="mt-3 flex flex-col gap-3 sm:flex-row">
           <input
             type="text"
@@ -1078,17 +1093,25 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
             {busy === "Depositing…" ? "Depositing…" : "Deposit"}
           </button>
         </div>
+        {isNonPresetAmount && (
+          <div className="mt-3 rounded-xl border border-amber-400/30 bg-amber-400/10 p-3 text-sm text-amber-100">
+            <strong>Linkability warning:</strong> This amount does not match a common pool
+            denomination. A unique deposit amount makes the deposit–withdrawal pair trivially
+            linkable, undermining your privacy.{" "}
+            <a
+              href={getDocUrl("pool-linkability")}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline hover:no-underline"
+            >
+              Learn more about the threat model.
+            </a>
+          </div>
+        )}
         <p className="mt-2 text-xs text-mist/60">
           A secret note is generated and saved locally. Keep your backup — losing notes loses the
           funds.
         </p>
-        {!!cfg?.depositPresetsXlm.length && (
-          <p className="mt-2 text-xs text-mist/60">
-            Custom amounts are still allowed, but depositing a preset size means your note looks
-            like everyone else's — an unusual amount narrows the set of deposits it could be
-            withdrawn from later, weakening unlinkability.
-          </p>
-        )}
       </div>
 
       {/* Pending Deposits */}

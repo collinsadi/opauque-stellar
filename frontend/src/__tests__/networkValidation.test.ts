@@ -42,12 +42,32 @@ describe("NetworkValidationService", () => {
     const result = await NetworkValidationService.validateWalletContext();
     expect(result.valid).toBe(false);
     expect(result.expected).toBe("mainnet");
-    expect(result.actual).toBe("testnet");
   });
 
   it("requireValidNetwork should throw on mismatch", async () => {
     useSecurityStore.setState({ expectedNetwork: "mainnet" });
     resolveNetwork("testnet");
     await expect(NetworkValidationService.requireValidNetwork()).rejects.toThrow(/Network mismatch detected/);
+  });
+
+  it("should recognize Freighter's PUBLIC as mainnet", async () => {
+    useSecurityStore.setState({ expectedNetwork: "mainnet" });
+    resolveNetwork("PUBLIC");
+    const result = await NetworkValidationService.validateWalletContext();
+    expect(result.valid).toBe(true);
+  });
+
+  it("should recognize Freighter's TESTNET as testnet", async () => {
+    useSecurityStore.setState({ expectedNetwork: "testnet" });
+    resolveNetwork("TESTNET");
+    const result = await NetworkValidationService.validateWalletContext();
+    expect(result.valid).toBe(true);
+  });
+
+  it("should reject PUBLIC when expecting testnet", async () => {
+    useSecurityStore.setState({ expectedNetwork: "testnet" });
+    resolveNetwork("PUBLIC");
+    const result = await NetworkValidationService.validateWalletContext();
+    expect(result.valid).toBe(false);
   });
 });

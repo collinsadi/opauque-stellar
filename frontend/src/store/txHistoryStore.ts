@@ -1,6 +1,6 @@
 /**
- * Per-cluster transaction history (last 50): sent, received, manual ghost discoveries.
- * Stored in localStorage keyed by cluster.
+ * Per-account, per-cluster transaction history (last 50): sent, received, manual ghost discoveries.
+ * Stored in localStorage keyed by `account:cluster`.
  * Token-aware: each entry includes tokenSymbol, tokenAddress, and formatted amount.
  */
 
@@ -57,27 +57,39 @@ export function maskCounterparty(value: string): string {
   return `${v.slice(0, 10)}…${v.slice(-6)}`;
 }
 
+/** Composite key: account:cluster */
+function scopeKey(account: string | null, cluster: string): string {
+  return account ? `${account}:${cluster}` : cluster;
+}
+
 type TxHistoryState = {
   byChain: Record<string, TxHistoryEntry[]>;
+  activeAccount: string | null;
+  setActiveAccount: (account: string | null) => void;
   push: (entry: TxHistoryPushInput) => void;
   getForCluster: (cluster: string) => TxHistoryEntry[];
   /** Replace a cluster's list with a chain-reconciled one (#113). */
   replaceForCluster: (cluster: string, entries: TxHistoryEntry[]) => void;
   /** Update the chain status of every entry carrying `txHash` (#114). */
   setChainStatus: (txHash: string, status: TxHistoryChainStatus) => void;
+  /** Clear history for the active account and cluster. */
   clearForCluster: (cluster: string) => void;
-  clear: () => void;
+  /** Clear all history. Pass `{ allAccounts: true }` to wipe everything. */
+  clear: (opts?: { allAccounts?: boolean }) => void;
 };
 
 export const useTxHistoryStore = create<TxHistoryState>()(
   persist(
     (set, get) => ({
       byChain: {},
+      activeAccount: null,
+
+      setActiveAccount: (account) => set({ activeAccount: account }),
 
       push: (entry) =>
         set((state) => {
-          const cluster = entry.cluster;
-          const list = state.byChain[cluster] ?? [];
+          const key = scopeKey(state.activeAccount, entry.cluster);
+          const list = state.byChain[key] ?? [];
           if (entry.txHash) {
             const existingByTxHash = new Set(
               list.filter((e) => e.txHash).map((e) => e.txHash!),
@@ -89,7 +101,7 @@ export const useTxHistoryStore = create<TxHistoryState>()(
             tokenSymbol: entry.tokenSymbol ?? "XLM",
             tokenAddress: entry.tokenAddress ?? null,
             amount: entry.amount ?? "",
-            id: `tx-${cluster}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+            id: `tx-${key}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
             timestamp: Date.now(),
           };
           const next = [newEntry, ...list];
@@ -98,31 +110,41 @@ export const useTxHistoryStore = create<TxHistoryState>()(
               ? next.slice(0, MAX_ITEMS_PER_CLUSTER)
               : next;
           return {
-            byChain: { ...state.byChain, [cluster]: trimmed },
+            byChain: { ...state.byChain, [key]: trimmed },
           };
         }),
 
       getForCluster: (cluster) => {
-        const byChain = get().byChain;
+        const state = get();
+        const byChain = state.byChain;
         if (byChain == null || typeof byChain !== "object") return [];
-        const list = byChain[cluster];
-        return Array.isArray(list) ? list.slice() : [];
+
+        const key = scopeKey(state.activeAccount, cluster);
+        const scoped = byChain[key];
+        if (Array.isArray(scoped)) return scoped.slice();
+
+        // Fallback: check the legacy unscoped key for backward compat
+        const legacy = byChain[cluster];
+        return Array.isArray(legacy) ? legacy.slice() : [];
       },
 
       replaceForCluster: (cluster, entries) =>
-        set((state) => ({
-          byChain: {
-            ...state.byChain,
-            [cluster]: entries.slice(0, MAX_ITEMS_PER_CLUSTER),
-          },
-        })),
+        set((state) => {
+          const key = scopeKey(state.activeAccount, cluster);
+          return {
+            byChain: {
+              ...state.byChain,
+              [key]: entries.slice(0, MAX_ITEMS_PER_CLUSTER),
+            },
+          };
+        }),
 
       setChainStatus: (txHash, status) =>
         set((state) => {
           let changed = false;
           const byChain: Record<string, TxHistoryEntry[]> = {};
-          for (const [cluster, list] of Object.entries(state.byChain)) {
-            byChain[cluster] = list.map((e) => {
+          for (const [key, list] of Object.entries(state.byChain)) {
+            byChain[key] = list.map((e) => {
               if (e.txHash !== txHash || e.chainStatus === status) return e;
               changed = true;
               return { ...e, chainStatus: status };
@@ -132,11 +154,27 @@ export const useTxHistoryStore = create<TxHistoryState>()(
         }),
 
       clearForCluster: (cluster) =>
-        set((state) => ({
-          byChain: { ...state.byChain, [cluster]: [] },
-        })),
+        set((state) => {
+          const key = scopeKey(state.activeAccount, cluster);
+          return {
+            byChain: { ...state.byChain, [key]: [] },
+          };
+        }),
 
-      clear: () => set({ byChain: {} }),
+      clear: (opts) =>
+        set((state) => {
+          if (opts?.allAccounts) return { byChain: {} };
+          const acct = state.activeAccount;
+          if (!acct) return { byChain: {} };
+          // Remove only keys belonging to this account
+          const byChain: Record<string, TxHistoryEntry[]> = {};
+          for (const [key, list] of Object.entries(state.byChain)) {
+            if (!key.startsWith(`${acct}:`)) {
+              byChain[key] = list;
+            }
+          }
+          return { byChain };
+        }),
     }),
     {
       name: STORAGE_KEY,
