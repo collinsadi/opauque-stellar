@@ -31,10 +31,13 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedWebLink, setCopiedWebLink] = useState(false);
   const [copiedGhost, setCopiedGhost] = useState(false);
+  const [copiedEphemeralKey, setCopiedEphemeralKey] = useState(false);
+  const [ephemeralKeyRevealed, setEphemeralKeyRevealed] = useState(false);
   const [ghostResult, setGhostResult] = useState<{
     stealthAddress: string;
     ephemeralPrivKeyHex: string;
   } | null>(null);
+  const [generationError, setGenerationError] = useState<string | null>(null);
   const addGhost = useGhostAddressStore((s) => s.add);
   const watchlistAdd = useWatchlistStore((s) => s.add);
   const hasAcknowledgedReceiveRisk = useSecurityStore((s) => s.hasAcknowledgedReceiveRisk);
@@ -76,7 +79,7 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
     downloadCleanPng(canvas, "meta-address-qr.png");
   }, [downloadCleanPng]);
 
-  const handleCopy = useCallback(async (value: string, type: "meta" | "link" | "weblink" | "ghost") => {
+  const handleCopy = useCallback(async (value: string, type: "meta" | "link" | "weblink" | "ghost" | "ephemeralKey") => {
     try {
       await navigator.clipboard.writeText(value);
       if (type === "meta") {
@@ -88,6 +91,9 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
       } else if (type === "weblink") {
         setCopiedWebLink(true);
         window.setTimeout(() => setCopiedWebLink(false), 1200);
+      } else if (type === "ephemeralKey") {
+        setCopiedEphemeralKey(true);
+        window.setTimeout(() => setCopiedEphemeralKey(false), 1200);
       } else {
         setCopiedGhost(true);
         window.setTimeout(() => setCopiedGhost(false), 1200);
@@ -292,18 +298,21 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
     }
     if (!ghostResult) {
       const generate = () => {
+        setGenerationError(null);
         try {
           const { stealthAddress, stealthStellarAddress, ephemeralPriv } = computeStealthAddressAndViewTag(stealthMetaAddressHex);
           const ephemeralPrivKeyHex = bytesToHex(ephemeralPriv);
           if (ephemeralPrivKeyHex == null || ephemeralPrivKeyHex === "") {
-            console.error("[Opaque] Ghost address key generation produced no ephemeral key.");
+            setGenerationError("Ghost address generation failed: no ephemeral key produced. Please try again.");
             return;
           }
           addGhost({ cluster, stealthAddress, stealthStellarAddress, ephemeralPrivKeyHex });
           watchlistAdd(cluster, stealthAddress);
           setGhostResult({ stealthAddress, ephemeralPrivKeyHex });
+          setEphemeralKeyRevealed(false);
         } catch (err) {
-          console.error("[Opaque] Ghost address key generation failed:", err);
+          const message = err instanceof Error ? err.message : "Unknown error during address generation";
+          setGenerationError(`Ghost address generation failed: ${message}`);
         }
       };
       return (
@@ -320,6 +329,11 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
           >
             Generate ghost address
           </button>
+          {generationError && (
+            <div className="mt-4 p-3 rounded-xl border border-red-500/30 bg-red-500/10">
+              <p className="text-sm text-red-300">{generationError}</p>
+            </div>
+          )}
           <button
             type="button"
             onClick={() => setMode("choose")}
@@ -379,6 +393,39 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
           >
             Download QR Code
           </button>
+        </div>
+
+        <div className="mt-6 p-4 rounded-2xl border border-orange-500/40 bg-orange-500/10">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-orange-300">Ephemeral Key Backup</h3>
+            <button
+              type="button"
+              onClick={() => setEphemeralKeyRevealed(!ephemeralKeyRevealed)}
+              className="text-xs font-medium text-orange-300 hover:text-orange-200 transition-colors"
+            >
+              {ephemeralKeyRevealed ? "Hide" : "Reveal"}
+            </button>
+          </div>
+          <p className="text-xs text-orange-300/80 mb-3">
+            This browser is the only place this address is stored. Back up the ephemeral key before closing this page or clearing your browser data.{" "}
+            <RecoveryDocLink section="ghost-backup" className="text-orange-300 hover:underline font-medium">
+              Learn how to backup
+            </RecoveryDocLink>
+          </p>
+          {ephemeralKeyRevealed && (
+            <>
+              <div className="p-2 rounded-xl bg-ink-950/50 border border-ink-700 font-mono text-xs text-orange-200 break-all mb-3 max-h-24 overflow-y-auto">
+                {ghostResult.ephemeralPrivKeyHex}
+              </div>
+              <button
+                type="button"
+                onClick={() => handleCopy(ghostResult.ephemeralPrivKeyHex, "ephemeralKey")}
+                className="w-full rounded-xl border border-orange-500/50 bg-orange-500/10 px-3 py-2 text-xs font-medium text-orange-300 hover:border-orange-400 hover:text-orange-200 transition-colors"
+              >
+                {copiedEphemeralKey ? "Copied!" : "Copy ephemeral key"}
+              </button>
+            </>
+          )}
         </div>
         <button
           type="button"

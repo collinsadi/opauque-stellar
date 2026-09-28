@@ -10,6 +10,7 @@ import {
   Contract,
   TransactionBuilder,
   nativeToScVal,
+  Memo,
 } from "@stellar/stellar-sdk";
 import {
   hexToBytes,
@@ -32,6 +33,7 @@ import {
   parseXlmToStroops,
   u64ToScVal,
 } from "../lib/stellar";
+import { parseHorizonBalanceToStroops } from "../lib/decimalParser";
 import { deployedAddresses } from "../contracts/deployedAddresses";
 import {
   decodePaymentLink,
@@ -39,6 +41,7 @@ import {
   decodeWebPaymentLink,
   type PaymentLink,
 } from "../lib/paymentLink";
+import { usePendingTxStore } from "../store/pendingTxStore";
 
 import type { PaymentLinkError } from "../lib/paymentLink";
 
@@ -100,7 +103,10 @@ export function PayPage() {
   const [sending, setSending] = useState(false);
   const [activeBalance, setActiveBalance] = useState<bigint | null>(null);
   const [_balanceLoading, setBalanceLoading] = useState(false);
-  const [_decodedPaymentLink, setDecodedPaymentLink] = useState<PaymentLink | null>(null);
+  const [decodedPaymentLink, setDecodedPaymentLink] = useState<PaymentLink | null>(null);
+  const [linkLabel, setLinkLabel] = useState<string | null>(null);
+  const [linkMemo, setLinkMemo] = useState<string | null>(null);
+  const pendingTxStore = usePendingTxStore();
   const address = publicKey;
 
   useEffect(() => {
@@ -114,6 +120,8 @@ export function PayPage() {
     setResolveStatus("resolving");
     setResolvedMeta(null);
     setDecodedPaymentLink(null);
+    setLinkLabel(null);
+    setLinkMemo(null);
     let cancelled = false;
     (async () => {
       try {
@@ -138,6 +146,36 @@ export function PayPage() {
           setDecodedPaymentLink(link);
           setDisplayName(link.metaAddress);
           setResolvedMeta(link.metaAddress as Hex);
+
+          // Extract and validate link parameters
+          if (link.params.label) {
+            setLinkLabel(link.params.label);
+          }
+          if (link.params.memo) {
+            setLinkMemo(link.params.memo);
+          }
+
+          // Check if link has expired
+          if (link.params.expires) {
+            const expirationTime = new Date(link.params.expires).getTime();
+            if (expirationTime < Date.now()) {
+              if (!cancelled) {
+                setResolveStatus("found");
+                setError("This payment link has expired. Contact the recipient for a new link.");
+              }
+              return;
+            }
+          }
+
+          // Check for unsupported asset/issuer (only XLM native is supported currently)
+          if ((link.params.asset && link.params.asset !== "XLM") || link.params.issuer) {
+            if (!cancelled) {
+              setResolveStatus("found");
+              setError("This payment link requests a non-native asset. Only XLM payments are supported currently.");
+            }
+            return;
+          }
+
           // Pre-fill amount if specified in the link
           if (link.params.amount && !amount) {
             setAmount(link.params.amount);
@@ -178,6 +216,31 @@ export function PayPage() {
   }, [identifier, cluster]);
 
   useEffect(() => {
+    if (!txHash) return;
+    let cancelled = false;
+    const checkConfirmation = () => {
+      const tx = pendingTxStore.byHash[txHash];
+      if (!tx) return;
+      if (tx.status === "confirmed") {
+        if (!cancelled) {
+          navigate(`/pay/success?tx=${txHash}`);
+        }
+      } else if (tx.status === "failed" || tx.status === "timed_out") {
+        if (!cancelled) {
+          setError(tx.message || "Transaction failed. Please try again.");
+          setTxHash(null);
+        }
+      }
+    };
+    const timer = setInterval(checkConfirmation, 500);
+    checkConfirmation();
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [txHash, navigate, pendingTxStore]);
+
+  useEffect(() => {
     if (!address) {
       setActiveBalance(null);
       return;
@@ -188,11 +251,7 @@ export function PayPage() {
       try {
         const account = await getHorizonServer().loadAccount(address);
         const native = account.balances.find((b) => b.asset_type === "native");
-        const stroops = BigInt(
-          Math.round(
-            parseFloat((native as { balance: string })?.balance ?? "0") * 1e7,
-          ),
-        );
+        const stroops = parseHorizonBalanceToStroops((native as { balance: string })?.balance);
         if (!cancelled) setActiveBalance(stroops);
       } catch {
         if (!cancelled) setActiveBalance(null);
@@ -205,11 +264,18 @@ export function PayPage() {
     };
   }, [address]);
 
-  const feeBuffer = 100_000n;
+  const BASE_RESERVE_STROOPS = 5_000_000n; // 0.5 XLM
+  const SUBENTRY_RESERVE_STROOPS = 5_000_000n; // 0.5 XLM per subentry
+  const MIN_TRANSACTION_FEE = 100n; // BASE_FEE in stroops
+
   const maxSendableBalance = useMemo(() => {
     if (activeBalance == null) return null;
-    return activeBalance > feeBuffer ? activeBalance - feeBuffer : 0n;
-  }, [activeBalance, feeBuffer]);
+    // Assume 2 subentries as a conservative estimate (account + 1 trustline/signer)
+    // Real calculation would need to query the account's actual subentries
+    const estimatedSubentries = 2n;
+    const totalReserve = BASE_RESERVE_STROOPS + (estimatedSubentries * SUBENTRY_RESERVE_STROOPS) + MIN_TRANSACTION_FEE;
+    return activeBalance > totalReserve ? activeBalance - totalReserve : 0n;
+  }, [activeBalance]);
 
   const inputStroops = useMemo(() => {
     const raw = amount.trim();
@@ -251,8 +317,14 @@ export function PayPage() {
       let tx = new TransactionBuilder(source, {
         fee: BASE_FEE,
         networkPassphrase: passphrase,
-      })
-        .addOperation(transferOp)
+      });
+
+      // Add memo from payment link if present
+      if (linkMemo) {
+        tx.addMemo(Memo.text(linkMemo));
+      }
+
+      tx.addOperation(transferOp)
         .addOperation(
           announcer.call(
             "announce",
@@ -263,14 +335,23 @@ export function PayPage() {
             bytesToScVal(metadata),
           ),
         )
-        .setTimeout(180)
-        .build();
+        .setTimeout(180);
+
+      const builtTx = tx.build();
       const soroban = getSorobanServer();
-      tx = await soroban.prepareTransaction(tx);
-      const signedXdr = await signTransaction(tx.toXDR());
+      const preparedTx = await soroban.prepareTransaction(builtTx);
+      const signedXdr = await signTransaction(preparedTx.toXDR());
       const signed = TransactionBuilder.fromXDR(signedXdr, passphrase);
       const send = await soroban.sendTransaction(signed);
       if (send.status === "ERROR") throw new Error(JSON.stringify(send));
+
+      // Add to pending tx store for confirmation polling
+      pendingTxStore.add({
+        txHash: send.hash,
+        cluster,
+        kind: "send",
+      });
+
       setTxHash(send.hash);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Send failed");
@@ -352,6 +433,7 @@ export function PayPage() {
         <h1 className="font-display text-xl font-bold mb-1">Pay privately</h1>
         <p className="text-sm text-mist mb-4">
           To {formatRecipientDisplay(displayName)}
+          {linkLabel && <span className="block text-xs text-mist/70 mt-1">"{linkLabel}"</span>}
         </p>
         {resolveStatus === "resolving" && (
           <p className="text-sm text-mist">Resolving…</p>
@@ -384,22 +466,21 @@ export function PayPage() {
                 {sending ? "Sending…" : "Send XLM"}
               </button>
             )}
-            {error && <p className="text-neutral-400 text-sm mt-2">{error}</p>}
+            {error && <p className="text-red-400 text-sm mt-2">{error}</p>}
             {txHash && (
               <p className="text-neutral-300 text-sm mt-2">
-                <a
-                  href={getExplorerTxUrl(txHash)}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  View transaction
-                </a>
+                Transaction submitted. Confirming...
               </p>
             )}
             {maxSendableBalance != null && connected && (
-              <p className="text-xs text-mist mt-2">
-                Balance: {formatXlm(maxSendableBalance)} XLM
-              </p>
+              <>
+                <p className="text-xs text-mist mt-2">
+                  Available to send: {formatXlm(maxSendableBalance)} XLM
+                </p>
+                <p className="text-xs text-mist/70 mt-1">
+                  New stealth accounts require at least 1 XLM to be created.
+                </p>
+              </>
             )}
           </>
         )}
