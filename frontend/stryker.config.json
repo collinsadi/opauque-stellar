@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json.schemastore.org/stryker",
+  "testRunner": "command",
+  "mutate": [
+    "src/lib/stealth.ts"
+  ],
+  "reporters": ["clear-text", "json", "progress"],
+  "tempDirName": ".stryker-tmp",
+  "commandRunner": {
+    "command": "npm test -- --run src/__tests__/private-payment-lifecycle.test.ts"
+  },
+  "thresholds": {
+    "high": 70,
+    "low": 55,
+    "break": 55
+  },
+  "timeoutMS": 10000,
+  "concurrency": 2
+}

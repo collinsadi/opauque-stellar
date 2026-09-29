@@ -39,6 +39,8 @@ target/**
 !target/deploy/
 !target/deploy/*-keypair.json
 node_modules/
+.stryker-tmp/
+reports/mutation/
 .bin/
 plan.md
 .claude/
