@@ -70,9 +70,6 @@ npm run contribute
 
 # Export verification key (JSON)
 npm run export-vkey
-
-# Export Solidity verifier contract
-npm run export-sol
 ```
 
 ### Generating a Proof
@@ -102,7 +99,6 @@ In the frontend, proof generation happens entirely in-browser via snarkjs, using
 | `build/stealth_attestation_cpp/` | C++ witness generator |
 | `build/sa_final.zkey` | Final zkey (after ceremony contributions) |
 | `build/verification_key.json` | Verification key (used by on-chain verifier) |
-| `build/Groth16Verifier.sol` | Auto-generated Solidity verifier (reference for the Anchor program) |
 
 ## Trusted Setup
 
