@@ -1,7 +1,11 @@
 import { buildRoot } from "./merkle.ts";
+import { verifyHolderSignature } from "./identity.ts";
+import { createLogger } from "./logger.ts";
 import { computeDatasetHash, rootManifest, writeRootManifest } from "./publish.ts";
 import type { Store } from "./store.ts";
 import type { ChainAdapter, LeafCommitment, PublisherMetrics, PublisherState } from "./types.ts";
+
+const log = createLogger("publisher-engine");
 
 export interface PublisherTickConfig {
   verifierId: string;
@@ -48,6 +52,7 @@ function mergeLeaves(existing: LeafCommitment[], incoming: LeafCommitment[]): {
     byLeaf.add(leaf.leaf);
   }
   const acceptedIds: string[] = [];
+  const acceptedLeaves: LeafCommitment[] = [];
   let duplicateResubmissions = 0;
   const identityCollisions: LeafCommitment[] = [];
   for (const leaf of incoming) {
@@ -66,15 +71,11 @@ function mergeLeaves(existing: LeafCommitment[], incoming: LeafCommitment[]): {
     byId.set(leaf.id, leaf);
     byLeaf.add(leaf.leaf);
     acceptedIds.push(leaf.id);
+    acceptedLeaves.push(leaf);
   }
   // Append-only ordering: existing leaves keep their positions; new leaves
   // are appended in submission order so prior inclusion paths remain valid.
-  const leaves = [...existing];
-  for (const leaf of incoming) {
-    if (acceptedIds.includes(leaf.id)) {
-      leaves.push(leaf);
-    }
-  }
+  const leaves = [...existing, ...acceptedLeaves];
   return { leaves, acceptedIds, duplicateResubmissions, identityCollisions };
 }
 
@@ -102,7 +103,36 @@ export async function runPublisherTick(cfg: PublisherTickConfig, metrics?: Publi
   const state = cfg.store.load(cfg.verifierId) ?? initState(cfg.verifierId, at);
   const inbox = cfg.store.readInbox(now);
   const processedIds = inbox.map((leaf) => leaf.id);
-  const { leaves, acceptedIds, duplicateResubmissions, identityCollisions } = mergeLeaves(state.leaves, inbox);
+  let priorLeaves = state.leaves;
+  let prunedLeaves = false;
+  let eligibleInbox = inbox;
+  {
+    const ledger = await cfg.adapter.currentLedger();
+    const isValidLeaf = async (leaf: LeafCommitment): Promise<boolean> => {
+      const attestation = await cfg.adapter.getAttestation(leaf.attestationUid);
+      return Boolean(
+        attestation &&
+        attestation.revocationLedger === 0 &&
+        (attestation.expirationLedger === 0 || attestation.expirationLedger > ledger) &&
+        attestation.schemaId.toLowerCase() === leaf.schemaId.toLowerCase() &&
+        verifyHolderSignature({
+          attestationUid: leaf.attestationUid,
+          schemaId: leaf.schemaId,
+          leaf: leaf.leaf,
+          signature: leaf.holderSignature,
+          stealthAddressHash: attestation.stealthAddressHash,
+        })
+      );
+    };
+    const activeLeaves: LeafCommitment[] = [];
+    for (const leaf of priorLeaves) if (await isValidLeaf(leaf)) activeLeaves.push(leaf);
+    prunedLeaves = activeLeaves.length < priorLeaves.length;
+    priorLeaves = activeLeaves;
+    const validInbox: LeafCommitment[] = [];
+    for (const leaf of inbox) if (await isValidLeaf(leaf)) validInbox.push(leaf);
+    eligibleInbox = validInbox;
+  }
+  const { leaves, acceptedIds, duplicateResubmissions, identityCollisions } = mergeLeaves(priorLeaves, eligibleInbox);
   state.leaves = leaves;
   state.updatedAt = at;
 
@@ -117,7 +147,7 @@ export async function runPublisherTick(cfg: PublisherTickConfig, metrics?: Publi
   }
 
   const minLeaves = cfg.minLeavesToPublish ?? 1;
-  if (leaves.length < minLeaves) {
+  if (leaves.length < minLeaves && !prunedLeaves) {
     cfg.store.save(state);
     cfg.store.archiveInbox(processedIds);
     const latencyMs = Date.now() - tickStart;

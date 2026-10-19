@@ -2,9 +2,8 @@
  * Reputation prover: build the V2 witness (Poseidon) and generate a Groth16
  * proof via snarkjs, returning a bundle ready for on-chain verification.
  *
- * The witness here is the single-leaf (tree-of-zeros) construction the protocol
- * uses for a holder's own attestation; it produces the same root a real indexer
- * publishes for that leaf. Public-signal order is canonical:
+ * Witness fields and the Merkle path are supplied from the holder's attestation
+ * and the publisher's inclusion endpoint. Public-signal order is canonical:
  *   [0] merkle_root  [1] attestation_id  [2] external_nullifier  [3] nullifier_hash
  */
 import { bigIntToBytes32, bytesToBigInt } from "../crypto/bytes";
@@ -23,18 +22,20 @@ type PoseidonField = {
 };
 
 export interface ReputationProveInput {
-  /** Attestation id (== schema id) of the trait being proven. */
-  attestationId: number;
+  /** Schema id field (32-byte hex, bigint, or numeric compatibility value). */
+  attestationId: number | bigint | string;
   /** The holder's stealth private key bytes. */
   stealthPrivKey: Uint8Array;
   /** Application-chosen external nullifier (must fit in u64 for the contract). */
   externalNullifier: bigint;
-  /**
-   * Real inclusion path from the reputation publisher
-   * (`opaque.reputation.publisher().getInclusionPath(leaf)`). When omitted the
-   * single-leaf tree-of-zeros path is used. Values are decimal or 0x-hex.
-   */
-  inclusion?: {
+  /** Private fields used to create the actual V2 leaf. */
+  attestationWitness: {
+    issuerPkX: bigint | string;
+    traitDataHash: bigint | string;
+    nonce: bigint | string;
+  };
+  /** Inclusion response from GET /v1/reputation/root/:leaf. */
+  publisherProof: {
     root: string;
     pathElements: string[];
     pathIndices: number[];
@@ -55,30 +56,11 @@ export interface ReputationWitnessV2 {
   nullifier_hash: string;
 }
 
-/**
- * Compute the holder's V2 reputation Merkle leaf (0x-prefixed 32-byte hex) —
- * the value submitted to, and looked up on, the reputation publisher.
- */
-export async function computeReputationLeaf(
-  input: Pick<ReputationProveInput, "attestationId" | "stealthPrivKey">,
-): Promise<string> {
-  const w = await buildReputationWitnessV2({ ...input, externalNullifier: 0n });
-  const poseidon = (await getPoseidon()) as unknown as ((i: bigint[]) => unknown) & {
-    F: PoseidonField;
-  };
-  const leaf = poseidon.F.toObject(
-    poseidon([
-      BigInt(w.stealth_pk),
-      BigInt(w.schema_id),
-      BigInt(w.issuer_pk_x),
-      BigInt(w.trait_data_hash),
-      BigInt(w.nonce),
-    ]),
-  );
-  return "0x" + leaf.toString(16).padStart(64, "0");
+function field(value: bigint | number | string): bigint {
+  return typeof value === "bigint" ? value : BigInt(value);
 }
 
-/** Build the canonical V2 reputation witness for a holder's own attestation. */
+/** Build the canonical V2 reputation witness from the attestation and publisher path. */
 export async function buildReputationWitnessV2(
   input: ReputationProveInput,
 ): Promise<ReputationWitnessV2> {
@@ -88,57 +70,36 @@ export async function buildReputationWitnessV2(
   const F = poseidon.F;
 
   const stealthPk = F.toObject(F.e(bytesToBigInt(input.stealthPrivKey)));
-  const schemaId = BigInt(input.attestationId);
+  const schemaId = field(input.attestationId);
   const extNullifier = input.externalNullifier;
 
-  const issuerPkX = F.toObject(poseidon([stealthPk, 1n]));
-  const traitDataHash = F.toObject(poseidon([schemaId, 2n]));
-  const nonce = F.toObject(poseidon([stealthPk, 3n]));
+  const issuerPkX = F.toObject(F.e(field(input.attestationWitness.issuerPkX)));
+  const traitDataHash = F.toObject(F.e(field(input.attestationWitness.traitDataHash)));
+  const nonce = F.toObject(F.e(field(input.attestationWitness.nonce)));
 
   const leaf = F.toObject(
     poseidon([stealthPk, schemaId, issuerPkX, traitDataHash, nonce]),
   );
 
-  let merklePath: string[];
-  let merklePathIndices: number[];
-  let merkleRoot: bigint;
-  if (input.inclusion) {
-    const { root, pathElements, pathIndices } = input.inclusion;
-    if (pathElements.length !== TREE_DEPTH || pathIndices.length !== TREE_DEPTH) {
-      throw new ArtifactError(
-        `Inclusion path must have depth ${TREE_DEPTH} (got ${pathElements.length}/${pathIndices.length})`,
-      );
+  const { root, pathElements, pathIndices } = input.publisherProof;
+  if (pathElements.length !== TREE_DEPTH || pathIndices.length !== TREE_DEPTH) {
+    throw new TypeError(`publisher proof must contain exactly ${TREE_DEPTH} path elements and indices`);
+  }
+  let current = leaf;
+  const merklePath = pathElements.map((element, index) => {
+    const sibling = F.toObject(F.e(field(element)));
+    const direction = pathIndices[index];
+    if (direction !== 0 && direction !== 1) {
+      throw new TypeError("publisher proof path indices must be 0 or 1");
     }
-    merklePath = pathElements.map((x) => BigInt(x).toString());
-    merklePathIndices = pathIndices.map((x) => (x ? 1 : 0));
-    let current = leaf;
-    for (let i = 0; i < TREE_DEPTH; i++) {
-      const sibling = BigInt(merklePath[i]);
-      current = F.toObject(
-        merklePathIndices[i] ? poseidon([sibling, current]) : poseidon([current, sibling]),
-      );
-    }
-    merkleRoot = BigInt(root);
-    if (current !== merkleRoot) {
-      throw new ArtifactError(
-        "Inclusion path does not hash to the published root for this holder's leaf",
-      );
-    }
-  } else {
-    // Empty-subtree roots: z[0] = 0, z[i] = Poseidon(z[i-1], z[i-1]).
-    const zeroHashes: bigint[] = [0n];
-    for (let i = 0; i < TREE_DEPTH; i++) {
-      zeroHashes.push(F.toObject(poseidon([zeroHashes[i], zeroHashes[i]])));
-    }
-    merklePath = [];
-    merklePathIndices = [];
-    let current = leaf;
-    for (let i = 0; i < TREE_DEPTH; i++) {
-      merklePath.push(zeroHashes[i].toString());
-      merklePathIndices.push(0);
-      current = F.toObject(poseidon([current, zeroHashes[i]]));
-    }
-    merkleRoot = current;
+    current = F.toObject(direction === 0
+      ? poseidon([current, sibling])
+      : poseidon([sibling, current]));
+    return sibling.toString();
+  });
+  const merkleRoot = F.toObject(F.e(field(root)));
+  if (current !== merkleRoot) {
+    throw new TypeError("publisher proof path does not match its root for the supplied attestation fields");
   }
   const nullifierHash = F.toObject(poseidon([stealthPk, extNullifier]));
 
@@ -149,7 +110,7 @@ export async function buildReputationWitnessV2(
     trait_data_hash: traitDataHash.toString(),
     nonce: nonce.toString(),
     merkle_path: merklePath,
-    merkle_path_indices: merklePathIndices,
+    merkle_path_indices: [...pathIndices],
     merkle_root: merkleRoot.toString(),
     attestation_id: schemaId.toString(),
     external_nullifier: extNullifier.toString(),

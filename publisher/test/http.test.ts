@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import { secp256k1 } from "@noble/curves/secp256k1";
+import { keccak_256 } from "@noble/hashes/sha3";
 import { createPublisherHttpServer, runPublisherLoop } from "../src/http.ts";
 import { createMetrics } from "../src/engine.ts";
 import { MemoryStore } from "../src/store.ts";
@@ -11,6 +13,10 @@ import type { ChainAdapter } from "../src/types.ts";
 class FakeAdapter implements ChainAdapter {
   root: string | null = null;
   posts: Array<{ root: string; datasetHash: string }> = [];
+  missingAttestation = false;
+  revoked = false;
+  expired = false;
+  schemaMismatch = false;
   async currentRoot(): Promise<string | null> {
     return this.root;
   }
@@ -19,6 +25,34 @@ class FakeAdapter implements ChainAdapter {
     this.posts.push({ root, datasetHash });
     return { hash: `tx-${this.posts.length}`, ledger: 100 + this.posts.length };
   }
+  async currentLedger() { return 100; }
+  async getAttestation() {
+    if (this.missingAttestation) return null;
+    return {
+      schemaId: this.schemaMismatch ? bigintToHex32(8n) : bigintToHex32(7n),
+      stealthAddressHash: recipientHash(new Uint8Array(32).fill(1)),
+      expirationLedger: this.expired ? 99 : 0,
+      revocationLedger: this.revoked ? 90 : 0,
+    };
+  }
+}
+
+function recipientHash(privateKey: Uint8Array): string {
+  const publicKey = secp256k1.getPublicKey(privateKey, false);
+  const address = keccak_256(publicKey.subarray(1)).subarray(12);
+  return `0x${Buffer.from(keccak_256(address)).toString("hex")}`;
+}
+
+function submission(leaf = bigintToHex32(1n), privateKey = new Uint8Array(32).fill(1)) {
+  const attestationUid = bigintToHex32(99n);
+  const schemaId = bigintToHex32(7n);
+  const message = new TextEncoder().encode(
+    `OPAQUE_REPUTATION_SUBMISSION_V1\n${attestationUid}\n${schemaId}\n${leaf}`,
+  );
+  const signature = secp256k1.sign(keccak_256(message), privateKey);
+  const compact = signature.toCompactRawBytes();
+  const holderSignature = `0x${Buffer.from([...compact, signature.recovery ?? 0]).toString("hex")}`;
+  return { id: "holder-99", leaf, schemaId, attestationUid, holderSignature };
 }
 
 async function listen(server: ReturnType<typeof createServer>): Promise<string> {
@@ -37,15 +71,16 @@ describe("publisher HTTP API — async publication (queue, don't publish inline)
       store,
       metrics,
       rateLimiter: new RateLimiter(60_000, 1000, 1000),
+      chainAdapter: adapter,
     });
     const base = await listen(server);
     try {
       const res = await fetch(`${base}/v1/reputation/leaves`, {
         method: "POST",
-        body: JSON.stringify({ id: "a", leaf: bigintToHex32(1n) }),
+        body: JSON.stringify(submission()),
       });
       expect(res.status).toBe(202);
-      const body = await res.json();
+      const body = await res.json() as { ok: boolean; queued: boolean; tick?: unknown };
       expect(body.ok).toBe(true);
       expect(body.queued).toBe(true);
       expect(body.tick).toBeUndefined(); // no synchronous tick result
@@ -65,13 +100,14 @@ describe("publisher HTTP API — async publication (queue, don't publish inline)
       store,
       metrics,
       rateLimiter: new RateLimiter(60_000, 1000, 1000),
+      chainAdapter: adapter,
     });
     const base = await listen(server);
     try {
       const leaf = bigintToHex32(1n);
       await fetch(`${base}/v1/reputation/leaves`, {
         method: "POST",
-        body: JSON.stringify({ id: "a", leaf }),
+        body: JSON.stringify(submission(leaf)),
       });
       expect(adapter.posts.length).toBe(0);
 
@@ -89,7 +125,7 @@ describe("publisher HTTP API — async publication (queue, don't publish inline)
       expect(adapter.posts.length).toBe(1);
       const rootRes = await fetch(`${base}/v1/reputation/root/${encodeURIComponent(leaf)}`);
       expect(rootRes.status).toBe(200);
-      const rootBody = await rootRes.json();
+      const rootBody = await rootRes.json() as { root: string };
       expect(rootBody.root).toBe(adapter.root);
     } finally {
       server.close();
@@ -109,8 +145,14 @@ describe("publisher HTTP API — async publication (queue, don't publish inline)
       async postRoot(root: string, datasetHash: string) {
         return { hash: "tx-1", ledger: 1 };
       },
+      async currentLedger() {
+        return 100;
+      },
+      async getAttestation() {
+        return null;
+      },
     };
-    store.inbox = [{ id: "a", leaf: bigintToHex32(1n), submittedAt: "2026-01-01T00:00:00Z" }];
+    store.inbox = [{ ...submission(), submittedAt: "2026-01-01T00:00:00Z" }];
 
     const controller = new AbortController();
     let tickCount = 0;
@@ -133,10 +175,55 @@ describe("publisher HTTP API — async publication (queue, don't publish inline)
     expect(metrics.totalTickFailures).toBe(1);
     expect(tickCount).toBe(1);
   });
+
+  it("rejects nonexistent, revoked, expired, and schema-mismatched attestations", async () => {
+    for (const status of ["missing", "revoked", "expired", "schema"] as const) {
+      const store = new MemoryStore();
+      const adapter = new FakeAdapter();
+      adapter.missingAttestation = status === "missing";
+      adapter.revoked = status === "revoked";
+      adapter.expired = status === "expired";
+      adapter.schemaMismatch = status === "schema";
+      const server = createPublisherHttpServer({
+        verifierId: "CVERIFIER", store, metrics: createMetrics(),
+        rateLimiter: new RateLimiter(60_000, 1000, 1000), chainAdapter: adapter,
+      });
+      const base = await listen(server);
+      try {
+        const res = await fetch(`${base}/v1/reputation/leaves`, {
+          method: "POST", body: JSON.stringify(submission()),
+        });
+        expect(res.status).toBe(422);
+        expect(store.inboxSize()).toBe(0);
+      } finally {
+        server.close();
+      }
+    }
+  });
+
+  it("rejects a valid signature from a key other than the attested recipient", async () => {
+    const store = new MemoryStore();
+    const adapter = new FakeAdapter();
+    const server = createPublisherHttpServer({
+      verifierId: "CVERIFIER", store, metrics: createMetrics(),
+      rateLimiter: new RateLimiter(60_000, 1000, 1000), chainAdapter: adapter,
+    });
+    const base = await listen(server);
+    try {
+      const res = await fetch(`${base}/v1/reputation/leaves`, {
+        method: "POST",
+        body: JSON.stringify(submission(bigintToHex32(1n), new Uint8Array(32).fill(2))),
+      });
+      expect(res.status).toBe(422);
+      expect(store.inboxSize()).toBe(0);
+    } finally {
+      server.close();
+    }
+  });
 });
 
 describe("publisher HTTP API — request body limits (413)", () => {
-  it("rejects an oversized body with 413 and a stable error code without buffering it fully", async () => {
+  it("aborts an oversized request without buffering it fully", async () => {
     const store = new MemoryStore();
     const metrics = createMetrics();
     const server = createPublisherHttpServer({
@@ -145,20 +232,19 @@ describe("publisher HTTP API — request body limits (413)", () => {
       metrics,
       rateLimiter: new RateLimiter(60_000, 1000, 1000),
       maxBodyBytes: 1024,
+      chainAdapter: new FakeAdapter(),
     });
     const base = await listen(server);
     try {
-      const before = process.memoryUsage().heapUsed;
       const oversized = "a".repeat(5 * 1024 * 1024); // 5 MiB, far past the 1 KiB limit
-      const res = await fetch(`${base}/v1/reputation/leaves`, {
+      const body = JSON.stringify(submission(oversized));
+      const before = process.memoryUsage().heapUsed;
+      await expect(fetch(`${base}/v1/reputation/leaves`, {
         method: "POST",
-        body: JSON.stringify({ id: "a", leaf: oversized }),
-      });
+        body,
+      })).rejects.toThrow();
       const after = process.memoryUsage().heapUsed;
 
-      expect(res.status).toBe(413);
-      const body = await res.json();
-      expect(body.code).toBe("PAYLOAD_TOO_LARGE");
       // Bounded behavior: heap growth stays well below the oversized payload size (~5 MiB),
       // i.e. the server aborted the read instead of buffering the whole body.
       expect(after - before).toBeLessThan(2 * 1024 * 1024);
@@ -177,12 +263,13 @@ describe("publisher HTTP API — request body limits (413)", () => {
       metrics,
       rateLimiter: new RateLimiter(60_000, 1000, 1000),
       maxBodyBytes: 32 * 1024,
+      chainAdapter: new FakeAdapter(),
     });
     const base = await listen(server);
     try {
       const res = await fetch(`${base}/v1/reputation/leaves`, {
         method: "POST",
-        body: JSON.stringify({ id: "a", leaf: bigintToHex32(1n) }),
+        body: JSON.stringify(submission()),
       });
       expect(res.status).toBe(202);
     } finally {

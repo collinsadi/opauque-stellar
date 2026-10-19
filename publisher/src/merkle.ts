@@ -5,7 +5,7 @@
  * Poseidon(stealth_pk, schema_id, issuer_pk_x, trait_data_hash, nonce).
  */
 import { buildPoseidon } from "circomlibjs";
-import { bigintToHex32 } from "./bytes.ts";
+import { bigintToHex32 } from "./bytes.js";
 
 export const TREE_DEPTH = 20;
 

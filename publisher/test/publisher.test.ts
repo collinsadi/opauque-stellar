@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { secp256k1 } from "@noble/curves/secp256k1";
+import { keccak_256 } from "@noble/hashes/sha3";
 import { buildProof, buildRoot, getPoseidon, hashFields, MerkleTree } from "../src/merkle.ts";
 import { bigintToHex32 } from "../src/bytes.ts";
 import { computeDatasetHash } from "../src/publish.ts";
@@ -8,10 +10,26 @@ import { buildTreeSnapshot, verifySnapshot, computeSnapshotHash } from "../src/s
 import { formatPrometheusMetrics } from "../src/metrics.ts";
 import { validateLeafCommitment } from "../src/validate.ts";
 import { RateLimiter } from "../src/rate-limit.ts";
-import type { ChainAdapter, LeafCommitment } from "../src/types.ts";
+import type { ChainAdapter, LeafCommitment, OnChainAttestation } from "../src/types.ts";
 
 const CANON_1_2 =
   7853200120776062878684798364095072458815029376092732009249414926327459813530n;
+const HOLDER_KEY = new Uint8Array(32).fill(1);
+const SCHEMA_ID = bigintToHex32(7n);
+
+function recipientHash(): string {
+  const publicKey = secp256k1.getPublicKey(HOLDER_KEY, false);
+  const address = keccak_256(publicKey.subarray(1)).subarray(12);
+  return `0x${Buffer.from(keccak_256(address)).toString("hex")}`;
+}
+
+function holderSignature(attestationUid: string, leaf: string): string {
+  const message = new TextEncoder().encode(
+    `OPAQUE_REPUTATION_SUBMISSION_V1\n${attestationUid}\n${SCHEMA_ID}\n${leaf}`,
+  );
+  const signature = secp256k1.sign(keccak_256(message), HOLDER_KEY);
+  return `0x${Buffer.from([...signature.toCompactRawBytes(), signature.recovery ?? 0]).toString("hex")}`;
+}
 
 class FakeAdapter implements ChainAdapter {
   root: string | null = null;
@@ -26,12 +44,30 @@ class FakeAdapter implements ChainAdapter {
     this.posts.push({ root, datasetHash });
     return { hash: `tx-${this.posts.length}`, ledger: 100 + this.posts.length };
   }
+
+  async currentLedger(): Promise<number> {
+    return 100;
+  }
+
+  async getAttestation(_uid: string): Promise<OnChainAttestation | null> {
+    return {
+      schemaId: SCHEMA_ID,
+      stealthAddressHash: recipientHash(),
+      expirationLedger: 0,
+      revocationLedger: 0,
+    };
+  }
 }
 
 function commitment(id: string, leaf: bigint, ledger = 1): LeafCommitment {
+  const attestationUid = bigintToHex32(BigInt(ledger + id.length));
+  const leafHex = bigintToHex32(leaf);
   return {
     id,
-    leaf: bigintToHex32(leaf),
+    leaf: leafHex,
+    schemaId: SCHEMA_ID,
+    attestationUid,
+    holderSignature: holderSignature(attestationUid, leafHex),
     ledger,
     submittedAt: "2026-06-16T00:00:00Z",
   };
@@ -236,6 +272,9 @@ describe("schema validation", () => {
     const result = validateLeafCommitment({
       id: "test-leaf",
       leaf: bigintToHex32(42n),
+      schemaId: bigintToHex32(7n),
+      attestationUid: bigintToHex32(99n),
+      holderSignature: `0x${"01".repeat(65)}`,
     });
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -265,12 +304,15 @@ describe("schema validation", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("accepts commitment with only attestationUid (no id)", () => {
+  it("accepts a commitment without id when attestation identity fields are present", () => {
     const result = validateLeafCommitment({
       leaf: bigintToHex32(1n),
       attestationUid: bigintToHex32(99n),
+      schemaId: bigintToHex32(7n),
+      holderSignature: `0x${"01".repeat(65)}`,
     });
     expect(result.ok).toBe(true);
+    if (result.ok) expect(result.commitment.id).toBe(bigintToHex32(99n));
   });
 
   it("rejects empty id without attestationUid", () => {
@@ -339,6 +381,59 @@ describe("duplicate detection", () => {
     const res = await runPublisherTick({ verifierId: "CVERIFIER", adapter, store });
     expect(res.leafCount).toBe(2);
     expect(res.newlyAccepted).toBe(2);
+  });
+
+  it("removes revoked leaves and republishes the remaining tree", async () => {
+    const initialAdapter = new FakeAdapter();
+    const store = new MemoryStore();
+    const revokedUid = bigintToHex32(2n);
+    const activeUid = bigintToHex32(3n);
+    store.inbox = [
+      { ...commitment("revoked", 1n), attestationUid: revokedUid, holderSignature: holderSignature(revokedUid, bigintToHex32(1n)) },
+      { ...commitment("active", 2n), attestationUid: activeUid, holderSignature: holderSignature(activeUid, bigintToHex32(2n)) },
+    ];
+    await runPublisherTick({ verifierId: "CVERIFIER", adapter: initialAdapter, store });
+
+    const adapter = new FakeAdapter();
+    let revoked = false;
+    adapter.getAttestation = async (uid: string) => uid === revokedUid
+      ? { schemaId: SCHEMA_ID, stealthAddressHash: recipientHash(), expirationLedger: 0, revocationLedger: revoked ? 99 : 0 }
+      : uid === activeUid
+        ? { schemaId: SCHEMA_ID, stealthAddressHash: recipientHash(), expirationLedger: 0, revocationLedger: 0 }
+        : null;
+    const cfg = { verifierId: "CVERIFIER", adapter, store };
+
+    revoked = true;
+    const second = await runPublisherTick(cfg);
+
+    expect(second.leafCount).toBe(1);
+    expect(second.published).toBe(true);
+    expect(store.load()?.leaves.map((leaf) => leaf.id)).toEqual(["active"]);
+  });
+
+  it("publishes the empty root when revocation removes the final leaf", async () => {
+    const store = new MemoryStore();
+    const initialAdapter = new FakeAdapter();
+    store.inbox = [commitment("revoked", 1n)];
+    await runPublisherTick({ verifierId: "CVERIFIER", adapter: initialAdapter, store });
+
+    const adapter = new FakeAdapter() as FakeAdapter & {
+      currentLedger: () => Promise<number>;
+      getAttestation: () => Promise<{ schemaId: string; stealthAddressHash: string; expirationLedger: number; revocationLedger: number }>;
+    };
+    adapter.currentLedger = async () => 100;
+    adapter.getAttestation = async () => ({
+      schemaId: SCHEMA_ID,
+      stealthAddressHash: recipientHash(),
+      expirationLedger: 0,
+      revocationLedger: 99,
+    });
+
+    const result = await runPublisherTick({ verifierId: "CVERIFIER", adapter, store });
+
+    expect(result.leafCount).toBe(0);
+    expect(result.published).toBe(true);
+    expect(store.load()?.leaves).toEqual([]);
   });
 });
 

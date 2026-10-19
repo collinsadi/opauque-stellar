@@ -3,10 +3,12 @@ export interface LeafCommitment {
   id: string;
   /** V2 Merkle leaf commitment as 0x-prefixed 32-byte hex. */
   leaf: string;
-  /** Optional schema id / attestation id as 0x-prefixed 32-byte hex. */
-  schemaId?: string;
-  /** Optional attestation UID as 0x-prefixed 32-byte hex. */
-  attestationUid?: string;
+  /** Schema id recorded by attestation-engine-v2. */
+  schemaId: string;
+  /** Attestation UID recorded by attestation-engine-v2. */
+  attestationUid: string;
+  /** Recoverable secp256k1 signature over the UID, schema id, and leaf. */
+  holderSignature: string;
   /** Source transaction hash or event id, if available. */
   txHash?: string;
   /** Ledger containing the related announcement/attestation. */
@@ -37,6 +39,15 @@ export interface RootManifest {
 export interface ChainAdapter {
   currentRoot(): Promise<string | null>;
   postRoot(root: string, datasetHash: string): Promise<{ hash: string; ledger?: number }>;
+  getAttestation(uid: string): Promise<OnChainAttestation | null>;
+  currentLedger(): Promise<number>;
+}
+
+export interface OnChainAttestation {
+  schemaId: string;
+  stealthAddressHash: string;
+  expirationLedger: number;
+  revocationLedger: number;
 }
 
 export interface PublisherMetrics {

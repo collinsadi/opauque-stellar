@@ -35,6 +35,8 @@ const proof = await opaque.reputation.prove({
   attestationId,
   stealthPrivKey,
   externalNullifier: 42n,
+  attestationWitness,
+  publisherProof,
 });
 const txHash = await opaque.reputation.verifyOnChain(proof);
 ```

@@ -274,6 +274,8 @@ describe("reputation service", () => {
         attestationId: 1,
         stealthPrivKey: bytes(32),
         externalNullifier: 1n,
+        attestationWitness: { issuerPkX: 1n, traitDataHash: 2n, nonce: 3n },
+        publisherProof: { root: "0x01", pathElements: [], pathIndices: [] },
       }),
     ).rejects.toBeInstanceOf(NotWiredError);
   });

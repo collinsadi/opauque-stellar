@@ -65,6 +65,8 @@ const proof = await opaque.reputation.prove({
   attestationId,
   stealthPrivKey: id.spendingKey,
   externalNullifier: 42n,
+  attestationWitness,
+  publisherProof,
 });
 
 // verify it inside the reputation-verifier Soroban contract

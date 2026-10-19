@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Keypair } from "@stellar/stellar-sdk";
@@ -222,13 +222,54 @@ describe("FileLedgerStore", () => {
 
   it("round-trips entries with bigint fee to disk", async () => {
     const store = new FileLedgerStore(tmpDir);
+    const fee = 999999999999999999n;
     const entries = [
-      { jobId: "0x01", acceptedTx: "a1", submittedTx: "s1", expectedFee: 999n, submittedAt: 1000 },
+      { jobId: "0x01", acceptedTx: "a1", submittedTx: "s1", expectedFee: fee, submittedAt: 1000 },
     ];
     await store.save(entries);
     const loaded = await store.load();
     expect(loaded).toHaveLength(1);
-    expect(loaded![0].expectedFee).toBe(999n);
+    expect(loaded![0].expectedFee).toBe(fee);
+  });
+
+  it("loads legacy ledger entries stored with numeric fees", async () => {
+    writeFileSync(join(tmpDir, "ledger.json"), JSON.stringify({
+      version: 1,
+      entries: [{ jobId: "0xlegacy", acceptedTx: "a", submittedTx: "s", expectedFee: 123, submittedAt: 1000 }],
+    }));
+
+    const loaded = await new FileLedgerStore(tmpDir).load();
+
+    expect(loaded?.[0].expectedFee).toBe(123n);
+  });
+
+  it("loads legacy tagged bigint fees", async () => {
+    writeFileSync(join(tmpDir, "ledger.json"), JSON.stringify({
+      version: 1,
+      entries: [{ jobId: "0xtagged", acceptedTx: "a", submittedTx: "s", expectedFee: "__bigint__:456", submittedAt: 1000 }],
+    }));
+
+    const loaded = await new FileLedgerStore(tmpDir).load();
+
+    expect(loaded?.[0].expectedFee).toBe(456n);
+  });
+
+  it("reconciles cleanly after restoring a saved bigint fee", async () => {
+    const store = new FileLedgerStore(tmpDir);
+    const fee = 999999999999999999n;
+    await store.save([
+      { jobId: "0xjob", acceptedTx: "a1", submittedTx: "s1", expectedFee: fee, submittedAt: 1000 },
+    ]);
+
+    const restartedLedger = new JobLedger(new FileLedgerStore(tmpDir));
+    await restartedLedger.hydrate();
+    const chain = new StubChain(new Map([
+      ["0xjob", { exists: true, status: "submitted", fee, deadline: 9999, payloadHash: "0x" }],
+    ]));
+    const report = await new PayoutReconciler({ chain, ledger: restartedLedger }).reconcile();
+
+    expect(report.summary).toBe("clean");
+    expect(report.cleanCount).toBe(1);
   });
 });
 

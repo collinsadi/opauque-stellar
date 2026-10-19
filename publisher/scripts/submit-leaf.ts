@@ -3,8 +3,7 @@
  * the publisher inbox.
  *
  * Usage:
- *   npm run submit:leaf -- --leaf 0x... --id <attestationUid-or-leaf-id>
- *   npm run submit:leaf -- --leaf 0x... --id <id> --validate
+ *   npm run submit:leaf -- --leaf 0x... --schema-id 0x... --attestation-uid 0x... --holder-signature 0x...
  */
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,6 +29,7 @@ function main() {
     leaf,
     schemaId: arg("schema-id"),
     attestationUid: arg("attestation-uid"),
+    holderSignature: arg("holder-signature"),
     txHash: arg("tx-hash"),
     ledger: arg("ledger") ? Number(arg("ledger")) : undefined,
   };

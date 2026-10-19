@@ -9,6 +9,7 @@ import { runPublisherTick } from "./engine.ts";
 import { PayloadTooLargeError, readJsonLimited } from "./body.ts";
 import { isAuthorizedSubmitter, isAuthorizedOperator, type AuthConfig } from "./auth.ts";
 import { resolveClientSource } from "./trusted-proxy.ts";
+import { verifyHolderSignature } from "./identity.ts";
 import type { RateLimiter } from "./rate-limit.ts";
 import type { Store } from "./store.ts";
 import type { ChainAdapter, PublisherMetrics } from "./types.ts";
@@ -17,6 +18,7 @@ const DEFAULT_MAX_BODY_BYTES = 32 * 1024;
 
 export interface PublisherHttpDeps {
   verifierId: string;
+  chainAdapter?: ChainAdapter;
   store: Store;
   metrics: PublisherMetrics;
   rateLimiter: RateLimiter;
@@ -79,7 +81,7 @@ export function createPublisherHttpServer(deps: PublisherHttpDeps) {
   const corsOrigin = deps.corsOrigin ?? "*";
   const maxBodyBytes = deps.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
   const trustedProxies = deps.trustedProxies ?? new Set<string>();
-  const { verifierId, store, metrics, rateLimiter, authConfig } = deps;
+  const { verifierId, store, metrics, rateLimiter, authConfig, chainAdapter } = deps;
 
   return createServer(async (req, res) => {
     try {
@@ -113,6 +115,38 @@ export function createPublisherHttpServer(deps: PublisherHttpDeps) {
         }
 
         const commitment = normalizeCommitment(await readJsonLimited(req, maxBodyBytes), () => new Date().toISOString());
+        if (!chainAdapter?.getAttestation || !chainAdapter.currentLedger) {
+          send(res, 503, { ok: false, error: "on-chain attestation validation is unavailable" }, corsOrigin);
+          return;
+        }
+        const attestation = await chainAdapter.getAttestation(commitment.attestationUid);
+        const ledger = await chainAdapter.currentLedger();
+        if (!attestation) {
+          send(res, 422, { ok: false, error: "attestation UID does not exist on-chain" }, corsOrigin);
+          return;
+        }
+        if (attestation.schemaId.toLowerCase() !== commitment.schemaId.toLowerCase()) {
+          send(res, 422, { ok: false, error: "attestation schema does not match submission" }, corsOrigin);
+          return;
+        }
+        if (attestation.revocationLedger !== 0) {
+          send(res, 422, { ok: false, error: "attestation has been revoked" }, corsOrigin);
+          return;
+        }
+        if (attestation.expirationLedger !== 0 && attestation.expirationLedger <= ledger) {
+          send(res, 422, { ok: false, error: "attestation has expired" }, corsOrigin);
+          return;
+        }
+        if (!verifyHolderSignature({
+          attestationUid: commitment.attestationUid,
+          schemaId: commitment.schemaId,
+          leaf: commitment.leaf,
+          signature: commitment.holderSignature,
+          stealthAddressHash: attestation.stealthAddressHash,
+        })) {
+          send(res, 422, { ok: false, error: "holder signature does not control the attested stealth identity" }, corsOrigin);
+          return;
+        }
         metrics.totalSubmitted += 1;
         const accepted = store.writeInbox(commitment);
         if (!accepted) {

@@ -102,6 +102,7 @@ Variables:
 | `PUBLISHER_SECRET` | required | Signer allowed to call `update_merkle_root`. On current testnet this is the verifier admin. |
 | `DEPLOYER_SECRET` | fallback | Accepted only as a local/testnet convenience when `PUBLISHER_SECRET` is unset. |
 | `REPUTATION_VERIFIER_ID` | manifest value | Override verifier contract id. |
+| `ATTESTATION_ENGINE_V2_ID` | manifest value | Override attestation-engine-v2 contract id used to validate and prune submissions. |
 | `STELLAR_RPC_URL` | manifest RPC | Soroban RPC endpoint. |
 | `PUBLISHER_INTERVAL_MS` | `15000` | Loop interval for continuous publishing. |
 | `PUBLISHER_HTTP_HOST` | `127.0.0.1` | HTTP API bind host. |
@@ -141,7 +142,7 @@ Endpoints:
 | `GET` | `/metrics` | Prometheus exposition format metrics (inbox depth, latency, publication counters). |
 | `GET` | `/health` | Health check with verifier id, inbox depth, and last publish time. |
 
-Submit body:
+Submit body (the holder signature is recoverable secp256k1 over the domain-separated UID, schema, and leaf):
 
 ```json
 {
@@ -149,6 +150,7 @@ Submit body:
   "leaf": "0x...",
   "schemaId": "0x...",
   "attestationUid": "0x...",
+  "holderSignature": "0x...",
   "txHash": "...",
   "ledger": 3123456
 }
@@ -180,9 +182,11 @@ npm run submit:leaf -- \
   --leaf 0x0000000000000000000000000000000000000000000000000000000000000001
 ```
 
-The real wallet should submit the actual V2 leaf commitment it computed from the holder's
-private attestation material. The publisher only checks shape and dedupe; it cannot prove
-the leaf is semantically valid until a user later proves inclusion with the Groth16 proof.
+The holder signs `OPAQUE_REPUTATION_SUBMISSION_V1\n<attestationUid>\n<schemaId>\n<leaf>` with the
+private key for the attested stealth address. The publisher verifies that signature against
+the on-chain recipient hash and checks schema, revocation, and expiration before queueing and
+again immediately before publication. Revoked and expired leaves are removed on the next
+publisher tick; removal compacts the tree, so surviving holders must fetch fresh inclusion paths.
 
 ## Run One Tick
 

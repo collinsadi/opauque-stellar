@@ -100,10 +100,11 @@ context).
 
 ```ts
 const proof = await opaque.reputation.prove({
-  attestationId,                 // numeric trait/attestation id (must fit u64)
+  attestationId,                 // schema id field from the attestation (32-byte hex or bigint)
   stealthPrivKey,                // the holder's stealth private key (32 bytes)
   externalNullifier: 42n,        // your app context id (must fit u64)
-  usePublisher: true,            // prove against the publisher's real Merkle path
+  attestationWitness: { issuerPkX, traitDataHash, nonce }, // private fields for the actual leaf
+  publisherProof,                // { root, pathElements, pathIndices } from GET /v1/reputation/root/:leaf
 });
 // proof.proofA/B/C, merkleRoot, attestationId, nullifierHash, externalNullifier, publicSignals
 ```
@@ -170,7 +171,8 @@ const holder = new OpaqueClient({
 await holder.reputation.submitLeaf({ attestationId, stealthPrivKey });
 // ...after the next publish tick:
 const txHash = await holder.reputation.proveAndVerify({
-  attestationId, stealthPrivKey, externalNullifier: 42n, usePublisher: true,
+  attestationId, stealthPrivKey, externalNullifier: 42n,
+  attestationWitness, publisherProof,
 });
 ```
 

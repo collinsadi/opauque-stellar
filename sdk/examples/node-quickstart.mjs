@@ -58,6 +58,8 @@ if (circuitsDir) {
     attestationId: 7,
     stealthPrivKey: recipient.spendingKey,
     externalNullifier: 42n,
+    attestationWitness,
+    publisherProof,
   });
   console.log("proof generated:", {
     proofA: proof.proofA.length + " bytes",

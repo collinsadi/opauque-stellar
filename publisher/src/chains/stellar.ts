@@ -16,7 +16,7 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import { hex32ToBytes } from "../bytes.ts";
-import type { ChainAdapter } from "../types.ts";
+import type { ChainAdapter, OnChainAttestation } from "../types.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -24,6 +24,7 @@ export interface StellarPublisherConfig {
   rpcUrl: string;
   networkPassphrase: string;
   verifierId: string;
+  attestationEngineId: string;
   publisher: Keypair;
 }
 
@@ -51,6 +52,38 @@ export class StellarReputationAdapter implements ChainAdapter {
     } catch {
       return null;
     }
+  }
+
+  async currentLedger(): Promise<number> {
+    return (await this.server.getLatestLedger()).sequence;
+  }
+
+  async getAttestation(uid: string): Promise<OnChainAttestation | null> {
+    const account = await this.server.getAccount(this.cfg.publisher.publicKey());
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: this.cfg.networkPassphrase,
+    })
+      .addOperation(new Contract(this.cfg.attestationEngineId).call(
+        "get_attestation",
+        xdr.ScVal.scvBytes(Buffer.from(hex32ToBytes(uid))),
+      ))
+      .setTimeout(30)
+      .build();
+    const sim = await this.server.simulateTransaction(tx);
+    if (rpc.Api.isSimulationError(sim) || !sim.result?.retval) return null;
+    const value = scValToNative(sim.result.retval) as Record<string, unknown>;
+    const bytesHex = (field: unknown): string => {
+      if (field instanceof Uint8Array) return `0x${Buffer.from(field).toString("hex")}`;
+      if (Array.isArray(field)) return `0x${Buffer.from(field as number[]).toString("hex")}`;
+      throw new Error("unexpected attestation bytes field");
+    };
+    return {
+      schemaId: bytesHex(value.schema_id ?? value.schemaId),
+      stealthAddressHash: bytesHex(value.stealth_address_hash ?? value.stealthAddressHash),
+      expirationLedger: Number(value.expiration_ledger ?? value.expirationLedger),
+      revocationLedger: Number(value.revocation_ledger ?? value.revocationLedger),
+    };
   }
 
   async postRoot(root: string, datasetHash: string): Promise<{ hash: string; ledger?: number }> {

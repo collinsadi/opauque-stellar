@@ -32,16 +32,21 @@ The **external nullifier** scopes a proof to an application context; the
 ```ts
 // generate (needs circuit artifacts)
 const proof = await opaque.reputation.prove({
-  attestationId,
+   attestationId: schemaIdField,
   stealthPrivKey,
   externalNullifier: 42n,
+   attestationWitness, // issuerPkX, traitDataHash, nonce for the actual leaf
+   publisherProof, // root, pathElements, pathIndices from the publisher
 });
 
 // verify on-chain — returns the tx hash; reverts on replay or stale root
 const txHash = await opaque.reputation.verifyOnChain(proof);
 
 // or in one call
-await opaque.reputation.proveAndVerify({ attestationId, stealthPrivKey, externalNullifier: 42n });
+await opaque.reputation.proveAndVerify({
+   attestationId: schemaIdField, stealthPrivKey, externalNullifier: 42n,
+   attestationWitness, publisherProof,
+});
 ```
 
 Already have a proof from elsewhere? Pass the bundle straight to `verifyOnChain`

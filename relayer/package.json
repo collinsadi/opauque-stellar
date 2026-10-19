@@ -6,8 +6,8 @@
   "description": "Relayer market node and gateway for Opaque Stellar privacy-pool withdrawals",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "vitest run --config vitest.config.ts",
+    "test:watch": "vitest --config vitest.config.ts",
     "hub": "tsx scripts/hub.ts",
     "register": "tsx scripts/register.ts",
     "relayer": "tsx scripts/relayer.ts",

@@ -142,8 +142,13 @@ function readJsonFile<T>(filePath: string): T | null {
   return readJson<T>(filePath);
 }
 
-function writeJsonFile(filePath: string, data: unknown, replacer?: (key: string, value: unknown) => unknown): void {
-  writeAtomic(filePath, JSON.stringify(data, replacer, 2) + "\n");
+function writeJsonFile(
+  filePath: string,
+  data: unknown,
+  replacer?: (key: string, value: unknown) => unknown,
+): void {
+  ensureDir(filePath);
+  writeFileSync(filePath, JSON.stringify(data, replacer ?? null, 2) + "\n", "utf8");
 }
 
 function serialiseBigInt(_key: string, value: unknown): unknown {
@@ -151,11 +156,14 @@ function serialiseBigInt(_key: string, value: unknown): unknown {
   return value;
 }
 
-function deserialiseBigInt(_key: string, value: unknown): unknown {
-  if (typeof value === "string" && value.startsWith("__bigint__:")) {
-    return BigInt(value.slice("__bigint__:".length));
+function deserializeFee(value: unknown): bigint {
+  if (typeof value === "bigint") return value;
+  if (typeof value === "number" && Number.isInteger(value)) return BigInt(value);
+  if (typeof value === "string") {
+    const decimal = value.startsWith("__bigint__:") ? value.slice("__bigint__:".length) : value;
+    return BigInt(decimal);
   }
-  return value;
+  throw new TypeError("ledger expectedFee must be an integer");
 }
 
 export class FileHubStore implements HubStore {
@@ -229,9 +237,7 @@ export class FileLedgerStore implements LedgerStore {
     if (!raw || raw.version !== STATE_VERSION) return null;
     return (raw.entries ?? []).map((e) => ({
       ...e,
-      expectedFee: typeof e.expectedFee === "string"
-        ? JSON.parse(e.expectedFee, deserialiseBigInt) as bigint
-        : e.expectedFee,
+      expectedFee: deserializeFee(e.expectedFee),
     }));
   }
 

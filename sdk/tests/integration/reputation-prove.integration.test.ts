@@ -7,11 +7,12 @@
 import { describe, it, expect } from "vitest";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import {
-  buildReputationWitnessV2,
-  proveReputationV2,
-  fileArtifactResolver,
-} from "../../src/index";
+import { buildReputationWitnessV2, proveReputationV2 } from "../../src/prove/reputation";
+import { fileArtifactResolver } from "../../src/artifacts";
+import { getPoseidon } from "../../src/crypto/notes";
+import { bytesToBigInt } from "../../src/crypto/bytes";
+import { buildProof } from "../../../publisher/src/merkle";
+import { bigintToHex32 } from "../../../publisher/src/bytes";
 
 const PUBLIC_DIR = resolve(process.cwd(), "../frontend/public");
 const WASM = resolve(PUBLIC_DIR, "circuits/v2/stealth_reputation.wasm");
@@ -20,10 +21,25 @@ const HAVE_ARTIFACTS = existsSync(WASM) && existsSync(ZKEY);
 
 describe.skipIf(!HAVE_ARTIFACTS)("reputation prover (real artifacts)", () => {
   it("generates a Groth16 proof and serializes it for the contract", async () => {
+    const stealthPrivKey = new Uint8Array(32).fill(3);
+    const attestationWitness = { issuerPkX: 12n, traitDataHash: 34n, nonce: 56n };
+    const poseidon = await getPoseidon() as unknown as ((inputs: bigint[]) => unknown) & {
+      F: { e(value: bigint): unknown; toObject(value: unknown): bigint };
+    };
+    const stealthPk = poseidon.F.toObject(poseidon.F.e(bytesToBigInt(stealthPrivKey)));
+    const leaf = poseidon.F.toObject(poseidon([
+      stealthPk, 7n, attestationWitness.issuerPkX,
+      attestationWitness.traitDataHash, attestationWitness.nonce,
+    ]));
     const input = {
       attestationId: 7,
-      stealthPrivKey: new Uint8Array(32).fill(3),
+      stealthPrivKey,
       externalNullifier: 99n,
+      attestationWitness,
+      publisherProof: await buildProof(
+        [bigintToHex32(1n), bigintToHex32(leaf), bigintToHex32(2n)],
+        bigintToHex32(leaf),
+      ),
     };
     const artifacts = fileArtifactResolver({ baseDir: PUBLIC_DIR });
 

@@ -4,8 +4,10 @@ import { readJson, writeAtomic } from "../../shared/atomic-file.ts";
 import { normalizeHex32 } from "./bytes.ts";
 import { validateLeafCommitment } from "./validate.ts";
 import type { LeafCommitment, PublisherState, QuarantinedFile } from "./types.ts";
+import { createLogger } from "./logger.ts";
 
 const DEFAULT_MAX_INBOX_SIZE = 10_000;
+const log = createLogger("publisher-store");
 
 export interface Store {
   load(verifierId: string): PublisherState | null;

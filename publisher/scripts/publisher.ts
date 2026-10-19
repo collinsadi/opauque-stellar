@@ -26,6 +26,7 @@ function loadConfig() {
   const network = resolveDeploymentNetwork(process.env.OPAQUE_NETWORK ?? process.env.STELLAR_NETWORK ?? "testnet");
   const manifest = getDeploymentManifest(network) as any;
   const verifierId = process.env.REPUTATION_VERIFIER_ID?.trim() || requireDeployedContract(manifest, "reputationVerifier", "publisher");
+  const attestationEngineId = process.env.ATTESTATION_ENGINE_V2_ID?.trim() || requireDeployedContract(manifest, "attestationEngineV2", "publisher");
 
   const secret = process.env.PUBLISHER_SECRET?.trim() ?? process.env.DEPLOYER_SECRET?.trim();
   if (!secret) throw new Error("set PUBLISHER_SECRET (current testnet requires the verifier admin key)");
@@ -34,6 +35,7 @@ function loadConfig() {
     network,
     networkPassphrase: process.env.NETWORK_PASSPHRASE?.trim() || manifest.networkPassphrase,
     verifierId,
+    attestationEngineId,
     publisher: Keypair.fromSecret(secret),
     rpcUrl: process.env.STELLAR_RPC_URL ?? manifest.rpcUrl ?? "https://soroban-testnet.stellar.org",
     intervalMs: numberEnv("PUBLISHER_INTERVAL_MS", 15000, { min: 1 }),
@@ -46,6 +48,7 @@ function loadConfig() {
 async function tick(cfg, adapter, store, metrics, parentLogger = createLogger("publisher")) {
   const res = await runPublisherTick({
     verifierId: cfg.verifierId,
+    attestationEngineId: cfg.attestationEngineId,
     adapter,
     store,
     dataDir: cfg.dataDir,

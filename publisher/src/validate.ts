@@ -43,24 +43,30 @@ export function validateLeafCommitment(raw: unknown): CommitmentValidation {
   if ("id" in obj && typeof obj.id === "string") {
     const trimmed = obj.id.trim();
     if (!trimmed) errors.push("id must not be empty");
-  } else if (!("attestationUid" in obj)) {
-    errors.push("id is required (or provide attestationUid)");
   }
 
-  if ("schemaId" in obj && typeof obj.schemaId === "string") {
+  if (typeof obj.schemaId === "string") {
     try {
       normalizeHex32(obj.schemaId, "schemaId");
     } catch {
-      errors.push("schemaId must be a 0x-prefixed 32-byte hex string if provided");
+      errors.push("schemaId must be a 0x-prefixed 32-byte hex string");
     }
+  } else {
+    errors.push("schemaId is required");
   }
 
-  if ("attestationUid" in obj && typeof obj.attestationUid === "string") {
+  if (typeof obj.attestationUid === "string") {
     try {
       normalizeHex32(obj.attestationUid, "attestationUid");
     } catch {
-      errors.push("attestationUid must be a 0x-prefixed 32-byte hex string if provided");
+      errors.push("attestationUid must be a 0x-prefixed 32-byte hex string");
     }
+  } else {
+    errors.push("attestationUid is required");
+  }
+
+  if (typeof obj.holderSignature !== "string" || !/^(0x)?[0-9a-fA-F]{130}$/.test(obj.holderSignature)) {
+    errors.push("holderSignature must be a 65-byte recoverable secp256k1 signature");
   }
 
   if ("ledger" in obj && obj.ledger !== undefined) {
@@ -78,15 +84,17 @@ export function validateLeafCommitment(raw: unknown): CommitmentValidation {
   }
 
   const leaf = normalizeHex32(String(obj.leaf), "leaf");
-  const id = String(obj.id ?? obj.attestationUid ?? leaf).trim().toLowerCase();
+  const attestationUid = normalizeHex32(String(obj.attestationUid), "attestationUid");
+  const id = String(obj.id ?? attestationUid).trim().toLowerCase();
 
   return {
     ok: true,
     commitment: {
       id,
       leaf,
-      schemaId: obj.schemaId ? normalizeHex32(obj.schemaId, "schemaId") : undefined,
-      attestationUid: obj.attestationUid ? normalizeHex32(obj.attestationUid, "attestationUid") : undefined,
+      schemaId: normalizeHex32(String(obj.schemaId), "schemaId"),
+      attestationUid,
+      holderSignature: obj.holderSignature as string,
       txHash: typeof obj.txHash === "string" ? obj.txHash : undefined,
       ledger: typeof obj.ledger === "number" ? obj.ledger : undefined,
       // Server-assigned timestamp — never trust client-supplied submittedAt (#967)
