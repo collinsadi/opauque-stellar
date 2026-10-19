@@ -65,7 +65,19 @@ An attacker with access to your note keys can extract all of your privacy pool f
 **What it is:** Protects all encrypted secrets stored in the browser's `localStorage`. The password:
 - Is never sent to any server
 - Is held only in memory while the app is running
-- Is derived into an encryption key using PBKDF2 (600,000 iterations)
+- Is derived into an encryption key using a shared PBKDF2 configuration (see below)
+
+**Unified KDF parameters.** Every wallet-encryption path (ghost-address keys, generic encrypted storage, pool-note backups, and the full recovery backup) derives its key with one shared configuration:
+
+| Parameter | Value |
+|-----------|-------|
+| Algorithm | PBKDF2 |
+| Hash | SHA-256 |
+| Iterations | 600,000 |
+| Salt | 16 bytes (random per payload) |
+| Key length | 256 bits (AES-256-GCM) |
+
+Encrypted payloads written before this unification carry their original iteration count in the file (or fall back to the legacy value) and continue to decrypt after the change.
 
 **Loss consequence:** If you forget your password, all encrypted secrets (wallet key, stealth key, note keys, backups) stored in the browser become permanently inaccessible. You can only recover if you have an offline plaintext backup.
 

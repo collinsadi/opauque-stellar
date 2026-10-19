@@ -122,7 +122,7 @@ export const MITIGATIONS: ThreatMitigation[] = [
     threat: "Compromised reputation root",
     mitigation: "Emergency freeze + stale root UI",
     issue: "#85",
-    implementation: "none in this build (reputation dashboard and freeze UI removed in #1140)",
+    implementation: "useFreezeStatus hook blocks proof generation and warns in My Traits while the root is frozen or stale; polling pauses when the tab is hidden",
   },
   {
     id: "M13",

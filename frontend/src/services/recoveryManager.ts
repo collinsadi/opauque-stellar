@@ -1,3 +1,5 @@
+import { KDF_ITERATIONS, KDF_KEY_LENGTH_BITS, KDF_PARAMS } from "../lib/kdfConfig";
+
 export interface BackupPayload {
   stealthMasterKeys: unknown[];
   metaAddresses: unknown[];
@@ -15,11 +17,16 @@ export interface BackupFile {
   encrypted_payload: string; // Base64
   salt: string; // Base64
   nonce: string; // Base64
+  /** PBKDF2 iteration count used for this payload. Absent on legacy files (100,000). */
+  iterations?: number;
 }
 
+/** Iterations used by pre-unified backups; used when `iterations` is absent. */
+const LEGACY_ITERATIONS = 100_000;
+
 export class RecoveryManager {
-  private static ITERATIONS = 100000;
-  private static KEY_LENGTH = 256;
+  private static ITERATIONS = KDF_ITERATIONS;
+  private static KEY_LENGTH = KDF_KEY_LENGTH_BITS;
 
   private static async getDerivationKey(password: string): Promise<CryptoKey> {
     const enc = new TextEncoder();
@@ -35,12 +42,13 @@ export class RecoveryManager {
   private static async deriveAESKey(
     passwordKey: CryptoKey,
     salt: Uint8Array,
+    iterations: number = this.ITERATIONS,
   ): Promise<CryptoKey> {
     return globalThis.crypto.subtle.deriveKey(
       {
         name: "PBKDF2",
         salt: new Uint8Array(salt),
-        iterations: this.ITERATIONS,
+        iterations,
         hash: "SHA-256",
       },
       passwordKey,
@@ -91,6 +99,7 @@ export class RecoveryManager {
       encrypted_payload: btoa(String.fromCharCode(...ciphertext)),
       salt: btoa(String.fromCharCode(...salt)),
       nonce: btoa(String.fromCharCode(...nonce)),
+      iterations: KDF_PARAMS.iterations,
     };
   }
 
@@ -117,7 +126,11 @@ export class RecoveryManager {
     }
 
     const passwordKey = await this.getDerivationKey(password);
-    const aesKey = await this.deriveAESKey(passwordKey, salt);
+    const iterations =
+      typeof backup.iterations === "number" && backup.iterations > 0
+        ? backup.iterations
+        : LEGACY_ITERATIONS;
+    const aesKey = await this.deriveAESKey(passwordKey, salt, iterations);
 
     try {
       const decryptedContent = await globalThis.crypto.subtle.decrypt(

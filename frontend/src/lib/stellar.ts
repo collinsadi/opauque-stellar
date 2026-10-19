@@ -8,6 +8,7 @@ import {
   Contract,
   Horizon,
   Keypair,
+  Memo,
   Operation,
   TransactionBuilder,
   nativeToScVal,
@@ -540,6 +541,7 @@ export async function sendNativePayment(opts: {
   destinationExists?: boolean;
   feeStroops?: bigint;
   signTransaction?: SignTxFn;
+  memo?: string;
 }): Promise<string> {
   const horizon = getHorizonServer();
   const passphrase = getNetworkPassphrase();
@@ -550,6 +552,7 @@ export async function sendNativePayment(opts: {
   const builder = new TransactionBuilder(sourceAccount, {
     fee: (opts.feeStroops ?? BigInt(BASE_FEE)).toString(),
     networkPassphrase: passphrase,
+    memo: opts.memo ? Memo.text(opts.memo) : undefined,
   });
 
   builder.addOperation(

@@ -31,6 +31,15 @@ Transaction hashes and ledger numbers are already public on the Stellar blockcha
 
 Zero-knowledge proofs are generated entirely locally in your browser using WebAssembly. The proof computation never sends intermediate witness data to any server.
 
+## Claim Destinations and Identity Linkage
+
+Withdrawing a stealth balance to your connected (main) wallet links the
+one-time stealth address to your public identity. The UI no longer offers a
+one-click shortcut that fills the claim destination with the connected
+wallet. Choosing that destination now requires explicitly acknowledging the
+linkage in a checkbox before the option becomes available. Prefer a fresh
+address when privacy matters.
+
 ## Transparency
 
 We are transparent about what data leaves your browser. If you find any privacy claim that is inaccurate, please report it as a security issue.

@@ -497,6 +497,7 @@ export async function withdrawFromGhostAddress(
   getMasterKeys: () => MasterKeys,
   wasm: StealthLifecycleWasm,
   onStatus: WithdrawalStatusCallback,
+  memo?: string,
 ): Promise<string> {
   if (asset.type !== "native") {
     throw new Error("Only native XLM ghost withdrawals are supported.");
@@ -516,13 +517,14 @@ export async function withdrawFromGhostAddress(
     getMasterKeys(),
     wasm,
   );
-  return executeStealthWithdrawal(stealthPrivKeyHex, destination, onStatus);
+  return executeStealthWithdrawal(stealthPrivKeyHex, destination, onStatus, memo);
 }
 
 export async function executeStealthWithdrawal(
   stealthPrivKeyHex: string,
   destination: string,
   onStatus: WithdrawalStatusCallback,
+  memo?: string,
 ): Promise<string> {
   const stealthPrivBytes = hexToBytes(
     stealthPrivKeyHex.startsWith("0x")
@@ -572,6 +574,7 @@ export async function executeStealthWithdrawal(
     amountStroops: quote.spendableStroops,
     destinationExists: quote.destinationExists,
     feeStroops: quote.feeStroops,
+    memo: memo?.trim() || undefined,
   });
 
   onStatus({ tag: "DONE", label: "Sweep complete", detail: hash });
