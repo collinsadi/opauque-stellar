@@ -13,6 +13,7 @@
 import { useEffect, useMemo, useState, useCallback, useId } from "react";
 import { useWallet } from "../hooks/useWallet";
 import { useSchemaStore } from "../store/schemaStore";
+import { validateStellarAddress, getAddressValidationError } from "../lib/stellarAddress";
 import type { SchemaV2 } from "../lib/schema";
 import {
   bytesToHex,
@@ -164,6 +165,7 @@ function SchemaCard({
   const uid = useId();
 
   const [delegateInput, setDelegateInput] = useState("");
+  const [delegateError, setDelegateError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null); // action label currently running
   const [confirmDeprecateOpen, setConfirmDeprecateOpen] = useState(false);
 
@@ -182,6 +184,12 @@ function SchemaCard({
   const handleAddDelegate = useCallback(async () => {
     const delegate = delegateInput.trim();
     if (!delegate) return;
+    const validationError = getAddressValidationError(delegate);
+    if (validationError) {
+      setDelegateError(validationError);
+      return;
+    }
+    setDelegateError(null);
     setBusy("Add delegate");
     try {
       await onAddDelegate(schema, delegate);
@@ -250,24 +258,34 @@ function SchemaCard({
 
           {/* Add delegate */}
           {!schema.deprecated && !readOnly && (
-            <div className="flex gap-2 pt-1">
-              <input
-                id={`${uid}-delegate`}
-                type="text"
-                placeholder="Delegate wallet address (base58)"
-                value={delegateInput}
-                onChange={(e) => setDelegateInput(e.target.value)}
-                disabled={isBusy}
-                className="flex-1 rounded-lg border border-ink-700 bg-ink-800 px-3 py-1.5 text-xs text-white placeholder-ink-500 focus:outline-none focus:border-white transition-colors disabled:opacity-50"
-              />
-              <button
-                type="button"
-                onClick={() => void handleAddDelegate()}
-                disabled={isBusy || !delegateInput.trim()}
-                className="rounded-lg bg-ink-700 hover:bg-ink-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                {busy === "Add delegate" ? "…" : "Add"}
-              </button>
+            <div className="space-y-1 pt-1">
+              <div className="flex gap-2">
+                <input
+                  id={`${uid}-delegate`}
+                  type="text"
+                  placeholder="Delegate address (G... or C... StrKey)"
+                  value={delegateInput}
+                  onChange={(e) => {
+                    setDelegateInput(e.target.value);
+                    setDelegateError(null);
+                  }}
+                  disabled={isBusy}
+                  className={`flex-1 rounded-lg border bg-ink-800 px-3 py-1.5 text-xs text-white placeholder-ink-500 focus:outline-none focus:border-white transition-colors disabled:opacity-50 ${
+                    delegateError ? "border-red-500" : "border-ink-700"
+                  }`}
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleAddDelegate()}
+                  disabled={isBusy || !delegateInput.trim()}
+                  className="rounded-lg bg-ink-700 hover:bg-ink-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  {busy === "Add delegate" ? "…" : "Add"}
+                </button>
+              </div>
+              {delegateError && (
+                <p className="text-xs text-red-400">{delegateError}</p>
+              )}
             </div>
           )}
         </div>
