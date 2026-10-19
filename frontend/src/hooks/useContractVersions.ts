@@ -19,20 +19,30 @@ import { getSorobanServer } from "../lib/stellar";
 import { getNetworkPassphrase } from "../lib/chain";
 import { isSimulationSuccess } from "../lib/sorobanErrors";
 import { deployedAddresses } from "../contracts/deployedAddresses";
+import { getPoolConfig } from "../contracts/poolConfig";
+import { getRelayerConfig } from "../contracts/relayerConfig";
 import {
   parseVersionFromNative,
   getVersionStatus,
   type ContractVersionInfo,
 } from "../lib/contractVersion";
 
-const CONTRACT_ENTRIES: { key: keyof typeof deployedAddresses; name: string }[] = [
+const CONTRACT_ENTRIES: { key: keyof typeof deployedAddresses | "privacyPool" | "relayerRegistry"; name: string }[] = [
   { key: "stealthRegistry", name: "Stealth Registry" },
   { key: "stealthAnnouncer", name: "Stealth Announcer" },
   { key: "groth16Verifier", name: "Groth16 Verifier" },
   { key: "reputationVerifier", name: "Reputation Verifier" },
   { key: "schemaRegistry", name: "Schema Registry" },
   { key: "attestationEngineV2", name: "Attestation Engine V2" },
+  { key: "privacyPool", name: "Privacy Pool" },
+  { key: "relayerRegistry", name: "Relayer Registry" },
 ];
+
+function resolveContractId(key: keyof typeof deployedAddresses | "privacyPool" | "relayerRegistry"): string {
+  if (key === "privacyPool") return getPoolConfig()?.poolId ?? "";
+  if (key === "relayerRegistry") return getRelayerConfig()?.registryId ?? "";
+  return (deployedAddresses as Record<string, string>)[key] ?? "";
+}
 
 async function readContractVersion(
   server: ReturnType<typeof getSorobanServer>,
@@ -71,7 +81,7 @@ export interface UseContractVersionsResult {
 export function useContractVersions(sourcePublicKey: string | null | undefined): UseContractVersionsResult {
   const [versions, setVersions] = useState<ContractVersionInfo[]>(() =>
     CONTRACT_ENTRIES.map((e) => ({
-      contractId: (deployedAddresses as Record<string, string>)[e.key] ?? "",
+      contractId: resolveContractId(e.key),
       contractName: e.name,
       version: null,
       status: "unknown" as const,
@@ -90,7 +100,7 @@ export function useContractVersions(sourcePublicKey: string | null | undefined):
 
       const results = await Promise.allSettled(
         CONTRACT_ENTRIES.map(async (entry) => {
-          const contractId = (deployedAddresses as Record<string, string>)[entry.key] ?? "";
+          const contractId = resolveContractId(entry.key);
           const version = await readContractVersion(server, passphrase, sourcePublicKey, contractId);
           return {
             contractId,
@@ -106,7 +116,7 @@ export function useContractVersions(sourcePublicKey: string | null | undefined):
           if (r.status === "fulfilled") return r.value;
           const entry = CONTRACT_ENTRIES[i]!;
           return {
-            contractId: (deployedAddresses as Record<string, string>)[entry.key] ?? "",
+            contractId: resolveContractId(entry.key),
             contractName: entry.name,
             version: null,
             status: "unknown" as const,
