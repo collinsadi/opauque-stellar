@@ -9,9 +9,11 @@
  * - Compromised browser extensions with full DOM access
  */
 
-const PBKDF2_ITERATIONS = 600_000;
-const SALT_BYTES = 16;
-const IV_BYTES = 12;
+import { KDF_ITERATIONS, KDF_IV_BYTES, KDF_SALT_BYTES } from "./kdfConfig";
+
+const PBKDF2_ITERATIONS = KDF_ITERATIONS;
+const SALT_BYTES = KDF_SALT_BYTES;
+const IV_BYTES = KDF_IV_BYTES;
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const copy = new Uint8Array(bytes.byteLength);

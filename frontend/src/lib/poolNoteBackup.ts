@@ -1,10 +1,12 @@
 import JSZip from "jszip";
 import type { PoolNote } from "./poolNotes";
+import { KDF_ITERATIONS, KDF_PARAMS } from "./kdfConfig";
 
 export const BACKUP_FORMAT_VERSION = 2;
 export const BACKUP_SCHEMA_URI =
   "https://opaque.cash/schemas/pool-notes-backup-v2.json";
-export const KDF_ITERATIONS = 250_000;
+export const KDF_ITERATIONS_LEGACY_250K = 250_000;
+export const KDF_ITERATIONS = KDF_PARAMS.iterations;
 
 export interface VersionedNoteBackupEnvelope {
   $schema: string;
@@ -76,6 +78,7 @@ export async function computeSha256Hex(data: Uint8Array): Promise<string> {
 async function deriveBackupKey(
   pin: string,
   salt: Uint8Array<ArrayBuffer>,
+  iterations: number = KDF_ITERATIONS,
 ): Promise<CryptoKey> {
   const material = await crypto.subtle.importKey(
     "raw",
@@ -88,7 +91,7 @@ async function deriveBackupKey(
     {
       name: "PBKDF2",
       salt,
-      iterations: KDF_ITERATIONS,
+      iterations,
       hash: "SHA-256",
     },
     material,
@@ -290,7 +293,11 @@ export async function importEncryptedPoolNoteBackup(
 
   const salt = base64ToBytes(envelope.salt);
   const iv = base64ToBytes(envelope.iv);
-  const key = await deriveBackupKey(pin, salt);
+  const iterations =
+    typeof envelope.iterations === "number" && envelope.iterations > 0
+      ? envelope.iterations
+      : KDF_ITERATIONS;
+  const key = await deriveBackupKey(pin, salt, iterations);
 
   let decryptedPlaintext: string;
   try {

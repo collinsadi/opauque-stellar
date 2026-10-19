@@ -430,6 +430,9 @@ export function PrivateBalanceView() {
   const [destinationByTxId, setDestinationByTxId] = useState<
     Record<string, string>
   >({});
+  const [acknowledgeLinkageByTxId, setAcknowledgeLinkageByTxId] = useState<
+    Record<string, boolean>
+  >({});
   const [newlyDetectedIds, setNewlyDetectedIds] = useState<string[]>([]);
   const [claimModalTx, setClaimModalTx] = useState<FoundTx | null>(null);
   const [withdrawalPreview, setWithdrawalPreview] = useState<{
@@ -623,8 +626,15 @@ export function PrivateBalanceView() {
     setDestinationByTxId((prev) => ({ ...prev, [txId]: value }));
   }, []);
 
+  const setAcknowledgeLinkage = useCallback(
+    (txId: string, value: boolean) => {
+      setAcknowledgeLinkageByTxId((prev) => ({ ...prev, [txId]: value }));
+    },
+    [],
+  );
+
   const handleClaim = useCallback(
-    async (tx: FoundTx, destination: string) => {
+    async (tx: FoundTx, destination: string, memo?: string) => {
       const trimmed = destination.trim();
       const isGhost = tx.id.startsWith("ghost-");
       if (!isGhost && !tx.privateKey) return;
@@ -712,12 +722,14 @@ export function PrivateBalanceView() {
             keysContext.getMasterKeys!,
             wasm!,
             onStatus,
+            memo,
           );
         } else {
           withdrawalHash = await executeStealthWithdrawal(
             tx.privateKey as `0x${string}`,
             trimmed,
             onStatus,
+            memo,
           );
         }
         const amountFormatted = formatXlm(amountRaw);
@@ -1473,15 +1485,32 @@ export function PrivateBalanceView() {
                         className="input-field text-sm"
                       />
                       {mainWalletAddress && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setDestination(tx.id, mainWalletAddress)
-                          }
-                          className="mt-1.5 px-2 py-1 text-xs rounded-md btn-secondary"
-                        >
-                          Use connected wallet
-                        </button>
+                        <div className="mt-1.5 space-y-1.5">
+                          <label className="flex items-start gap-2 text-xs text-mist/80 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={acknowledgeLinkageByTxId[tx.id] ?? false}
+                              onChange={(e) =>
+                                setAcknowledgeLinkage(tx.id, e.target.checked)
+                              }
+                              className="mt-0.5"
+                            />
+                            <span>
+                              I understand that sending to my connected wallet links
+                              this transaction to my identity.
+                            </span>
+                          </label>
+                          <button
+                            type="button"
+                            disabled={!acknowledgeLinkageByTxId[tx.id]}
+                            onClick={() =>
+                              setDestination(tx.id, mainWalletAddress)
+                            }
+                            className="px-2 py-1 text-xs rounded-md btn-secondary disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            Use connected wallet
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -1559,10 +1588,11 @@ export function PrivateBalanceView() {
             onDestinationChange={(value: string) =>
               setDestination(claimModalTx.id, value)
             }
-            onConfirm={() =>
+            onConfirm={(memo) =>
               handleClaim(
                 claimModalTx,
                 destinationByTxId[claimModalTx.id] ?? "",
+                memo,
               )
             }
             onClose={() => {

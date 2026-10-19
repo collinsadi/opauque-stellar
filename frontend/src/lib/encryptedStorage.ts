@@ -16,9 +16,11 @@
  * This module is a generic version for arbitrary JSON-serializable state.
  */
 
-const PBKDF2_ITERATIONS = 600_000;
-const SALT_BYTES = 16;
-const IV_BYTES = 12;
+import { KDF_ITERATIONS, KDF_IV_BYTES, KDF_SALT_BYTES } from "./kdfConfig";
+
+const PBKDF2_ITERATIONS = KDF_ITERATIONS;
+const SALT_BYTES = KDF_SALT_BYTES;
+const IV_BYTES = KDF_IV_BYTES;
 const VERSION = 1;
 
 // ── Internal helpers ──────────────────────────────────────────────────

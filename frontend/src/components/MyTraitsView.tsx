@@ -30,6 +30,7 @@ import { ProofGeneratorModal } from "./ProofGeneratorModal";
 import { FeatureDisabledNotice } from "./FeatureDisabledNotice";
 import { UnscannedRangeNotice } from "./UnscannedRangeNotice";
 import { getFeatureFlags } from "../lib/featureFlags";
+import { useFreezeStatus } from "../hooks/useFreezeStatus";
 
 // =============================================================================
 // Constants
@@ -211,6 +212,7 @@ export function MyTraitsView({ onNavigate, readOnly = false }: MyTraitsViewProps
     announcerAddress: currentConfig?.announcerProgram ?? null,
     enabled: Boolean(cluster && currentConfig),
   });
+  const freeze = useFreezeStatus(publicKey);
   const { refresh: refreshScanner } = scanner;
   const hasAutoScannedRef = useRef(false);
 
@@ -441,6 +443,19 @@ export function MyTraitsView({ onNavigate, readOnly = false }: MyTraitsViewProps
       </div>
 
       <UnscannedRangeNotice range={scanner.progress.unscannedRange} />
+
+      {(freeze.frozen || freeze.stale) && freeze.message && (
+        <div
+          role="status"
+          className={`rounded-xl border px-4 py-3 text-sm ${
+            freeze.frozen
+              ? "border-error/30 bg-error/10 text-error"
+              : "border-warning/30 bg-warning/10 text-warning"
+          }`}
+        >
+          {freeze.message}
+        </div>
+      )}
 
       {/* Filter tabs */}
       {v2Traits.length > 0 && (

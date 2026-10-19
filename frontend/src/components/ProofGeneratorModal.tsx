@@ -12,6 +12,7 @@ import { useWallet } from "../hooks/useWallet";
 import { hexToBytes, hexPubkeyToBase58 } from "../lib/programs";
 import { useOpaqueWasm } from "../hooks/useOpaqueWasm";
 import { useKeys } from "../context/KeysContext";
+import { useFreezeStatus } from "../hooks/useFreezeStatus";
 import { getAnnouncementsForCluster } from "../lib/opaqueCache";
 import { getCluster } from "../lib/chain";
 import { submitProofOnChain } from "../lib/reputationProver";
@@ -198,6 +199,7 @@ export function ProofGeneratorModal({ trait, onClose }: ProofGeneratorModalProps
   const { publicKey, signTransaction } = useWallet();
   const { wasm, isReady: wasmReady } = useOpaqueWasm();
   const { isSetup, getMasterKeys } = useKeys();
+  const freeze = useFreezeStatus(publicKey);
   const [step, setStep] = useState<ProofStep>("setup");
   const [externalNullifier, setExternalNullifier] = useState("");
   const [proof, setProof] = useState<GeneratedProof | null>(null);
@@ -206,6 +208,13 @@ export function ProofGeneratorModal({ trait, onClose }: ProofGeneratorModalProps
   const [txSig, setTxSig] = useState<string | null>(null);
 
   const handleGenerate = async () => {
+    if (freeze.frozen) {
+      setError(
+        freeze.message ??
+          "Proof generation is blocked: the reputation root is frozen.",
+      );
+      return;
+    }
     if (!externalNullifier.trim()) {
       setError("External nullifier is required.");
       return;
@@ -389,6 +398,13 @@ export function ProofGeneratorModal({ trait, onClose }: ProofGeneratorModalProps
 
           {step === "setup" && (
             <>
+              {freeze.frozen && (
+                <div className="p-3 rounded-xl bg-error/10 border border-error/30 text-error text-sm">
+                  {freeze.message ??
+                    "Proof generation is blocked: the reputation root is frozen."}
+                </div>
+              )}
+
               <div className="space-y-2">
                 <label className="block text-sm font-medium text-white">
                   External Nullifier
@@ -413,10 +429,10 @@ export function ProofGeneratorModal({ trait, onClose }: ProofGeneratorModalProps
               <button
                 type="button"
                 onClick={handleGenerate}
-                disabled={!externalNullifier.trim()}
+                disabled={!externalNullifier.trim() || freeze.frozen}
                 className="w-full rounded-xl bg-white text-black border border-white py-3 text-sm font-semibold hover:bg-black hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
-                Generate Proof in Browser
+                {freeze.frozen ? "Proof generation blocked" : "Generate Proof in Browser"}
               </button>
 
               <p className="text-center text-xs text-ink-500">

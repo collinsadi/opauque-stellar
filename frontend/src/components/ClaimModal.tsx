@@ -6,6 +6,13 @@ import type { ProtocolStep } from "./ProtocolStepper";
 import { ExplorerLink } from "./ExplorerLink";
 import { ModalShell } from "./ModalShell";
 import type { NativeWithdrawalQuote } from "../lib/stellar";
+import {
+  memoRiskFor,
+  memoWarningCopy,
+  validateMemo,
+  type MemoType,
+} from "../lib/destination-memo";
+import { useMemo, useState } from "react";
 
 type ClaimModalProps = {
   tx: FoundTx;
@@ -22,7 +29,7 @@ type ClaimModalProps = {
   } | null;
   withdrawalSteps?: ProtocolStep[];
   onDestinationChange: (value: string) => void;
-  onConfirm: () => void;
+  onConfirm: (memo: string) => void;
   onClose: () => void;
 };
 
@@ -48,6 +55,20 @@ export function ClaimModal({
     !!mainWalletAddress &&
     destinationTrimmed.length > 0 &&
     destinationTrimmed === mainWalletAddress;
+
+  const [memo, setMemo] = useState("");
+  const memoRisk = useMemo(() => memoRiskFor(destinationTrimmed), [destinationTrimmed]);
+  const memoWarning = useMemo(
+    () => memoWarningCopy(memoRisk, memo),
+    [memoRisk, memo],
+  );
+  const recommendedType: MemoType = memoRisk.recommendedMemoType ?? "text";
+  const memoValidation = useMemo(
+    () => validateMemo(memoRisk.isKnownCustodian ? recommendedType : "text", memo || undefined),
+    [memoRisk.isKnownCustodian, recommendedType, memo],
+  );
+  const memoMissingForCustodian =
+    memoRisk.isKnownCustodian && (!memo.trim() || !memoValidation.ok);
 
   return (
     <ModalShell
@@ -135,6 +156,32 @@ export function ClaimModal({
         />
       </div>
 
+      {/* Memo field */}
+      <div className="mb-4">
+        <label className="block text-sm text-mist mb-1.5 font-mono">
+          Memo {memoRisk.isKnownCustodian && <span className="text-warning">(required)</span>}
+        </label>
+        <input
+          type="text"
+          value={memo}
+          onChange={(e) => setMemo(e.target.value)}
+          placeholder={
+            memoRisk.isKnownCustodian
+              ? `${memoRisk.custodianName ?? "Exchange"} deposit memo`
+              : "Optional memo"
+          }
+          className="input-field text-sm"
+        />
+        {memoWarning && (
+          <div className="mt-2 p-3 rounded-xl bg-warning/10 border border-warning/30 text-warning text-sm">
+            {memoWarning}
+          </div>
+        )}
+        {memo.trim().length > 0 && !memoValidation.ok && (
+          <p className="mt-1 text-xs text-error">{memoValidation.error}</p>
+        )}
+      </div>
+
       {/* Privacy meter */}
       <div className="mb-5">
         <p className="text-xs text-mist/70 mb-1.5 font-mono">Privacy check</p>
@@ -174,12 +221,13 @@ export function ClaimModal({
         </button>
         <button
           type="button"
-          onClick={onConfirm}
+          onClick={() => onConfirm(memo)}
           disabled={
             claiming ||
             !destinationTrimmed ||
             !quote ||
-            quote.spendableStroops <= 0n
+            quote.spendableStroops <= 0n ||
+            memoMissingForCustodian
           }
           className={`px-4 py-2 rounded-xl text-sm font-semibold bg-white border border-white text-black hover:bg-black hover:text-white disabled:opacity-40 disabled:cursor-not-allowed ${claiming ? "loading" : ""}`}
         >
