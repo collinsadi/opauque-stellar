@@ -419,7 +419,10 @@ async function checkWatchlistBalances(
     try {
       eth[addr] = await connection.getBalance(queryAddr);
     } catch {
-      eth[addr] = 0n;
+      // #1133: Report failed balance fetches as null (unknown) instead of 0n.
+      // A 0n balance on RPC failure would mislead users into thinking funded
+      // accounts are empty. null renders as "unknown" with a retry action.
+      eth[addr] = null;
     }
   }
   return { eth, tokens: tokensOut };

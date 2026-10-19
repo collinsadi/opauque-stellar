@@ -33,6 +33,10 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
   const [copiedGhost, setCopiedGhost] = useState(false);
   const [copiedEphemeralKey, setCopiedEphemeralKey] = useState(false);
   const [ephemeralKeyRevealed, setEphemeralKeyRevealed] = useState(false);
+  // #1132: Payment link parameters
+  const [linkAmount, setLinkAmount] = useState("");
+  const [linkMemo, setLinkMemo] = useState("");
+  const [linkExpiry, setLinkExpiry] = useState("");
   const [ghostResult, setGhostResult] = useState<{
     stealthAddress: string;
     ephemeralPrivKeyHex: string;
@@ -111,7 +115,13 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
     );
   }
 
-  const paymentLink = createPaymentLink(stealthMetaAddressHex, cluster);
+  // #1132: Include optional amount, memo, and expiry in payment link params
+  const linkParams: { amount?: string; memo?: string; expiry?: number } = {};
+  if (linkAmount) linkParams.amount = linkAmount;
+  if (linkMemo) linkParams.memo = linkMemo;
+  if (linkExpiry) linkParams.expiry = Math.floor(new Date(linkExpiry).getTime() / 1000);
+
+  const paymentLink = createPaymentLink(stealthMetaAddressHex, cluster, linkParams);
   const webPaymentLink = createWebPaymentLink(stealthMetaAddressHex, cluster);
 
   if (mode === "choose") {
@@ -202,6 +212,46 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
           Share either your meta-address or link. Senders derive a unique stealth address per payment.{" "}
           <RecoveryDocLink section="payment-link">Recovery guide</RecoveryDocLink>
         </p>
+
+        {/* #1132: Optional payment link parameters */}
+        <div className="mb-4 rounded-2xl border border-ink-700 bg-ink-900/25 p-4">
+          <p className="text-[11px] uppercase tracking-wider text-mist/70 mb-3">Request specific payment (optional)</p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label htmlFor="link-amount" className="block text-xs text-mist mb-1">Amount</label>
+              <input
+                id="link-amount"
+                type="text"
+                value={linkAmount}
+                onChange={(e) => setLinkAmount(e.target.value)}
+                placeholder="e.g. 100"
+                className="w-full rounded-lg border border-ink-700 bg-ink-900/50 px-3 py-2 text-sm text-white placeholder:text-mist/50 focus:border-white/30 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label htmlFor="link-memo" className="block text-xs text-mist mb-1">Memo</label>
+              <input
+                id="link-memo"
+                type="text"
+                value={linkMemo}
+                onChange={(e) => setLinkMemo(e.target.value)}
+                placeholder="e.g. Invoice #42"
+                maxLength={28}
+                className="w-full rounded-lg border border-ink-700 bg-ink-900/50 px-3 py-2 text-sm text-white placeholder:text-mist/50 focus:border-white/30 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label htmlFor="link-expiry" className="block text-xs text-mist mb-1">Expiry</label>
+              <input
+                id="link-expiry"
+                type="datetime-local"
+                value={linkExpiry}
+                onChange={(e) => setLinkExpiry(e.target.value)}
+                className="w-full rounded-lg border border-ink-700 bg-ink-900/50 px-3 py-2 text-sm text-white focus:border-white/30 focus:outline-none"
+              />
+            </div>
+          </div>
+        </div>
 
         {/* Meta-address QR */}
         <div className="mb-4">

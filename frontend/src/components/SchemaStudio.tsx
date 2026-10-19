@@ -83,6 +83,23 @@ export function SchemaStudio() {
   const fieldDefsString = fieldDefsToString(fields);
   const nameValid = name.trim().length > 0 && name.length <= 64;
   const fieldDefsValid = fieldDefsString.length <= 256;
+
+  // #1135: Validate field names before registration
+  const fieldValidationErrors: string[] = [];
+  const seenNames = new Set<string>();
+  for (const f of fields) {
+    const trimmed = f.name.trim();
+    if (!trimmed) {
+      fieldValidationErrors.push("Field names cannot be empty.");
+    } else if (trimmed.length > 64) {
+      fieldValidationErrors.push(`Field name "${trimmed}" exceeds 64 characters.`);
+    } else if (seenNames.has(trimmed.toLowerCase())) {
+      fieldValidationErrors.push(`Duplicate field name: "${trimmed}".`);
+    }
+    seenNames.add(trimmed.toLowerCase());
+  }
+  const fieldsValid = fieldValidationErrors.length === 0;
+
   const customResolverValid =
     resolverType !== "custom" || StrKey.isValidContract(customResolver.trim());
   const canSubmit =
@@ -90,6 +107,7 @@ export function SchemaStudio() {
     publicKey != null &&
     nameValid &&
     fieldDefsValid &&
+    fieldsValid &&
     customResolverValid &&
     !isSubmitting;
 
@@ -437,6 +455,27 @@ export function SchemaStudio() {
         Estimated reserve: ~{(Number(SCHEMA_RENT_STROOPS) / 1e7).toFixed(4)}{" "}
         XLM (Soroban storage)
       </p>
+
+      {/* #1135: Field validation errors */}
+      {fieldValidationErrors.length > 0 && (
+        <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3">
+          {fieldValidationErrors.map((err, i) => (
+            <p key={i} className="text-sm text-red-400">{err}</p>
+          ))}
+        </div>
+      )}
+
+      {/* #1135: Review step — show final schema before registration */}
+      {fieldsValid && fieldDefsString && (
+        <div className="rounded-xl border border-ink-700 bg-ink-900/25 px-4 py-3">
+          <p className="text-xs uppercase tracking-wider text-mist/70 mb-2">Review before registering</p>
+          <p className="text-sm text-white">Schema: <span className="font-mono">{name}</span></p>
+          <p className="text-sm text-mist">Fields: <span className="font-mono text-white">{fieldDefsString}</span></p>
+          <p className="text-xs text-mist/70 mt-2">
+            Registered schemas are immutable — double-check before submitting.
+          </p>
+        </div>
+      )}
 
       {error && (
         <p className="rounded-xl border border-neutral-500/30 bg-neutral-500/10 px-4 py-3 text-sm text-neutral-400">

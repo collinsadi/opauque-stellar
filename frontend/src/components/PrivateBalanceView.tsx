@@ -75,7 +75,7 @@ export type FoundTx = {
   id: string;
   address: string;
   stealthStellarAddress?: string;
-  balance: bigint;
+  balance: bigint | null;
   privateKey: string | undefined;
   txHash: string;
   blockNumber: number;
@@ -292,18 +292,19 @@ async function processRawLogsToFoundTxs(
 
   const balances = await Promise.all(
     foundWithAddresses.map(async ({ stealthStellarAddress }) => {
-      if (!stealthStellarAddress) return 0n;
+      if (!stealthStellarAddress) return null;
       try {
         return await connection.getBalance(stealthStellarAddress);
       } catch {
-        return 0n;
+        // #1133: Return null (unknown) instead of 0n on fetch failure
+        return null;
       }
     }),
   );
 
   const found: FoundTx[] = foundWithAddresses.map(
     ({ row, privateKey, stealthStellarAddress }, i) => {
-      const balance = balances[i] ?? 0n;
+      const balance = balances[i] ?? null;
       return {
         id: row.id,
         address: row.stealthAddress,
@@ -318,7 +319,9 @@ async function processRawLogsToFoundTxs(
     },
   );
 
-  const totalBalance = found.reduce((sum, tx) => sum + tx.balance, 0n);
+  // #1133: Exclude unknown (null) balances from total; track count of unknown
+  const unknownBalanceCount = found.filter((tx) => tx.balance === null).length;
+  const totalBalance = found.reduce((sum, tx) => sum + (tx.balance ?? 0n), 0n);
   debugLog("📥 [Opaque] PrivateBalance: fetchFoundTxs done", {
     count: found.length,
     totalBalanceStroops: totalBalance.toString(),
