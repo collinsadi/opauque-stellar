@@ -23,7 +23,7 @@ import { addressToAuthorityBytes } from "../lib/schemaEncoding";
 import { announceStealthTransfer, SCHEME_ID_SECP256K1 } from "../lib/contracts";
 import { getFeatureFlags } from "../lib/featureFlags";
 import { FeatureDisabledNotice } from "./FeatureDisabledNotice";
-import { fetchAttestationUidForTransaction } from "../lib/chainSync";
+import { fetchAttestationUidForTransaction, fetchSchemasFromChain } from "../lib/chainSync";
 import {
   isMetaAddressRecipient,
   recipientDiscoveryMessage,
@@ -52,6 +52,9 @@ export function AttestationManager({
   const cluster = getCluster();
   const isFetchingSchemas = useSchemaStore((s) => s.isFetchingSchemas);
   const schemaMap = useSchemaStore((s) => s.schemas);
+  const setSchemas = useSchemaStore((s) => s.setSchemas);
+  const setIsFetchingSchemas = useSchemaStore((s) => s.setIsFetchingSchemas);
+  const [schemaSyncError, setSchemaSyncError] = useState<string | null>(null);
   const schemas = useMemo(() => {
     if (!walletAddress) return [];
     return Object.values(schemaMap).filter(
@@ -86,6 +89,29 @@ export function AttestationManager({
   const [isRetryingAnnouncement, setIsRetryingAnnouncement] = useState(false);
 
   const uid = useId();
+
+  // #1134: Sync schemas from chain when the issuer view opens
+  useEffect(() => {
+    if (!publicKey) return;
+    let cancelled = false;
+    setIsFetchingSchemas(true);
+    setSchemaSyncError(null);
+    fetchSchemasFromChain(cluster, publicKey)
+      .then((chainSchemas) => {
+        if (!cancelled && chainSchemas.length > 0) {
+          setSchemas(chainSchemas);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setSchemaSyncError(err instanceof Error ? err.message : "Failed to load schemas from chain");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsFetchingSchemas(false);
+      });
+    return () => { cancelled = true; };
+  }, [publicKey, cluster, setSchemas, setIsFetchingSchemas]);
 
   useEffect(() => {
     if (!selectedSchemaId) return;
