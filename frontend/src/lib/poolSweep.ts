@@ -29,6 +29,18 @@ export const DEPOSIT_FEE_BUFFER_STROOPS = 2_000_000n; // 0.2 XLM
 /** Smallest deposit we will make per note (below this, pooling is not worthwhile). */
 export const MIN_DEPOSIT_STROOPS = 1_000_000n; // 0.1 XLM
 
+const STROOPS_PER_XLM = 10_000_000n;
+
+/**
+ * Convert the deployment's whole-XLM deposit presets into per-note chunk sizes in
+ * stroops. Invalid or duplicate entries are dropped; the result is ascending.
+ * Sweeps must only use these sizes so their notes join the existing anonymity set.
+ */
+export function presetChunkStroops(presetsXlm: readonly number[]): bigint[] {
+  const whole = [...new Set(presetsXlm)].filter((v) => Number.isInteger(v) && v > 0);
+  return whole.sort((a, b) => a - b).map((xlm) => BigInt(xlm) * STROOPS_PER_XLM);
+}
+
 export type PoolSweepPlan = {
   /** Spendable balance in the stealth account (net of reserve + base fee). */
   spendableStroops: bigint;

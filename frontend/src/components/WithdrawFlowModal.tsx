@@ -38,6 +38,8 @@ type WithdrawFlowModalProps = {
 
   /** Escrow recovery (a relayer job is on-chain but unresolved). */
   draftActive: boolean;
+  /** Cancels the in-browser proof while its prove step is running (#1131). */
+  onCancelProof?: () => void;
   onCancelJob: () => void;
   onSlashJob: () => void;
 
@@ -117,6 +119,7 @@ export function WithdrawFlowModal(props: WithdrawFlowModalProps) {
     onRefreshBids,
     onAssign,
     draftActive,
+    onCancelProof,
     onCancelJob,
     onSlashJob,
     stalledRelayer,
@@ -129,10 +132,12 @@ export function WithdrawFlowModal(props: WithdrawFlowModalProps) {
   const description =
     mode === "wallet"
       ? "A zero-knowledge proof lets you withdraw without revealing which deposit is yours."
-      : "A relayer submits the withdrawal for you, so the transaction is never linked to your wallet.";
+      : "A relayer submits the withdrawal for you, so the withdrawal transaction is not sent from your wallet. Your wallet still signs the escrow job, which can reveal timing.";
 
   // Recovery is only meaningful when a job is escrowed but the flow isn't finished.
   const showRecovery = mode === "relayer" && draftActive && !done;
+  // Cancelling only makes sense while the browser is generating the proof, not while signing or submitting.
+  const proving = steps.some((step) => step.id === "prove" && step.status === "active");
 
   return (
     <ModalShell
@@ -313,7 +318,16 @@ export function WithdrawFlowModal(props: WithdrawFlowModalProps) {
         </div>
       )}
 
-      <div className="mt-5 flex justify-end">
+      <div className="mt-5 flex justify-end gap-2">
+        {proving && onCancelProof && (
+          <button
+            type="button"
+            onClick={onCancelProof}
+            className="min-h-10 rounded-xl border border-ink-600 px-4 py-2 text-sm font-medium text-mist transition-colors hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-glow"
+          >
+            Cancel proof
+          </button>
+        )}
         <button
           type="button"
           onClick={onClose}

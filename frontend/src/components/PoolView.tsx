@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StrKey } from "@stellar/stellar-sdk";
 import type { Tab } from "./Layout";
 import { useWallet } from "../hooks/useWallet";
@@ -145,7 +145,7 @@ function relayerSteps(): WithdrawStep[] {
       id: "create-job",
       title: "Escrow the relayer fee",
       detail:
-        "Posting a job to the relayer registry and locking the fee in escrow. This transaction is public but reveals nothing about the recipient or amount.",
+        "Posting a job to the relayer registry and locking the fee in escrow. This transaction is signed by your connected wallet and is public, so anyone watching the registry can see that this wallet created a job shortly before the withdrawal. It does not reveal the recipient or the amount.",
       status: "pending",
     },
     {
@@ -171,7 +171,7 @@ function relayerSteps(): WithdrawStep[] {
       id: "deliver",
       title: "Hand off & submit",
       detail:
-        "The payload is sealed to the relayer's key. They submit it on-chain, so your wallet is never linked to the withdrawal.",
+        "The payload is sealed to the relayer's key. They submit it on-chain, so the withdrawal itself is not sent from your wallet. Your wallet still signs the escrow job, which can show timing.",
       status: "pending",
     },
   ];
@@ -325,6 +325,18 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
   );
 
   // Map the prover's progress callbacks onto the shared first three steps.
+  // #1131: each pool proof gets a fresh AbortController so the user can cancel it mid-proof.
+  const proofAbortRef = useRef<AbortController | null>(null);
+  const beginProofSignal = useCallback(() => {
+    const controller = new AbortController();
+    proofAbortRef.current = controller;
+    return controller.signal;
+  }, []);
+  const cancelProof = useCallback(() => {
+    proofAbortRef.current?.abort();
+    proofAbortRef.current = null;
+  }, []);
+
   const onProveProgress = useCallback(
     (stage: string) => {
       if (stage === "reading-chain") {
@@ -545,6 +557,7 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
         relayer: publicKey,
         caller: publicKey,
         onProgress: onProveProgress,
+        signal: beginProofSignal(),
       });
       updateStep("prove", "done");
       updateStep("submit", "active");
@@ -592,6 +605,7 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
     validateWithdrawInputs,
     updateStep,
     onProveProgress,
+    beginProofSignal,
     failActiveStep,
   ]);
 
@@ -651,6 +665,7 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
         relayer: boundRelayer,
         caller: publicKey,
         onProgress: onProveProgress,
+        signal: beginProofSignal(),
       });
       updateStep("prove", "done");
       updateStep("create-job", "active");
@@ -720,6 +735,7 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
     validateWithdrawInputs,
     updateStep,
     onProveProgress,
+    beginProofSignal,
     failActiveStep,
   ]);
 
@@ -734,7 +750,7 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
       setAwaitingPick(false);
       setFlowDone(true);
       setFlowSuccessHash(submittedTx);
-      setFlowSuccessText(`A relayer submitted your withdrawal to ${recipient.slice(0, 6)}… — never linked to your wallet.`);
+      setFlowSuccessText(`A relayer submitted your withdrawal to ${recipient.slice(0, 6)}…. The escrow job was signed by your wallet shortly before, so its timing may be visible on the relayer registry.`);
       showToast(
         `Relayer submitted withdrawal to ${recipient.slice(0, 6)}…`,
         submittedTx ? { explorerTx: { txSig: submittedTx } } : undefined,
@@ -845,6 +861,7 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
         relayer: alt.operator,
         caller: publicKey,
         onProgress: onProveProgress,
+        signal: beginProofSignal(),
       });
       updateStep("prove", "done", "re-proved fee binding for the new relayer");
       updateStep("create-job", "active");
@@ -896,6 +913,7 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
     selectedNote,
     gateway,
     onProveProgress,
+    beginProofSignal,
     updateStep,
     failActiveStep,
     showToast,
@@ -1319,6 +1337,7 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
 
       <WithdrawFlowModal
         open={flowOpen}
+        onCancelProof={cancelProof}
         mode={flowMode}
         steps={flowSteps}
         busy={!!busy}

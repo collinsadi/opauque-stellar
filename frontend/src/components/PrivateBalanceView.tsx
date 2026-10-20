@@ -1576,6 +1576,9 @@ export function PrivateBalanceView() {
             tx={claimModalTx}
             asset={nativeAsset}
             destination={destinationByTxId[claimModalTx.id] ?? ""}
+            otherDestinations={Object.entries(destinationByTxId)
+              .filter(([txId]) => txId !== claimModalTx.id)
+              .map(([, value]) => value ?? "")}
             mainWalletAddress={mainWalletAddress ?? undefined}
             cluster={cluster}
             claiming={claimingId === claimModalTx.id}
