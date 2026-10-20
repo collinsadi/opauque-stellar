@@ -7,7 +7,8 @@
  */
 
 import type { OpaqueWasmModule } from "../hooks/useOpaqueWasm";
-import type { ProofData, DiscoveredTrait } from "./reputation";
+import type { ProofData } from "./reputation";
+import type { V2DiscoveredTrait } from "../store/schemaStore";
 import { reputationAddresses } from "../contracts/reputationAddresses";
 import { BASE_FEE, Contract, TransactionBuilder, nativeToScVal, rpc } from "@stellar/stellar-sdk";
 import { bytesToScVal, getSorobanServer, invokeContractMethod, u64ToScVal } from "./stellar";
@@ -35,20 +36,54 @@ function bytesToBigInt(bytes: Uint8Array): bigint {
 }
 
 /**
+ * Witness fields the attestation itself supplies. Nothing here is derived from
+ * the holder's key, so a proof can only attest to the credential that was issued.
+ */
+function attestationWitnessFields(trait: V2DiscoveredTrait) {
+  const { schemaIdField, issuerPkX, traitDataHash, nonceField } = trait.merkleLeafPreimage;
+  const issuerPkXField = BigInt(issuerPkX);
+
+  // The scanner encodes the issuer key and issuer_pk_x from the same 32 bytes.
+  // A mismatch means the leaf does not commit to the issuer that signed the attestation.
+  if (BigInt(trait.issuer) !== issuerPkXField) {
+    throw new Error(
+      "Attestation issuer does not match the issuer key in its leaf preimage. Refusing to build a proof for it.",
+    );
+  }
+
+  // The scanner leaves trait_data_hash as "0" until the decoded data fields are
+  // hashed. A proof over that placeholder would not match the issued leaf.
+  const traitDataHashField = BigInt(traitDataHash);
+  if (traitDataHashField === 0n) {
+    throw new Error(
+      "Trait data hash has not been derived from the decoded attestation data, so the leaf cannot be reproduced. Proof generation is blocked.",
+    );
+  }
+
+  return {
+    schemaId: BigInt(schemaIdField),
+    issuerPkX: issuerPkXField,
+    traitDataHash: traitDataHashField,
+    nonce: BigInt(nonceField),
+  };
+}
+
+/**
  * Build a witness for the canonical V2 reputation circuit
  * (circuits/v2/stealth_reputation.circom).
  *
- * Phase 2 uses a contrived single-leaf tree-of-zeros (the holder's leaf at index 0),
- * and derives the private trait fields (issuer_pk_x, trait_data_hash, nonce)
- * deterministically. Phase 3 replaces this with the real indexed attestation set via
- * the scanner's scan_attestations_v2 / generate_reputation_witness_v2, and a published
- * Merkle root the proof verifies against.
+ * The private trait fields (issuer_pk_x, trait_data_hash, nonce) and the schema id
+ * come from the scanned attestation, never from placeholders. The Merkle path here is
+ * the single-leaf degenerate case; the publisher's inclusion path replaces it for
+ * multi-leaf sets (see ProofGeneratorModal).
  */
 async function buildV2Witness(
-  traitAttestationId: number,
+  trait: V2DiscoveredTrait,
   stealthPrivKeyBytes: Uint8Array,
   externalNullifier: string,
 ) {
+  const { schemaId, issuerPkX, traitDataHash, nonce } = attestationWitnessFields(trait);
+
   if (typeof globalThis !== "undefined" && !("Buffer" in globalThis)) {
     const bufferPkg = await import("buffer/index.js");
     (globalThis as { Buffer?: typeof bufferPkg.Buffer }).Buffer = bufferPkg.Buffer;
@@ -58,13 +93,7 @@ async function buildV2Witness(
   const F = poseidon.F;
 
   const stealthPk = F.toObject(F.e(bytesToBigInt(stealthPrivKeyBytes)));
-  const schemaId = BigInt(traitAttestationId); // attestation_id == schema_id
   const extNullifier = BigInt(externalNullifier);
-
-  // Derived private inputs (Phase 2 placeholder; Phase 3 supplies real values).
-  const issuerPkX = F.toObject(poseidon([stealthPk, 1n]));
-  const traitDataHash = F.toObject(poseidon([schemaId, 2n]));
-  const nonce = F.toObject(poseidon([stealthPk, 3n]));
 
   // leaf = Poseidon(stealth_pk, schema_id, issuer_pk_x, trait_data_hash, nonce)
   const leaf = F.toObject(poseidon([stealthPk, schemaId, issuerPkX, traitDataHash, nonce]));
@@ -127,7 +156,7 @@ async function verifyProofLocally(proof: unknown, publicSignals: unknown): Promi
  */
 export async function generateReputationProof(
   _wasm: OpaqueWasmModule,
-  trait: DiscoveredTrait,
+  trait: V2DiscoveredTrait,
   _allAttestationsJson: string,
   stealthPrivKeyBytes: Uint8Array,
   externalNullifier: string,
@@ -136,7 +165,7 @@ export async function generateReputationProof(
   onProgress("preparing-witness", 10);
 
   const witness = await buildV2Witness(
-    trait.attestationId,
+    trait,
     stealthPrivKeyBytes,
     externalNullifier
   );

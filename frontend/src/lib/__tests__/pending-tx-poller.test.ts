@@ -82,6 +82,39 @@ describe("pollPendingTransactions (#114)", () => {
     expect(usePendingTxStore.getState().byHash.h1.status).toBe("timed_out");
   });
 
+  it("checks the chain once before timing out an entry past its deadline", async () => {
+    usePendingTxStore.getState().add({ txHash: "h1", cluster: "testnet", kind: "send" });
+    const fetchStatus = vi.fn().mockResolvedValue({ state: "confirmed" } as ChainStatusResult);
+    const oldNow = Date.now() + 1_000_000;
+
+    const cancel = pollPendingTransactions({
+      fetchStatus,
+      intervalMs: 100_000,
+      timeoutMs: 1_000,
+      now: () => oldNow,
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    cancel();
+    expect(fetchStatus).toHaveBeenCalledWith("h1");
+    expect(usePendingTxStore.getState().byHash.h1.status).toBe("confirmed");
+  });
+
+  it("does not time out an entry whose status check failed", async () => {
+    usePendingTxStore.getState().add({ txHash: "h1", cluster: "testnet", kind: "send" });
+    const fetchStatus = vi.fn().mockRejectedValue(new Error("horizon down"));
+    const oldNow = Date.now() + 1_000_000;
+
+    const cancel = pollPendingTransactions({
+      fetchStatus,
+      intervalMs: 100_000,
+      timeoutMs: 1_000,
+      now: () => oldNow,
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    cancel();
+    expect(usePendingTxStore.getState().byHash.h1.status).toBe("pending");
+  });
+
   it("treats a network blip as a non-terminal state", async () => {
     usePendingTxStore.getState().add({ txHash: "h1", cluster: "testnet", kind: "send" });
     const fetchStatus = vi.fn().mockRejectedValue(new Error("boom"));

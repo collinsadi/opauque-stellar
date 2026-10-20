@@ -29,8 +29,11 @@ const txHistoryStorage = createEncryptedStorage<TxHistoryState>(
 
 export type TxHistoryKind = "sent" | "received" | "ghost" | "trait";
 
-/** On-chain state of an entry's transaction (#113/#114). Absent = confirmed. */
-export type TxHistoryChainStatus = "confirmed" | "failed" | "pending";
+/**
+ * On-chain state of an entry's transaction (#113/#114). Absent = confirmed.
+ * `unknown` is terminal: polling gave up before the chain reported an outcome.
+ */
+export type TxHistoryChainStatus = "confirmed" | "failed" | "pending" | "unknown";
 
 export type TxHistoryEntry = {
   id: string;

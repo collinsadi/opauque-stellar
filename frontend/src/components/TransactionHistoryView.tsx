@@ -4,7 +4,10 @@ import { maskCounterparty, useTxHistoryStore } from "../store/txHistoryStore";
 import type { TxHistoryEntry } from "../store/txHistoryStore";
 import { formatXlm } from "../lib/stealth";
 import { useWallet } from "../hooks/useWallet";
-import { useHistoryReconciliation } from "../hooks/useHistoryReconciliation";
+import {
+  useHistoryReconciliation,
+  useHistorySyncConsentStore,
+} from "../hooks/useHistoryReconciliation";
 
 function formatDate(ts: number): string {
   try {
@@ -39,6 +42,8 @@ function statusFor(entry: TxHistoryEntry): string {
       return "Pending";
     case "failed":
       return "Failed";
+    case "unknown":
+      return "Unknown";
     default:
       return "Confirmed";
   }
@@ -81,7 +86,10 @@ function normalizeEntry(raw: unknown, index: number): TxHistoryEntry | null {
     typeof o.stealthAddress === "string" ? o.stealthAddress : undefined;
   const timestamp = typeof o.timestamp === "number" ? o.timestamp : Date.now();
   const chainStatus =
-    o.chainStatus === "pending" || o.chainStatus === "failed" || o.chainStatus === "confirmed"
+    o.chainStatus === "pending" ||
+    o.chainStatus === "failed" ||
+    o.chainStatus === "confirmed" ||
+    o.chainStatus === "unknown"
       ? o.chainStatus
       : undefined;
   const tokenSymbol = typeof o.tokenSymbol === "string" ? o.tokenSymbol : "XLM";
@@ -114,6 +122,8 @@ export function TransactionHistoryView() {
   const cluster = walletCluster ?? getCluster();
   const sync = useHistoryReconciliation({ cluster, address, autoOnEmpty: true });
   const syncing = sync.status === "syncing";
+  const autoSyncEnabled = useHistorySyncConsentStore((s) => s.autoSyncEnabled);
+  const setAutoSyncEnabled = useHistorySyncConsentStore((s) => s.setAutoSyncEnabled);
   const byCluster = useTxHistoryStore((s) => s.byChain);
   const clear = useTxHistoryStore((s) => s.clear);
 
@@ -168,6 +178,20 @@ export function TransactionHistoryView() {
             : "History is up to date with chain.")}
         {sync.status === "error" && `History sync failed: ${sync.error}`}
       </p>
+
+      <label className="mb-4 flex items-start gap-2 text-xs text-mist/80">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={autoSyncEnabled}
+          onChange={(e) => setAutoSyncEnabled(e.target.checked)}
+        />
+        <span>
+          Rebuild history from chain automatically on this device when it is empty.
+          Sync sends your wallet and this account&apos;s ghost addresses to Horizon.
+          See docs/PRIVACY_GUARANTEES.md.
+        </span>
+      </label>
 
       {!safeEntries?.length ? (
         <div className="rounded-3xl border border-ink-700 bg-ink-900/25 p-10 text-center">

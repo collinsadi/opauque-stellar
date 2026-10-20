@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { formatXlm, type Hex } from "../lib/stealth";
 type Address = string;
-import { readNativeBalance } from "../lib/readNativeBalance";
+import { accountExists, getNativeWithdrawalQuote } from "../lib/stellar";
 import type { ProtocolStep } from "./ProtocolStepper";
 import { ProtocolStepper } from "./ProtocolStepper";
 import type { OpaqueWasmModule } from "../hooks/useOpaqueWasm";
 import type { MasterKeys } from "../lib/stealthLifecycle";
 import {
+  ANNOUNCER_FUNDING_STROOPS,
   executeGhostOnchainAnnouncement,
   getAnnouncerAccount,
+  getGhostStellarAccount,
   type GhostAnnouncementProgress,
 } from "../lib/stealthLifecycle";
 import { useGhostAnnouncementStore } from "../store/ghostAnnouncementStore";
@@ -55,19 +57,15 @@ export function GhostAnnounceModal({
   const [running, setRunning] = useState(false);
   const [preflightError, setPreflightError] = useState<string | null>(null);
   const [announcerPreview, setAnnouncerPreview] = useState<string | null>(null);
-  const [announcerBalance, setAnnouncerBalance] = useState<bigint | null>(null);
-
-  const getNativeBalance = useCallback(
-    (addr: Address) => readNativeBalance(addr),
-    [],
-  );
+  /** null = not checked yet; true = announcer already exists; false = ghost will fund it. */
+  const [announcerFunded, setAnnouncerFunded] = useState<boolean | null>(null);
 
   const reset = useCallback(() => {
     setSteps([]);
     setRunning(false);
     setPreflightError(null);
     setAnnouncerPreview(null);
-    setAnnouncerBalance(null);
+    setAnnouncerFunded(null);
   }, []);
 
   useEffect(() => {
@@ -89,13 +87,34 @@ export function GhostAnnounceModal({
         );
         if (cancelled) return;
         setAnnouncerPreview(announcerAddr);
-        const bal = await getNativeBalance(announcerAddr);
+        const exists = await accountExists(announcerAddr);
         if (cancelled) return;
-        setAnnouncerBalance(bal);
-        const feeReserve = 500_000n;
-        if (bal < feeReserve) {
+        setAnnouncerFunded(exists);
+        if (exists) return;
+
+        // A new announcer is created by the ghost, so the ghost must cover the
+        // account-creation minimum plus fee headroom after its own reserve and fee.
+        const { address: ghostAddr } = getGhostStellarAccount(
+          wasm,
+          masterKeys,
+          ephemeralPrivKeyHex as string,
+        );
+        let spendable: bigint;
+        try {
+          const quote = await getNativeWithdrawalQuote({
+            sourcePublicKey: ghostAddr,
+            destination: announcerAddr,
+          });
+          spendable = quote.spendableStroops;
+        } catch {
+          if (cancelled) return;
+          setPreflightError("This ghost has no funded balance to announce from.");
+          return;
+        }
+        if (cancelled) return;
+        if (spendable < ANNOUNCER_FUNDING_STROOPS) {
           setPreflightError(
-            `Announcer account (${announcerAddr}) needs at least ${formatXlm(feeReserve)} XLM for fees. Current balance: ${formatXlm(bal)} XLM. Fund it to proceed.`,
+            `The ghost must hold at least ${formatXlm(ANNOUNCER_FUNDING_STROOPS)} XLM spendable to fund its one-time announcer. Spendable now: ${formatXlm(spendable)} XLM.`,
           );
         }
       } catch (e) {
@@ -115,17 +134,13 @@ export function GhostAnnounceModal({
     announcerContract,
     wasm,
     getMasterKeys,
-    getNativeBalance,
     reset,
   ]);
 
   void announcerContract;
 
   const canStart =
-    !running &&
-    !preflightError &&
-    announcerBalance != null &&
-    announcerBalance >= 500_000n;
+    !running && !preflightError && announcerFunded != null;
 
   const handleStart = useCallback(async () => {
     if (!canStart) return;
@@ -174,11 +189,10 @@ export function GhostAnnounceModal({
   ]);
 
   const announcerHint = useMemo(() => {
-    if (announcerBalance == null) return null;
-    if (announcerBalance >= 500_000n)
-      return "Announcer has enough XLM for fees.";
-    return `Announcer needs more XLM (current: ${formatXlm(announcerBalance)} XLM).`;
-  }, [announcerBalance]);
+    if (announcerFunded == null) return null;
+    if (announcerFunded) return "Announcer account already exists for this ghost.";
+    return `This ghost will fund its one-time announcer with ${formatXlm(ANNOUNCER_FUNDING_STROOPS)} XLM and reclaim the reserve after announcing.`;
+  }, [announcerFunded]);
 
   if (!open) return null;
 
@@ -209,9 +223,10 @@ export function GhostAnnounceModal({
         <li>
           Each announcement uses a{" "}
           <strong className="text-neutral-300">unique one-time Announcer</strong>{" "}
-          account derived from this ghost's ephemeral key, so your{" "}
-          <strong className="text-neutral-300">main wallet is not linked</strong>{" "}
-          and{" "}
+          account derived from this ghost's ephemeral key. It is funded from
+          this ghost's balance, never your{" "}
+          <strong className="text-neutral-300">main wallet</strong>, and its
+          leftover reserve is returned to this ghost after announcing, so{" "}
           <strong className="text-neutral-300">
             multiple ghost announcements cannot be clustered
           </strong>{" "}
@@ -219,7 +234,8 @@ export function GhostAnnounceModal({
         </li>
         <li className="text-mist/70 text-xs">
           <strong className="text-neutral-400">What is visible:</strong> the
-          announcement transaction, its timing, and the announcer's fee payment.{" "}
+          announcement transaction, its timing, the transfer from this ghost to
+          its announcer, and the reserve return.{" "}
           <strong className="text-neutral-400">What is not linked:</strong> your
           connected wallet, other ghost addresses, or your stealth meta-address.
         </li>

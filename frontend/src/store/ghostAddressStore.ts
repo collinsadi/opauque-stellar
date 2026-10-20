@@ -26,6 +26,9 @@ export type GhostEntry = {
   stealthStellarAddress?: string;
   /** Hex 0x... 32-byte ephemeral private key for key reconstruction. Omitted when importing by address only (balance visible, claim requires key). */
   ephemeralPrivKeyHex?: string;
+  /** Connected wallet G-address that owns this ghost. Entries without it are
+   *  unattributed and are never included in account-scoped chain queries. */
+  account?: string;
   createdAt: number;
 };
 
@@ -66,6 +69,7 @@ function normalizeEntry(entry: Omit<GhostEntry, "createdAt">): GhostEntry {
       entry.ephemeralPrivKeyHex != null && entry.ephemeralPrivKeyHex !== ""
         ? String(entry.ephemeralPrivKeyHex)
         : undefined,
+    account: entry.account != null && entry.account !== "" ? String(entry.account) : undefined,
     createdAt: Number(Date.now()),
   };
 }
@@ -94,6 +98,9 @@ function parseStored(raw: string | null): GhostEntry[] {
 type GhostState = {
   entries: GhostEntry[];
   persistenceFailed: boolean;
+  /** Connected wallet G-address; stamped onto entries created while set. */
+  activeAccount: string | null;
+  setActiveAccount: (account: string | null) => void;
   add: (entry: Omit<GhostEntry, "createdAt">) => void;
   remove: (stealthAddress: string, cluster: string) => void;
   /** Replace entries (used when rehydrating from localStorage). */
@@ -126,6 +133,8 @@ async function persistEntries(entries: GhostEntry[]): Promise<boolean> {
 export const useGhostAddressStore = create<GhostState>()((set, get) => ({
   entries: [],
   persistenceFailed: false,
+  activeAccount: null,
+  setActiveAccount: (account) => set({ activeAccount: account }),
 
   add: (entry) => {
     if (
@@ -134,7 +143,10 @@ export const useGhostAddressStore = create<GhostState>()((set, get) => ({
     ) {
       return;
     }
-    const newEntry = normalizeEntry(entry);
+    const newEntry = normalizeEntry({
+      ...entry,
+      account: entry.account ?? get().activeAccount ?? undefined,
+    });
     const nextEntries = [...get().entries, newEntry];
     set({ entries: nextEntries });
     void persistEntries(nextEntries).then((ok) => {
@@ -169,6 +181,7 @@ export const useGhostAddressStore = create<GhostState>()((set, get) => ({
           e.ephemeralPrivKeyHex != null
             ? String(e.ephemeralPrivKeyHex)
             : undefined,
+        account: e.account != null ? String(e.account) : undefined,
         createdAt: Number(e.createdAt),
       })),
     }),
