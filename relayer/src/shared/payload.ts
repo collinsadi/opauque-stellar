@@ -1,6 +1,6 @@
 import { Address, xdr } from "@stellar/stellar-sdk";
 import { keccak_256 } from "@noble/hashes/sha3";
-import { assertLength, bytesToHex, concatBytes, hexToBytes, i128ToBytes } from "@opaque-stellar/sdk/relayer-protocol/bytes";
+import { assertLength, bytesToHex, concatBytes, hexToBytes, i128ToBytes } from "../../../sdk/src/relayer-protocol/bytes.ts";
 
 export const RELAY_PAYLOAD_DOMAIN = "opaque-stellar-relay-v1";
 export const RELAY_CHAIN_STELLAR = 3000;

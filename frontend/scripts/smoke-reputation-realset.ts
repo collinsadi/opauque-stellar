@@ -23,7 +23,7 @@ import {
   Keypair, Contract, TransactionBuilder, Address, nativeToScVal, rpc, xdr, BASE_FEE,
 } from "@stellar/stellar-sdk";
 import * as snarkjs from "snarkjs";
-import { getPoseidon, MerkleV2, toBE32, hashFields, V2_TREE_DEPTH } from "./lib/merkleV2.ts";
+import { getPoseidon, toBE32, hashFields } from "./lib/merkleV2.ts";
 import { buildReputationTree, computeDatasetHash, publishRoot, setRootExpiry } from "./publish-reputation-root.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -37,7 +37,6 @@ const REP_ID = manifest.contracts.reputationVerifier.id;
 const GROTH_ID = manifest.contracts.groth16Verifier.id;
 const WASM = join(FE, "public", "circuits", "v2", "stealth_reputation.wasm");
 const ZKEY = join(FE, "public", "circuits", "v2", "stealth_reputation_final.zkey");
-const VKEY = JSON.parse(readFileSync(join(REPO, "circuits", "v2", "build", "verification_key.json"), "utf8"));
 
 const secret = process.env.DEPLOYER_SECRET?.trim();
 if (!secret) throw new Error("set DEPLOYER_SECRET (stellar keys show opaque-deployer)");
@@ -83,7 +82,7 @@ async function verifyReputation(args, label, { expectFail = false } = {}) {
 }
 
 // Build a circuit witness + serialized proof for a leaf at `index` of `tree`.
-async function proveInclusion(poseidon, tree, index, inputs, externalNullifier) {
+async function proveInclusion(poseidon, tree, index, inputs, externalNullifier, verificationKey) {
   const { stealthPk, schemaId, issuerPkX, traitDataHash, nonce } = inputs;
   const mp = tree.proof(index);
   const nullifierHash = hashFields(poseidon, [stealthPk, BigInt(externalNullifier)]);
@@ -101,7 +100,7 @@ async function proveInclusion(poseidon, tree, index, inputs, externalNullifier) 
     nullifier_hash: nullifierHash.toString(),
   };
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(witness, WASM, ZKEY);
-  if (!(await snarkjs.groth16.verify(VKEY, publicSignals, proof))) throw new Error("local verify failed");
+  if (!(await snarkjs.groth16.verify(verificationKey, publicSignals, proof))) throw new Error("local verify failed");
   const proofA = new Uint8Array(64); proofA.set(be32(BigInt(proof.pi_a[0])), 0); proofA.set(be32(BigInt(proof.pi_a[1])), 32);
   const bFlat = proof.pi_b.flatMap((p) => [BigInt(p[1]), BigInt(p[0])]);
   const proofB = new Uint8Array(128); for (let i = 0; i < 4; i++) proofB.set(be32(bFlat[i]), i * 32);
@@ -113,6 +112,7 @@ async function main() {
   console.log("Opaque Stellar — Phase 3 real reputation set (testnet)");
   console.log(`  reputation-verifier: ${REP_ID}`);
   const poseidon = await getPoseidon();
+  const verificationKey = await snarkjs.zKey.exportVerificationKey(ZKEY);
 
   // --- genuine leaf inputs ---
   log("Building a genuine attestation leaf…");
@@ -144,7 +144,7 @@ async function main() {
   // --- HOLDER proves inclusion against the PUBLISHED root ---
   log("Holder generates a proof against the published root and submits it…");
   const inputs = { stealthPk, schemaId: attestationId, issuerPkX, traitDataHash, nonce };
-  const p = await proveInclusion(poseidon, tree, 0, inputs, externalNullifier);
+  const p = await proveInclusion(poseidon, tree, 0, inputs, externalNullifier, verificationKey);
   if (Buffer.compare(Buffer.from(be32(p.root)), Buffer.from(rootBE)) !== 0) throw new Error("witness root != published root");
   detail("✓ witness root == published root");
   const verifyArgs = (extNull, nh) => [
@@ -163,7 +163,7 @@ async function main() {
   await setRootExpiry(admin, REP_ID, 0);
   await sleep(7000); // let a few ledgers pass so the root is older than the (0) window
   const extNull2 = externalNullifier + 1n;
-  const p2 = await proveInclusion(poseidon, tree, 0, inputs, extNull2);
+  const p2 = await proveInclusion(poseidon, tree, 0, inputs, extNull2, verificationKey);
   await verifyReputation(verifyArgs(extNull2, p2.nullifierHash), "verify_reputation(expired root)", { expectFail: true });
 
   // restore a sane expiry window for subsequent runs

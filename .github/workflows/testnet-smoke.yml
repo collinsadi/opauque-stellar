@@ -53,10 +53,37 @@ jobs:
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            frontend/package-lock.json
+            sdk/package-lock.json
+            relayer/package-lock.json
 
       - name: Install frontend dependencies
         run: npm ci --prefix frontend
+
+      - name: Install Rust toolchain
+        if: matrix.script == 'smoke:payments'
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 1.94.1
+        with:
+          toolchain: "1.94.1"
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        if: matrix.script == 'smoke:payments'
+        run: bash scripts/install-wasm-pack.sh
+        env:
+          WASM_PACK_INSTALL_DIR: /usr/local/bin
+
+      - name: Build scanner WASM
+        if: matrix.script == 'smoke:payments'
+        working-directory: frontend
+        run: npx tsx ../scripts/build-scanner-wasm.ts
+
+      - name: Install relayer dependencies
+        if: matrix.script == 'smoke:pool:relayer'
+        run: |
+          npm ci --prefix sdk
+          npm ci --prefix relayer
 
       - name: Fetch circuit artifacts
         # Best-effort, as in scripts/prepare-frontend-artifacts.ts. A missing artifact then

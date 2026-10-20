@@ -3,7 +3,7 @@
  * and the SDK to ensure identical encryption/decryption.
  */
 import nacl from "tweetnacl";
-import { assertLength, base64ToBytes, bytesToBase64, concatBytes } from "./bytes";
+import { assertLength, base64ToBytes, bytesToBase64, concatBytes } from "./bytes.js";
 
 const PUBLIC_KEY_BYTES = 32;
 const SECRET_KEY_BYTES = 32;
