@@ -112,9 +112,9 @@ export function useOpaqueWasm(): UseOpaqueWasmReturn {
         setError(null);
         setWasm(null);
 
-        const loadedModule = await (Function('return import("/pkg/opauque_scanner.js")')() as Promise<
-          Record<string, unknown> & { default: () => Promise<void> }
-        >);
+        const moduleUrl = new URL('pkg/opauque_scanner.js', document.baseURI).href;
+        const loadedModule = await import(/* @vite-ignore */ moduleUrl) as unknown as
+          Record<string, unknown> & { default: () => Promise<void> };
 
         // Must call default (async init) before any Rust functions; loads .wasm into memory
         await loadedModule.default();
