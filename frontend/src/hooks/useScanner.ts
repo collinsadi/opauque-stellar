@@ -17,6 +17,7 @@ import {
 import type { StellarNetwork } from "../lib/chain";
 import { getManifestForNetwork } from "../contracts/deploymentManifest";
 import {
+  announcementId,
   getAnnouncementsForCluster,
   getSyncState,
   setSyncState,
@@ -203,7 +204,7 @@ function mapAnnouncementEvents(
     // Event value is (scheme_id, stealth_address, caller, ephemeral_pub_key, metadata)
     const val = scValToNative(ev.value) as Uint8Array[];
     return {
-      id: `${ev.txHash}:${ev.ledger}:${idx}`,
+      id: announcementId(cluster, ev.txHash, idx),
       cluster,
       transactionSignature: ev.txHash,
       logIndex: idx,

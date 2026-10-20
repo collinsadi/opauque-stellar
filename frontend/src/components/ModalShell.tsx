@@ -9,6 +9,8 @@ type ModalShellProps = {
   onClose: () => void;
   /** When false, clicking the backdrop won't close. */
   closeOnBackdrop?: boolean;
+  /** While true, Escape and backdrop clicks are ignored and a notice is shown. */
+  busy?: boolean;
   maxWidthClassName?: string;
   contentClassName?: string;
 };
@@ -20,6 +22,7 @@ export function ModalShell({
   children,
   onClose,
   closeOnBackdrop = true,
+  busy = false,
   maxWidthClassName = "max-w-md",
   contentClassName = "",
 }: ModalShellProps) {

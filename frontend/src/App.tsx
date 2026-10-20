@@ -33,6 +33,7 @@ import { useWatchlistStore } from "./hooks/useWatchlist";
 import { usePendingTxStore } from "./store/pendingTxStore";
 import { useSecuritySettingsStore } from "./store/securitySettingsStore";
 import { clearAllData as clearIndexedDB } from "./lib/opaqueCache";
+import { wipeSensitiveLocalData } from "./lib/disconnectCleanup";
 import { DisconnectConfirmModal } from "./components/DisconnectConfirmModal";
 import { getExplorerTxUrl } from "./lib/explorer";
 import { NetworkMismatchModal } from "./components/security/NetworkMismatchModal";
@@ -80,6 +81,8 @@ function AppContent() {
   const { isSetup, clearKeys, setFromSignature, stealthMetaAddressHex } = useKeys();
   const { isRegistered, isLoading: isRegistrationCheckLoading, error: registrationError, retry: retryRegistrationCheck } = useRegistrationStatus(address, cluster, stealthMetaAddressHex);
   const clearVault = useVaultStore((s) => s.clear);
+  // A full wipe deletes notes for every account, so count them all.
+  const unspentNoteCount = usePoolNoteStore((s) => s.notes.filter((n) => !n.spent).length);
   const [showDisconnectModal, setShowDisconnectModal] = useState(false);
   const activeWalletRef = useRef(address);
 
@@ -190,15 +193,9 @@ function AppContent() {
       } catch {
         // best-effort
       }
-      // Remove all opaque-* localStorage keys
-      if (typeof localStorage !== "undefined") {
-        const keysToRemove: string[] = [];
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (key?.startsWith("opaque")) keysToRemove.push(key);
-        }
-        for (const key of keysToRemove) localStorage.removeItem(key);
-      }
+      // Remove app-owned localStorage keys (keeping the documented preferences)
+      // and clear the signing audit log.
+      await wipeSensitiveLocalData();
     }
     disconnect();
     setTab("dashboard");
@@ -267,66 +264,66 @@ function AppContent() {
 
   const protocolLogPanel = getFeatureFlags().debugLogs ? <ProtocolLogPanel /> : null;
 
-  if (!isSetup) {
-    return (
-      <div className="min-h-dvh flex flex-col bg-ink-950 bg-grid-fade bg-size-grid">
-        <LandingView />
-      </div>
-    );
-  }
-
-  if (isRegistrationCheckLoading) {
-    return (
-      <Layout
-        tab="dashboard"
-        onTabChange={handleTab}
-        isConnected={isConnected}
-        address={address ?? undefined}
-        isConnecting={isConnecting}
-        onConnect={handleConnect}
-        onDisconnect={handleDisconnect}
-        protocolLog={protocolLogPanel}
-      >
-        <div className="flex flex-col items-center justify-center min-h-[40vh] gap-4">
-          <span className="h-7 w-7 animate-spin rounded-full border-2 border-ink-600 border-t-white" aria-hidden />
-          <p className="text-sm text-mist">Authenticating with protocol…</p>
+  const renderScreen = () => {
+    if (!isSetup) {
+      return (
+        <div className="min-h-dvh flex flex-col bg-ink-950 bg-grid-fade bg-size-grid">
+          <LandingView />
         </div>
-      </Layout>
-    );
-  }
+      );
+    }
 
-  if (registrationError && address && cluster != null && !isRegistered) {
+    if (isRegistrationCheckLoading) {
+      return (
+        <Layout
+          tab="dashboard"
+          onTabChange={handleTab}
+          isConnected={isConnected}
+          address={address ?? undefined}
+          isConnecting={isConnecting}
+          onConnect={handleConnect}
+          onDisconnect={handleDisconnect}
+          protocolLog={protocolLogPanel}
+        >
+          <div className="flex flex-col items-center justify-center min-h-[40vh] gap-4">
+            <span className="h-7 w-7 animate-spin rounded-full border-2 border-ink-600 border-t-white" aria-hidden />
+            <p className="text-sm text-mist">Authenticating with protocol…</p>
+          </div>
+        </Layout>
+      );
+    }
+
+    if (registrationError && address && cluster != null && !isRegistered) {
+      return (
+        <Layout tab="dashboard" onTabChange={handleTab} isConnected={isConnected} address={address ?? undefined}
+          isConnecting={isConnecting} onConnect={handleConnect} onDisconnect={handleDisconnect} protocolLog={protocolLogPanel}>
+          <div role="alert" className="card max-w-lg mx-auto space-y-3">
+            <h2 className="text-lg font-semibold text-white">Registration status unavailable</h2>
+            <p className="text-sm text-mist">The registry could not be reached, so onboarding is paused. Try again when the network is available.</p>
+            <button type="button" onClick={retryRegistrationCheck} className="btn-primary px-4 py-2 rounded-lg text-sm">Retry registry check</button>
+          </div>
+        </Layout>
+      );
+    }
+
+    if (showRegistrationWizard) {
+      return (
+        <Layout
+          tab={tab}
+          onTabChange={handleTab}
+          isConnected={isConnected}
+          address={address ?? undefined}
+          isConnecting={isConnecting}
+          onConnect={handleConnect}
+          onDisconnect={handleDisconnect}
+          protocolLog={protocolLogPanel}
+        >
+          <RegistrationWizard onComplete={handleRegistrationComplete} />
+        </Layout>
+      );
+    }
+
     return (
-      <Layout tab="dashboard" onTabChange={handleTab} isConnected={isConnected} address={address ?? undefined}
-        isConnecting={isConnecting} onConnect={handleConnect} onDisconnect={handleDisconnect} protocolLog={protocolLogPanel}>
-        <div role="alert" className="card max-w-lg mx-auto space-y-3">
-          <h2 className="text-lg font-semibold text-white">Registration status unavailable</h2>
-          <p className="text-sm text-mist">The registry could not be reached, so onboarding is paused. Try again when the network is available.</p>
-          <button type="button" onClick={retryRegistrationCheck} className="btn-primary px-4 py-2 rounded-lg text-sm">Retry registry check</button>
-        </div>
-      </Layout>
-    );
-  }
-
-  if (showRegistrationWizard) {
-    return (
-      <Layout
-        tab={tab}
-        onTabChange={handleTab}
-        isConnected={isConnected}
-        address={address ?? undefined}
-        isConnecting={isConnecting}
-        onConnect={handleConnect}
-        onDisconnect={handleDisconnect}
-        protocolLog={protocolLogPanel}
-      >
-        <RegistrationWizard onComplete={handleRegistrationComplete} />
-      </Layout>
-    );
-  }
-
-  return (
-    <>
       <Layout
         tab={tab}
         onTabChange={handleTab}
@@ -341,8 +338,17 @@ function AppContent() {
           <ViewErrorBoundary>{renderView()}</ViewErrorBoundary>
         </NetworkGuard>
       </Layout>
+    );
+  };
+
+  // Mounted once at the root, outside every screen branch, so Disconnect opens
+  // from the setup, outage and registration screens too (#1116).
+  return (
+    <>
+      {renderScreen()}
       {showDisconnectModal && (
         <DisconnectConfirmModal
+          unspentNoteCount={unspentNoteCount}
           onDisconnectOnly={() => void executeDisconnect(false)}
           onFullWipe={() => void executeDisconnect(true)}
           onCancel={() => setShowDisconnectModal(false)}

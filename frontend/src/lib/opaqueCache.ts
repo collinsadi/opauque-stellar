@@ -58,16 +58,41 @@ const DB_NAME = "OpaqueCache";
 // deployment ledger with the corrected two-segment topic filter.
 // v4: announcement IDs changed from `${txHash}:${ledger}` (which collapsed
 // multiple announcements in the same transaction to one entry) to
-// `${cluster}-${txSig}-${logIndex}`. Bumping the version drops the stale
-// stores so they are rebuilt with correct per-event IDs.
+// `${cluster}-${txSig}-${logIndex}`. Upgrading from v3 re-keys the cached
+// announcements in place (see rekeyV3Announcements) so discovered payments are
+// kept. Events that v3 had already collapsed are not recoverable from the cache;
+// a full rescan re-fetches them.
 const DB_VERSION = 4;
 
 let dbPromise: Promise<IDBPDatabase<OpaqueCacheDBSchema>> | null = null;
 
+/**
+ * Maps v3 announcement records (`id` = `${txHash}:${ledger}`, `logIndex` always 0)
+ * onto the v4 id format. A v3 id is unique per transaction, so no record is merged
+ * or dropped. Pure so the upgrade path can be tested without IndexedDB.
+ */
+export function rekeyV3Announcements(records: CachedAnnouncement[]): CachedAnnouncement[] {
+  return records.map((record) => ({
+    ...record,
+    id: announcementId(record.cluster, record.transactionSignature, record.logIndex),
+  }));
+}
+
 function getDB(): Promise<IDBPDatabase<OpaqueCacheDBSchema>> {
   if (!dbPromise) {
     dbPromise = openDB<OpaqueCacheDBSchema>(DB_NAME, DB_VERSION, {
-      upgrade(db) {
+      upgrade(db, oldVersion, _newVersion, transaction) {
+        if (oldVersion === 3 && db.objectStoreNames.contains("announcements")) {
+          // Read, transform, then rewrite inside the versionchange transaction. The
+          // transform runs before the clear so a failure cannot leave the store empty.
+          const store = transaction.objectStore("announcements");
+          void (async () => {
+            const rekeyed = rekeyV3Announcements(await store.getAll());
+            await store.clear();
+            for (const record of rekeyed) await store.put(record);
+          })();
+          return;
+        }
         if (db.objectStoreNames.contains("announcements")) {
           db.deleteObjectStore("announcements");
         }

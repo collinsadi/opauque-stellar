@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { announcementId } from "../lib/opaqueCache";
 
 /**
  * Regression test: multiple announcements in a single transaction must
@@ -6,7 +7,8 @@ import { describe, it, expect, vi } from "vitest";
  */
 
 // Inline the mapping logic to test it in isolation without importing
-// React hooks or the Stellar SDK.
+// React hooks or the Stellar SDK. The ID comes from the same helper the
+// cache keys records by, so the scanner and the cache cannot drift apart.
 
 function mapAnnouncementEvents(
   events: Array<{ txHash: string; ledger: number; value: unknown }>,
@@ -19,7 +21,7 @@ function mapAnnouncementEvents(
     txEventIndex.set(txKey, idx + 1);
 
     return {
-      id: `${ev.txHash}:${ev.ledger}:${idx}`,
+      id: announcementId(cluster, ev.txHash, idx),
       cluster,
       transactionSignature: ev.txHash,
       logIndex: idx,
@@ -40,7 +42,7 @@ describe("Announcement ID collisions", () => {
     const ids = mapped.map((m) => m.id);
     const unique = new Set(ids);
     expect(unique.size).toBe(3);
-    expect(ids).toEqual(["abc123:100:0", "abc123:100:1", "abc123:100:2"]);
+    expect(ids).toEqual(["testnet-abc123-0", "testnet-abc123-1", "testnet-abc123-2"]);
   });
 
   it("resets index for different transactions", () => {
@@ -51,9 +53,9 @@ describe("Announcement ID collisions", () => {
     ];
     const mapped = mapAnnouncementEvents(events, "testnet");
 
-    expect(mapped[0].id).toBe("tx1:100:0");
-    expect(mapped[1].id).toBe("tx1:100:1");
-    expect(mapped[2].id).toBe("tx2:101:0");
+    expect(mapped[0].id).toBe("testnet-tx1-0");
+    expect(mapped[1].id).toBe("testnet-tx1-1");
+    expect(mapped[2].id).toBe("testnet-tx2-0");
   });
 
   it("single-event transaction gets logIndex 0", () => {
@@ -61,6 +63,6 @@ describe("Announcement ID collisions", () => {
     const mapped = mapAnnouncementEvents(events, "testnet");
 
     expect(mapped[0].logIndex).toBe(0);
-    expect(mapped[0].id).toBe("solo:50:0");
+    expect(mapped[0].id).toBe("testnet-solo-0");
   });
 });
