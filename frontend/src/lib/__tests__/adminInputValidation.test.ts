@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isValidAdminAddress } from "../adminInputValidation";
+import { isValidAdminAddress, transferNeedsStrongConfirmation } from "../adminInputValidation";
 
 describe("admin address validation", () => {
   it("accepts checksummed Stellar account and contract StrKeys", () => {
@@ -10,5 +10,12 @@ describe("admin address validation", () => {
   it("rejects malformed StrKeys and arbitrary text", () => {
     expect(isValidAdminAddress("G000000000000000000000000000000000000000000000000000000000")).toBe(false);
     expect(isValidAdminAddress("not-an-address")).toBe(false);
+  });
+
+  it("requires strong confirmation only for contract recipients", () => {
+    expect(transferNeedsStrongConfirmation("CAWXRGFZITZ7TJIZNDLOPJNVEMPAZDWFI22XI76FC67YF2MDRUXLBS2T")).toBe(true);
+    expect(transferNeedsStrongConfirmation("  CAWXRGFZITZ7TJIZNDLOPJNVEMPAZDWFI22XI76FC67YF2MDRUXLBS2T  ")).toBe(true);
+    expect(transferNeedsStrongConfirmation("GCMPINZMMQVQ7MWIJLB34F5JRAHLQQTWCP6XB5HEZR353PPPWRUWHLPU")).toBe(false);
+    expect(transferNeedsStrongConfirmation("not-an-address")).toBe(false);
   });
 });

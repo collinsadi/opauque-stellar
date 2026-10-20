@@ -12,6 +12,8 @@ import {
   downloadBlob,
   poolNoteBackupFilename,
 } from "../lib/poolNoteBackup";
+import { getDocUrl } from "../lib/docsLinks";
+import { presetChunkStroops } from "../lib/poolSweep";
 import { deriveDeposit, newNoteSecrets, toHex32, unspentTotal, type PoolNote } from "../lib/poolNotes";
 import {
   invokePoolDeposit,
@@ -211,6 +213,13 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
   const removePendingDeposit = usePendingDepositStore((s) => s.remove);
 
   const [amount, setAmount] = useState("");
+  // Compare in stroops with the string-based parser, so `10.0` and `10.0000000` both match the 10 XLM preset.
+  const presetStroops = useMemo(() => presetChunkStroops(cfg?.depositPresetsXlm ?? []), [cfg]);
+  const isNonPresetAmount = useMemo(() => {
+    const value = parseXlm(amount);
+    if (value === null || presetStroops.length === 0) return false;
+    return !presetStroops.includes(value);
+  }, [amount, presetStroops]);
   const [recipient, setRecipient] = useState("");
   const [selected, setSelected] = useState<number | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -1091,6 +1100,21 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
             {busy === "Depositing…" ? "Depositing…" : "Deposit"}
           </button>
         </div>
+        {isNonPresetAmount && (
+          <div className="mt-3 rounded-xl border border-amber-400/30 bg-amber-400/10 p-3 text-sm text-amber-100">
+            <strong>Linkability warning:</strong> This amount does not match a common pool
+            denomination. A unique deposit amount makes the deposit–withdrawal pair trivially
+            linkable, undermining your privacy.{" "}
+            <a
+              href={getDocUrl("pool-linkability")}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline hover:no-underline"
+            >
+              Learn more about the threat model.
+            </a>
+          </div>
+        )}
         <p className="mt-2 text-xs text-mist/60">
           A secret note is generated and saved locally. Keep your backup — losing notes loses the
           funds.

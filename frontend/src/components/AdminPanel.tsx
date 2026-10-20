@@ -31,7 +31,7 @@ import { ModalShell } from "./ModalShell";
 import { getPoolConfig } from "../contracts/poolConfig";
 import { getRelayerConfig } from "../contracts/relayerConfig";
 import { invokeUpdateAspRoot, invokeUpdateStateRoot } from "../lib/programs";
-import { isValidAdminAddress } from "../lib/adminInputValidation";
+import { isValidAdminAddress, transferNeedsStrongConfirmation } from "../lib/adminInputValidation";
 
 // =============================================================================
 // Constants
@@ -44,6 +44,8 @@ type AdminContract = {
   configHasAdmin?: boolean;
   supportsTransfer: boolean;
   directTransfer?: boolean;
+  /** The config also carries a `governance` address that is transferable on its own. */
+  governanceSlot?: boolean;
 };
 
 const poolConfig = getPoolConfig();
@@ -51,7 +53,7 @@ const relayerConfig = getRelayerConfig();
 const ADMIN_CONTRACTS: AdminContract[] = [
   { id: deployedAddresses.reputationVerifier, name: "Reputation Verifier", readMethod: "get_config", configHasAdmin: true, supportsTransfer: true, directTransfer: true },
   { id: deployedAddresses.groth16Verifier, name: "Groth16 Verifier", readMethod: null, supportsTransfer: false },
-  { id: deployedAddresses.attestationEngineV2, name: "Attestation Engine V2", readMethod: "get_config", configHasAdmin: true, supportsTransfer: true, directTransfer: true },
+  { id: deployedAddresses.attestationEngineV2, name: "Attestation Engine V2", readMethod: "get_config", configHasAdmin: true, supportsTransfer: true, directTransfer: true, governanceSlot: true },
   { id: deployedAddresses.schemaRegistry, name: "Schema Registry", readMethod: null, supportsTransfer: false },
   ...(poolConfig ? [{ id: poolConfig.poolId, name: "Privacy Pool", readMethod: "get_config" as const, configHasAdmin: true, supportsTransfer: true, directTransfer: true }] : []),
   ...(relayerConfig ? [{ id: relayerConfig.registryId, name: "Relayer Registry", readMethod: "get_config" as const, configHasAdmin: true, supportsTransfer: true, directTransfer: true }] : []),
@@ -101,14 +103,35 @@ function shortAddr(addr: string) {
 interface AdminStatus {
   contractId: string;
   contractName: string;
+  /** Which privileged slot this row shows. A contract can expose more than one. */
+  slot: "admin" | "governance";
   currentAdmin: string | null;
   pendingAdmin: string | null;
-  /** true if the connected wallet is the current admin */
+  /** true if the connected wallet holds this slot */
   isAdmin: boolean;
+  /** true if the connected wallet holds this slot or another slot that can move it */
+  canManage: boolean;
   /** true if the connected wallet is the pending admin (can accept) */
   isPendingAdmin: boolean;
   supportsTransfer: boolean;
   directTransfer: boolean;
+}
+
+function adminSlotFallback(c: AdminContract): AdminStatus[] {
+  const base = {
+    contractId: c.id,
+    contractName: c.name,
+    currentAdmin: null,
+    pendingAdmin: null,
+    isAdmin: false,
+    canManage: false,
+    isPendingAdmin: false,
+    supportsTransfer: c.supportsTransfer,
+    directTransfer: c.directTransfer ?? false,
+  };
+  const statuses: AdminStatus[] = [{ ...base, slot: "admin" }];
+  if (c.governanceSlot) statuses.push({ ...base, contractName: `${c.name} (governance)`, slot: "governance" });
+  return statuses;
 }
 
 // =============================================================================
@@ -129,8 +152,16 @@ function AdminCard({ status, publicKey, signTransaction, onRefresh }: AdminCardP
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [acknowledged, setAcknowledged] = useState(false);
+  const [typedAddress, setTypedAddress] = useState("");
 
   const isBusy = busy !== null;
+  const isGovernance = status.slot === "governance";
+  const roleLabel = isGovernance ? "Governance" : "Admin";
+  const transferMethod = isGovernance ? "transfer_governance" : "transfer_admin";
+  const needsStrongConfirm = transferNeedsStrongConfirmation(transferInput);
+  const strongConfirmed =
+    !needsStrongConfirm || (acknowledged && typedAddress.trim() === transferInput.trim());
 
   const invokeAdmin = useCallback(
     async (method: string, args: xdr.ScVal[]) => {
@@ -163,15 +194,22 @@ function AdminCard({ status, publicKey, signTransaction, onRefresh }: AdminCardP
       setError("Enter a valid Stellar account (G…) or contract (C…) address.");
       return;
     }
+    if (transferInput.trim() === status.currentAdmin) {
+      setError(`That address already holds the ${roleLabel.toLowerCase()} role.`);
+      return;
+    }
+    setAcknowledged(false);
+    setTypedAddress("");
     setConfirmOpen(true);
   };
 
   const confirmTransfer = () => {
+    if (!strongConfirmed) return;
     setConfirmOpen(false);
     const args = status.directTransfer
       ? [nativeToScVal(publicKey, { type: "address" }), nativeToScVal(transferInput.trim(), { type: "address" })]
       : [nativeToScVal(transferInput.trim(), { type: "address" })];
-    void invokeAdmin("transfer_admin", args);
+    void invokeAdmin(transferMethod, args);
   };
 
   const handleAcceptAdmin = () => {
@@ -198,14 +236,14 @@ function AdminCard({ status, publicKey, signTransaction, onRefresh }: AdminCardP
           </div>
           {status.isAdmin && (
             <span className="inline-flex items-center gap-1 shrink-0 rounded-full border border-white/30 bg-white/10 px-2 py-0.5 text-[11px] font-medium text-white">
-              You are admin
+              {isGovernance ? "You are governance" : "You are admin"}
             </span>
           )}
         </div>
 
         {/* Current admin */}
         <div className="space-y-1">
-          <p className="text-xs text-ink-500 uppercase tracking-widest font-semibold">Current Admin</p>
+          <p className="text-xs text-ink-500 uppercase tracking-widest font-semibold">Current {roleLabel}</p>
           {status.currentAdmin ? (
             <p className="text-xs font-mono text-white break-all" title={status.currentAdmin}>
               {status.currentAdmin}
@@ -247,17 +285,17 @@ function AdminCard({ status, publicKey, signTransaction, onRefresh }: AdminCardP
           </div>
         )}
 
-        {/* Transfer admin form: only shown to current admin */}
-        {status.supportsTransfer && status.isAdmin && !status.pendingAdmin && (
+        {/* Transfer form: only shown to wallets that can move this slot */}
+        {status.supportsTransfer && status.canManage && !status.pendingAdmin && (
           <div className="space-y-2 pt-1 border-t border-ink-800">
             <p className="text-xs text-ink-500 uppercase tracking-widest font-semibold pt-1">
-              Initiate Admin Transfer
+              Initiate {roleLabel} Transfer
             </p>
             <div className="flex gap-2">
               <input
                 id={`${uid}-new-admin`}
                 type="text"
-                placeholder="New admin address (G… or C…)"
+                placeholder={`New ${roleLabel.toLowerCase()} address (G… or C…)`}
                 value={transferInput}
                 onChange={(e) => {
                   setTransferInput(e.target.value);
@@ -272,7 +310,7 @@ function AdminCard({ status, publicKey, signTransaction, onRefresh }: AdminCardP
                 disabled={isBusy || !isValidAdminAddress(transferInput) || !signTransaction}
                 className="rounded-lg bg-ink-700 hover:bg-ink-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
-                {busy === "transfer_admin" ? "…" : status.directTransfer ? "Transfer Admin" : "Propose"}
+                {busy === transferMethod ? "…" : status.directTransfer ? `Transfer ${roleLabel}` : "Propose"}
               </button>
             </div>
             <p className="text-[11px] text-mist/60">
@@ -300,14 +338,14 @@ function AdminCard({ status, publicKey, signTransaction, onRefresh }: AdminCardP
       <ModalShell
         open={confirmOpen}
         title="Confirm Admin Transfer"
-        description={status.directTransfer ? "Transfer admin authority directly for this contract." : "Propose a new admin for this contract."}
+        description={status.directTransfer ? `Transfer ${roleLabel.toLowerCase()} authority directly for this contract.` : `Propose a new ${roleLabel.toLowerCase()} for this contract.`}
         onClose={() => setConfirmOpen(false)}
         closeOnBackdrop={!isBusy}
         maxWidthClassName="max-w-sm"
       >
         <div className="space-y-4">
           <p className="text-sm text-mist">
-            Proposing admin transfer for{" "}
+            Proposing {roleLabel.toLowerCase()} transfer for{" "}
             <span className="text-white font-medium">{status.contractName}</span> to:
           </p>
           <p className="text-xs font-mono bg-ink-800 rounded-lg px-3 py-2 text-white break-all">
@@ -318,6 +356,34 @@ function AdminCard({ status, publicKey, signTransaction, onRefresh }: AdminCardP
               ? "This contract applies the transfer as soon as the transaction confirms."
               : "The transfer is only finalised when the new admin calls accept_admin(). You can cancel at any time before acceptance."}
           </p>
+          {needsStrongConfirm && (
+            <div className="space-y-3 rounded-lg border border-neutral-500/30 bg-neutral-500/5 p-3">
+              <p className="text-xs text-neutral-300">
+                This is a contract address. If it cannot authorize {roleLabel.toLowerCase()} calls,
+                {" "}{roleLabel.toLowerCase()} control of this contract is locked permanently.
+              </p>
+              <label className="flex items-start gap-2 text-xs text-mist">
+                <input
+                  type="checkbox"
+                  checked={acknowledged}
+                  onChange={(e) => setAcknowledged(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>I have verified this contract can sign {roleLabel.toLowerCase()} calls.</span>
+              </label>
+              <label className="block text-xs text-mist">
+                Type the address to confirm
+                <input
+                  type="text"
+                  value={typedAddress}
+                  onChange={(e) => setTypedAddress(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 font-mono text-xs text-white"
+                />
+              </label>
+            </div>
+          )}
           <div className="flex gap-3">
             <button
               type="button"
@@ -329,9 +395,10 @@ function AdminCard({ status, publicKey, signTransaction, onRefresh }: AdminCardP
             <button
               type="button"
               onClick={confirmTransfer}
-              className="flex-1 rounded-lg bg-white text-black border border-white px-4 py-2 text-sm font-semibold hover:bg-black hover:text-white transition-colors"
+              disabled={!strongConfirmed}
+              className="flex-1 rounded-lg bg-white text-black border border-white px-4 py-2 text-sm font-semibold hover:bg-black hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              {status.directTransfer ? "Transfer Admin" : "Confirm Proposal"}
+              {status.directTransfer ? `Transfer ${roleLabel}` : "Confirm Proposal"}
             </button>
           </div>
         </div>
@@ -428,7 +495,7 @@ export function AdminPanel() {
       const passphrase = getNetworkPassphrase();
 
       const results = await Promise.allSettled(
-        ADMIN_CONTRACTS.map(async (c) => {
+        ADMIN_CONTRACTS.map(async (c): Promise<AdminStatus[]> => {
           const [adminRaw, pendingRaw] = await Promise.all([
             c.readMethod
               ? simulateRead(server, passphrase, publicKey, c.id, c.readMethod)
@@ -438,40 +505,54 @@ export function AdminPanel() {
               : Promise.resolve(null),
           ]);
 
-          const adminValue = c.configHasAdmin && adminRaw && typeof adminRaw === "object"
-            ? (adminRaw as { admin?: unknown }).admin
-            : adminRaw;
+          const config = adminRaw && typeof adminRaw === "object"
+            ? (adminRaw as { admin?: unknown; governance?: unknown })
+            : null;
+          const adminValue = c.configHasAdmin && config ? config.admin : adminRaw;
           const currentAdmin = typeof adminValue === "string" ? adminValue : null;
           const pendingAdmin = typeof pendingRaw === "string" ? pendingRaw : null;
 
-          return {
+          const base = {
             contractId: c.id,
             contractName: c.name,
-            currentAdmin,
-            pendingAdmin,
-            isAdmin: currentAdmin === publicKey,
-            isPendingAdmin: pendingAdmin === publicKey,
             supportsTransfer: c.supportsTransfer,
             directTransfer: c.directTransfer ?? false,
-          } satisfies AdminStatus;
+          };
+          const statuses: AdminStatus[] = [
+            {
+              ...base,
+              slot: "admin",
+              currentAdmin,
+              pendingAdmin,
+              isAdmin: currentAdmin === publicKey,
+              canManage: currentAdmin === publicKey,
+              isPendingAdmin: pendingAdmin === publicKey,
+            },
+          ];
+          if (c.governanceSlot) {
+            // Either slot satisfies `require_governance`, so the admin can also move governance.
+            const governance = typeof config?.governance === "string" ? config.governance : null;
+            statuses.push({
+              ...base,
+              contractName: `${c.name} (governance)`,
+              slot: "governance",
+              currentAdmin: governance,
+              pendingAdmin: null,
+              isAdmin: governance === publicKey,
+              canManage: governance === publicKey || currentAdmin === publicKey,
+              isPendingAdmin: false,
+            });
+          }
+          return statuses;
         }),
       );
 
+      const failed = results.filter((r) => r.status === "rejected").length;
+      if (failed > 0) {
+        setError(`Could not read admin status for ${failed} contract${failed === 1 ? "" : "s"}. Refresh to try again.`);
+      }
       setStatuses(
-        results.map((r, i) => {
-          if (r.status === "fulfilled") return r.value;
-          const c = ADMIN_CONTRACTS[i]!;
-          return {
-            contractId: c.id,
-            contractName: c.name,
-            currentAdmin: null,
-            pendingAdmin: null,
-            isAdmin: false,
-            isPendingAdmin: false,
-            supportsTransfer: ADMIN_CONTRACTS[i]!.supportsTransfer,
-            directTransfer: ADMIN_CONTRACTS[i]!.directTransfer ?? false,
-          };
-        }),
+        results.flatMap((r, i) => (r.status === "fulfilled" ? r.value : adminSlotFallback(ADMIN_CONTRACTS[i]!))),
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load admin status");
@@ -530,7 +611,7 @@ export function AdminPanel() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {statuses.map((s) => (
             <AdminCard
-              key={s.contractId}
+              key={`${s.contractId}:${s.slot}`}
               status={s}
               publicKey={publicKey}
               signTransaction={signTransaction}
@@ -568,21 +649,27 @@ function PoolOperations() {
 
   const refresh = useCallback(async () => {
     if (!config || !publicKey) return;
-    const server = getSorobanServer();
-    const passphrase = getNetworkPassphrase();
-    const [rawConfig, deposits, withdrawals, pauseRequest] = await Promise.all([
-      simulateRead(server, passphrase, publicKey, config.poolId, "get_config"),
-      simulateRead(server, passphrase, publicKey, config.poolId, "is_deposits_paused"),
-      simulateRead(server, passphrase, publicKey, config.poolId, "is_withdrawals_paused"),
-      simulateRead(server, passphrase, publicKey, config.poolId, "get_withdrawal_pause_request"),
-    ]);
-    const admin = rawConfig && typeof rawConfig === "object"
-      ? (rawConfig as { admin?: unknown }).admin
-      : null;
-    setIsAdmin(admin === publicKey);
-    setDepositsPaused(deposits === true);
-    setWithdrawalsPaused(withdrawals === true);
-    setWithdrawalPausePending(Array.isArray(pauseRequest) && Number(pauseRequest[0]) > 0 && withdrawals !== true);
+    try {
+      const server = getSorobanServer();
+      const passphrase = getNetworkPassphrase();
+      const [rawConfig, deposits, withdrawals, pauseRequest] = await Promise.all([
+        simulateRead(server, passphrase, publicKey, config.poolId, "get_config"),
+        simulateRead(server, passphrase, publicKey, config.poolId, "is_deposits_paused"),
+        simulateRead(server, passphrase, publicKey, config.poolId, "is_withdrawals_paused"),
+        simulateRead(server, passphrase, publicKey, config.poolId, "get_withdrawal_pause_request"),
+      ]);
+      // simulateRead returns null on failure, so a missing config must not read as "not admin".
+      if (!rawConfig || typeof rawConfig !== "object") {
+        throw new Error("Could not read the privacy pool status. Refresh to try again.");
+      }
+      const admin = (rawConfig as { admin?: unknown }).admin;
+      setIsAdmin(admin === publicKey);
+      setDepositsPaused(deposits === true);
+      setWithdrawalsPaused(withdrawals === true);
+      setWithdrawalPausePending(Array.isArray(pauseRequest) && Number(pauseRequest[0]) > 0 && withdrawals !== true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not read the privacy pool status.");
+    }
   }, [config, publicKey]);
 
   useEffect(() => { void refresh(); }, [refresh]);

@@ -9,6 +9,7 @@
  */
 
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 import { createEncryptedStorage } from "../lib/encryptedStorage";
 import { getEncryptionPassphrase } from "../lib/getEncryptionPassphrase";
 
