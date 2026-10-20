@@ -7,4 +7,4 @@ export {
   assertLength,
   i128ToBytes,
   u32ToBytes,
-} from "@opaque-stellar/sdk/relayer-protocol/bytes";
+} from "../../../sdk/src/relayer-protocol/bytes.ts";
