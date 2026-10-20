@@ -324,17 +324,22 @@ export function PayPage() {
       const preparedTx = await soroban.prepareTransaction(builtTx);
       const signedXdr = await signTransaction(preparedTx.toXDR());
       const signed = TransactionBuilder.fromXDR(signedXdr, passphrase);
-      const send = await soroban.sendTransaction(signed);
-      if (send.status === "ERROR") throw new Error(JSON.stringify(send));
-
-      // Add to pending tx store for confirmation polling
+      // Record the pending entry under its precomputed hash before submitting,
+      // so the poller tracks it even if submission errors or drops mid-flight.
+      const sentHash = signed.hash().toString("hex");
       pendingTxStore.add({
-        txHash: send.hash,
+        txHash: sentHash,
         cluster,
         kind: "send",
       });
 
-      setTxHash(send.hash);
+      const send = await soroban.sendTransaction(signed);
+      if (send.status === "ERROR") {
+        pendingTxStore.setStatus(sentHash, "failed", "Rejected by the RPC node");
+        throw new Error(JSON.stringify(send));
+      }
+
+      setTxHash(sentHash);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Send failed");
     } finally {

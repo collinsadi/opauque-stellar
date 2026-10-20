@@ -348,22 +348,28 @@ export function SendView() {
         signedAnnounceXdr,
         passphrase,
       );
+      // Track the announcement under its precomputed hash before submitting, so
+      // a submission that errors or drops mid-flight is still polled to a
+      // terminal state instead of being lost.
+      const announceHash = signedAnnounce.hash().toString("hex");
+      markPendingTx({ txHash: announceHash, cluster: network, kind: "send" });
       const announceSend = await soroban.sendTransaction(signedAnnounce);
-      if (announceSend.status === "ERROR")
+      if (announceSend.status === "ERROR") {
+        resolvePendingTx(announceHash, "failed", "Rejected by the RPC node");
         throw new Error(JSON.stringify(announceSend));
-      markPendingTx({ txHash: announceSend.hash, cluster: network, kind: "send" });
-      let announceResp = await soroban.getTransaction(announceSend.hash);
+      }
+      let announceResp = await soroban.getTransaction(announceHash);
       while (announceResp.status === "NOT_FOUND") {
         await new Promise((r) => setTimeout(r, 1000));
-        announceResp = await soroban.getTransaction(announceSend.hash);
+        announceResp = await soroban.getTransaction(announceHash);
       }
       if (announceResp.status !== "SUCCESS") {
-        resolvePendingTx(announceSend.hash, "failed", announceResp.status);
+        resolvePendingTx(announceHash, "failed", announceResp.status);
         throw new Error(`Announcement failed: ${announceResp.status}`);
       }
-      resolvePendingTx(announceSend.hash, "confirmed");
-      addStep("done", "Announcement published.", announceSend.hash);
-      logPush("blockchain", `Announce: ${announceSend.hash.slice(0, 18)}…`);
+      resolvePendingTx(announceHash, "confirmed");
+      addStep("done", "Announcement published.", announceHash);
+      logPush("blockchain", `Announce: ${announceHash.slice(0, 18)}…`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Send failed";
       setError(msg);

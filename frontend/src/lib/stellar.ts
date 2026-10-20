@@ -579,6 +579,32 @@ export async function sendNativePayment(opts: {
   return result.hash;
 }
 
+/**
+ * Close a one-time account by merging all of its XLM, including the base
+ * reserve, into `destination`. Plain sweeps leave the reserve behind on the
+ * source account, so a merge is the only way to recover it.
+ */
+export async function sendAccountMerge(opts: {
+  sourceKeypair: Keypair;
+  destination: string;
+}): Promise<string> {
+  const horizon = getHorizonServer();
+  const passphrase = getNetworkPassphrase();
+  const sourceAccount = await horizon.loadAccount(opts.sourceKeypair.publicKey());
+
+  const tx = new TransactionBuilder(sourceAccount, {
+    fee: BASE_FEE,
+    networkPassphrase: passphrase,
+  })
+    .addOperation(Operation.accountMerge({ destination: opts.destination }))
+    .setTimeout(180)
+    .build();
+
+  tx.sign(opts.sourceKeypair);
+  const result = await horizon.submitTransaction(tx);
+  return result.hash;
+}
+
 export async function invokeContractWithKeypair(opts: {
   keypair: Keypair;
   contractId: string;

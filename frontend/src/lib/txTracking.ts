@@ -10,7 +10,7 @@
  */
 
 import { usePendingTxStore, type PendingTxEntry, type PendingTxStatus } from "../store/pendingTxStore";
-import { useTxHistoryStore, type TxHistoryPushInput } from "../store/txHistoryStore";
+import { useTxHistoryStore, type TxHistoryChainStatus, type TxHistoryPushInput } from "../store/txHistoryStore";
 import { pollPendingTransactions, type TxStatusFetcher } from "./pending-tx-poller";
 
 export interface TrackedTxInput {
@@ -61,16 +61,16 @@ export async function trackSubmission<T>(input: TrackedTxInput, submit: () => Pr
 
 /** Mirror one pending entry's terminal status onto transaction history. */
 function syncEntryToHistory(entry: PendingTxEntry): void {
+  if (entry.status === "pending") return;
   const history = useTxHistoryStore.getState();
-  if (entry.status === "confirmed" || entry.status === "failed") {
-    if (entry.history) {
-      // No-op when the row already exists (dedup by tx hash).
-      history.push({ ...entry.history, txHash: entry.txHash, chainStatus: entry.status });
-    }
-    history.setChainStatus(entry.txHash, entry.status);
+  // A timed-out tx has no known outcome. It becomes a terminal `unknown` row so
+  // it does not read as pending forever; a later chain sync can still replace it.
+  const chainStatus: TxHistoryChainStatus = entry.status === "timed_out" ? "unknown" : entry.status;
+  if (entry.history) {
+    // No-op when the row already exists (dedup by tx hash).
+    history.push({ ...entry.history, txHash: entry.txHash, chainStatus });
   }
-  // `timed_out` leaves the row pending: the outcome is unknown and the
-  // next history reconciliation settles it from chain.
+  history.setChainStatus(entry.txHash, chainStatus);
 }
 
 function whenHistoryHydrated(run: () => void): () => void {

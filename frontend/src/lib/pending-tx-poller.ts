@@ -76,21 +76,24 @@ async function pollOne(
   timeoutMs: number,
   now: () => number,
 ): Promise<void> {
-  if (now() - entry.submittedAt > timeoutMs) {
-    setStatus(entry.txHash, "timed_out", "Polling timed out before chain confirmation");
-    return;
-  }
+  // Check the chain before expiring: an entry past its deadline still gets one
+  // look so a transaction that landed late resolves to its real outcome.
+  let result: ChainStatusResult;
   try {
-    const result = await fetchStatus(entry.txHash);
-    if (result.state === "confirmed") {
-      setStatus(entry.txHash, "confirmed", result.message);
-    } else if (result.state === "failed") {
-      setStatus(entry.txHash, "failed", result.message);
-    }
-    // notFound → leave it pending and re-poll next tick.
+    result = await fetchStatus(entry.txHash);
   } catch {
     // Network blip, keep the entry pending.
+    return;
   }
+  if (result.state === "confirmed") {
+    setStatus(entry.txHash, "confirmed", result.message);
+  } else if (result.state === "failed") {
+    setStatus(entry.txHash, "failed", result.message);
+  } else if (now() - entry.submittedAt > timeoutMs) {
+    // Still not found after a successful check and past the deadline.
+    setStatus(entry.txHash, "timed_out", "Polling timed out before chain confirmation");
+  }
+  // notFound within the deadline → leave it pending and re-poll next tick.
 }
 
 function setStatus(hash: string, status: PendingTxStatus, message?: string): void {

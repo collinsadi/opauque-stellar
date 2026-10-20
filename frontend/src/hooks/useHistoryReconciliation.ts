@@ -2,8 +2,13 @@
  * Runs chain-derived history reconciliation (#113) against the local store.
  *
  * - `reconcile()` is what the history view's "Sync from chain" button calls.
- * - With `autoOnEmpty`, a fresh device (hydrated, empty local history for
- *   this cluster) reconciles once per cluster + wallet per session.
+ *   This is the only path that queries Horizon unless the user opts in.
+ * - With `autoOnEmpty` AND the persisted auto-sync opt-in, a fresh device
+ *   (hydrated, empty local history for this cluster) reconciles once per
+ *   cluster + wallet per session. Off by default.
+ * - Ghost addresses sent in a query are limited to the connected account's
+ *   own ghosts, so one account's wallet is never queried alongside another
+ *   account's ghosts.
  *
  * Status lives in a shared store so the view reflects a sync started from
  * app boot.
@@ -11,6 +16,7 @@
 
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import { create } from "zustand";
+import { createJSONStorage, persist } from "zustand/middleware";
 import { reconcileHistory, type ChainHistoryFetcher } from "../lib/history-reconciliation";
 import { createHorizonHistoryFetcher } from "../lib/chainHistoryFetchers";
 import { useTxHistoryStore, type TxHistoryEntry } from "../store/txHistoryStore";
@@ -29,6 +35,27 @@ export const useReconcileStatusStore = create<ReconcileState>()(() => ({
   addedCount: 0,
   error: null,
 }));
+
+const HISTORY_SYNC_CONSENT_KEY = "opaque-history-auto-sync";
+
+interface HistorySyncConsentState {
+  /** Persisted per device. When true, an empty history rebuilds from chain on load. */
+  autoSyncEnabled: boolean;
+  setAutoSyncEnabled: (enabled: boolean) => void;
+}
+
+export const useHistorySyncConsentStore = create<HistorySyncConsentState>()(
+  persist(
+    (set) => ({
+      autoSyncEnabled: false,
+      setAutoSyncEnabled: (enabled) => set({ autoSyncEnabled: enabled }),
+    }),
+    {
+      name: HISTORY_SYNC_CONSENT_KEY,
+      storage: createJSONStorage(() => localStorage),
+    },
+  ),
+);
 
 /** Cluster:address keys already auto-reconciled this session. */
 const autoAttempted = new Set<string>();
@@ -65,13 +92,20 @@ export function useHistoryReconciliation({
 }: UseHistoryReconciliationOptions) {
   const hydrated = useSyncExternalStore(subscribeHydration, getHydrated, getHydrated);
   const localCount = useTxHistoryStore((s) => s.byChain[cluster]?.length ?? 0);
+  const autoSyncEnabled = useHistorySyncConsentStore((s) => s.autoSyncEnabled);
   const ghostEntries = useGhostAddressStore((s) => s.entries);
   const ghostAddresses = useMemo(
     () =>
       ghostEntries
-        .filter((e) => e.cluster === cluster && !!e.stealthStellarAddress)
+        .filter(
+          (e) =>
+            e.cluster === cluster &&
+            !!address &&
+            e.account === address &&
+            !!e.stealthStellarAddress,
+        )
         .map((e) => e.stealthStellarAddress!),
-    [ghostEntries, cluster],
+    [ghostEntries, cluster, address],
   );
   const status = useReconcileStatusStore();
 
@@ -103,12 +137,12 @@ export function useHistoryReconciliation({
   }, [address, cluster, ghostAddresses, fetcher]);
 
   useEffect(() => {
-    if (!enabled || !autoOnEmpty || !hydrated || !address || localCount > 0) return;
+    if (!enabled || !autoOnEmpty || !autoSyncEnabled || !hydrated || !address || localCount > 0) return;
     const key = `${cluster}:${address}`;
     if (autoAttempted.has(key)) return;
     autoAttempted.add(key);
     void reconcile();
-  }, [enabled, autoOnEmpty, hydrated, address, cluster, localCount, reconcile]);
+  }, [enabled, autoOnEmpty, autoSyncEnabled, hydrated, address, cluster, localCount, reconcile]);
 
   return { ...status, reconcile, canReconcile: enabled && !!address };
 }

@@ -7,6 +7,7 @@ import { useWallet } from "./useWallet";
 import { usePoolNoteStore } from "../store/poolNoteStore";
 import { useTxHistoryStore } from "../store/txHistoryStore";
 import { useWatchlistStore } from "./useWatchlist";
+import { useGhostAddressStore } from "../store/ghostAddressStore";
 
 export function useAccountScope(): void {
   const { publicKey } = useWallet();
@@ -15,5 +16,6 @@ export function useAccountScope(): void {
     usePoolNoteStore.getState().setActiveAccount(publicKey ?? null);
     useTxHistoryStore.getState().setActiveAccount(publicKey ?? null);
     useWatchlistStore.getState().setActiveAccount(publicKey ?? null);
+    useGhostAddressStore.getState().setActiveAccount(publicKey ?? null);
   }, [publicKey]);
 }

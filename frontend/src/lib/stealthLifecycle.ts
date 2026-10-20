@@ -2,7 +2,7 @@
  * Opaque Protocol: Stealth fund discovery and spending lifecycle (Stellar).
  */
 
-import { nativeToScVal } from "@stellar/stellar-sdk";
+import { nativeToScVal, type Keypair } from "@stellar/stellar-sdk";
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { useVaultStore } from "../store/vaultStore";
 import {
@@ -20,11 +20,14 @@ import {
   hexToBytes,
 } from "./stealth";
 import {
+  NEW_ACCOUNT_MIN_RESERVE_STROOPS,
+  accountExists,
   bytesToScVal,
   getHorizonServer,
   getNativeWithdrawalQuote,
   getSorobanServer,
   invokeContractWithKeypair,
+  sendAccountMerge,
   sendNativePayment,
   u64ToScVal,
 } from "./stellar";
@@ -385,7 +388,19 @@ export function deriveStealthPrivateKeyFromGhostEntry(
   if (!ghostEntry.ephemeralPrivKeyHex) {
     throw new Error("Ghost entry has no ephemeral private key.");
   }
-  const ephemeralPrivBytes = hexToBytes(ghostEntry.ephemeralPrivKeyHex);
+  return deriveStealthPrivateKeyFromEphemeral(
+    ghostEntry.ephemeralPrivKeyHex,
+    masterKeys,
+    wasm,
+  );
+}
+
+function deriveStealthPrivateKeyFromEphemeral(
+  ephemeralPrivKeyHex: string,
+  masterKeys: MasterKeys,
+  wasm: StealthLifecycleWasm,
+): Hex {
+  const ephemeralPrivBytes = hexToBytes(ephemeralPrivKeyHex);
   const ephemeralPubKey = secp256k1.getPublicKey(ephemeralPrivBytes, true);
   const stealthPrivKeyBytes = wasm.reconstruct_signing_key_wasm(
     masterKeys.spendPrivKey,
@@ -422,11 +437,37 @@ export function getAnnouncerAccount(
   return { address: keypair.publicKey(), privateKey: hexKey };
 }
 
+/**
+ * XLM the one-time announcer is created with: the 1 XLM account minimum plus
+ * headroom for the announcement's fees. Paid from the ghost, never the wallet.
+ */
+export const ANNOUNCER_FUNDING_STROOPS = NEW_ACCOUNT_MIN_RESERVE_STROOPS + 5_000_000n;
+
+/** Stellar account of a ghost, derived from its ephemeral key (where its XLM is held). */
+export function getGhostStellarAccount(
+  wasm: StealthLifecycleWasm,
+  masterKeys: MasterKeys,
+  ephemeralPrivKeyHex: Hex | string,
+): { address: string; keypair: Keypair } {
+  const keypair = deriveStealthStellarKeypairFromStealthPrivKey(
+    hexToBytes(
+      deriveStealthPrivateKeyFromEphemeral(ephemeralPrivKeyHex, masterKeys, wasm).slice(2),
+    ),
+  );
+  return { address: keypair.publicKey(), keypair };
+}
+
 export type GhostAnnouncementProgress = {
   id: string;
   label: string;
   status: "wait" | "ok" | "done" | "error";
   detail?: string;
+};
+
+export type GhostAnnouncementResult = {
+  announceSignature: string;
+  /** Merge that returned the announcer's reserve to the ghost, if it succeeded. */
+  reserveReturnSignature?: string;
 };
 
 export async function executeGhostOnchainAnnouncement(
@@ -436,7 +477,7 @@ export async function executeGhostOnchainAnnouncement(
   ghostStealthAddress: string,
   ephemeralPrivKeyHex: Hex | string,
   onProgress?: (e: GhostAnnouncementProgress) => void,
-): Promise<{ announceSignature: string }> {
+): Promise<GhostAnnouncementResult> {
   const report = (
     id: string,
     label: string,
@@ -451,15 +492,26 @@ export async function executeGhostOnchainAnnouncement(
   );
   report("verify", "Ghost address matches stored ephemeral key.", "ok");
 
-  const announcerAcc = getAnnouncerAccount(
-    wasm,
-    getMasterKeys(),
-    metaAddressHex,
-    typeof ephemeralPrivKeyHex === "string" ? ephemeralPrivKeyHex : undefined,
-  );
+  const masterKeys = getMasterKeys();
+  const ephemeralHex = typeof ephemeralPrivKeyHex === "string" ? ephemeralPrivKeyHex : undefined;
+  const ghost = getGhostStellarAccount(wasm, masterKeys, ephemeralPrivKeyHex);
+  const announcerAcc = getAnnouncerAccount(wasm, masterKeys, metaAddressHex, ephemeralHex);
   const announcerKeypair = deriveStealthStellarKeypairFromStealthPrivKey(
     hexToBytes(announcerAcc.privateKey.slice(2)),
   );
+
+  // Fund the announcer from the ghost balance. Funding from the connected wallet
+  // would put the main wallet on-chain next to the announcement.
+  report("fund", "Funding one-time announcer from this ghost…", "wait");
+  if (!(await accountExists(announcerKeypair.publicKey()))) {
+    await sendNativePayment({
+      sourceKeypair: ghost.keypair,
+      destination: announcerKeypair.publicKey(),
+      amountStroops: ANNOUNCER_FUNDING_STROOPS,
+      destinationExists: false,
+    });
+  }
+  report("fund", "Announcer funded from this ghost.", "ok");
 
   const stealthAddrBytes = hexToBytes(
     ghostStealthAddress.startsWith("0x")
@@ -480,9 +532,23 @@ export async function executeGhostOnchainAnnouncement(
       bytesToScVal(payload.metadata),
     ],
   });
-
   report("announce", "Announcement published.", "done", hash);
-  return { announceSignature: hash };
+
+  // The announcement is already on-chain, so a failed return is reported
+  // without failing the whole flow.
+  report("reserve", "Returning announcer reserve to this ghost…", "wait");
+  try {
+    const reserveReturnSignature = await sendAccountMerge({
+      sourceKeypair: announcerKeypair,
+      destination: ghost.address,
+    });
+    report("reserve", "Announcer reserve returned to this ghost.", "done", reserveReturnSignature);
+    return { announceSignature: hash, reserveReturnSignature };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    report("reserve", `Could not return announcer reserve: ${msg}`, "error");
+    return { announceSignature: hash };
+  }
 }
 
 type NativeOrToken =
