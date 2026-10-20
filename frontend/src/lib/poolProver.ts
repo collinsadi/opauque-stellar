@@ -23,8 +23,7 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import { keccak_256 } from "@noble/hashes/sha3";
-// @ts-expect-error snarkjs has no bundled types
-import * as snarkjs from "snarkjs";
+import { proveInWorker } from "./proofWorkerClient";
 import { getSorobanServer } from "./stellar";
 import { getNetwork, getNetworkPassphrase } from "./chain";
 import {
@@ -289,6 +288,8 @@ export type ProofProgress = (stage: string) => void;
 /**
  * Generate a full-withdrawal proof for `note`, paying `recipient` (minus `fee` to
  * `relayer`). `caller` is the source account used for read-only simulations.
+ * The Groth16 proving step runs in a Web Worker; aborting `signal` cancels it and
+ * rejects with an `AbortError`.
  */
 export async function generateWithdrawProof(opts: {
   note: PoolNote;
@@ -297,6 +298,7 @@ export async function generateWithdrawProof(opts: {
   relayer: string;
   caller: string;
   onProgress?: ProofProgress;
+  signal?: AbortSignal;
 }): Promise<WithdrawProof> {
   const cfg = getPoolConfig();
   if (!cfg) {
@@ -406,8 +408,15 @@ export async function generateWithdrawProof(opts: {
   opts.onProgress?.("proving");
   let proof: { pi_a: string[]; pi_b: string[][]; pi_c: string[] };
   try {
-    ({ proof } = await snarkjs.groth16.fullProve(input, WASM_PATH, ZKEY_PATH));
+    ({ proof } = await proveInWorker({
+      input,
+      wasmPath: WASM_PATH,
+      zkeyPath: ZKEY_PATH,
+      signal: opts.signal,
+    }));
   } catch (err) {
+    // A user cancel is not a proof failure; let it reach the caller unchanged.
+    if (err instanceof DOMException && err.name === "AbortError") throw err;
     // A missing/short-served artifact and a genuine proving failure need
     // different remedies, so they get different classes.
     const message = err instanceof Error ? err.message : String(err);

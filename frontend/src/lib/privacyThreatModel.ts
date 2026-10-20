@@ -28,6 +28,7 @@ export const PRIVACY_NOT_HIDDEN = [
   "Wallet signatures can link registration, sends, deposits, sweeps, and some setup actions to your Freighter identity.",
   "The ASP policy and published roots determine which deposits are eligible for pool withdrawal.",
   "Relayers and gateways may observe request timing, selected jobs, endpoints, and encrypted payload delivery metadata.",
+  "Relayed withdrawals still have a timing link: the escrow job is created by the connected wallet moments before the withdrawal, and the registry shows both. The escrow transaction reveals that the wallet funded a job, not the recipient or amount.",
   "ZK proofs reveal whichever public inputs and trait fields you choose to disclose.",
   "Weak anonymity sets, uncommon amounts, or distinctive timing can still create linkage.",
   "Lost local ghost data, pool notes, or backup passwords may make funds permanently inaccessible.",
@@ -185,6 +186,13 @@ export const MITIGATIONS: ThreatMitigation[] = [
     threat: "Weak anonymity set",
     mitigation: "User-facing pool warnings and association-set visibility",
     implementation: "PoolView.tsx, privacyThreatModel.ts",
+  },
+  {
+    id: "M22",
+    threat: "Relayer escrow timing link",
+    mitigation:
+      "Relayer copy states the escrow job is wallet-signed; a funding path that avoids the connected wallet is pending (#1129)",
+    implementation: "PoolView.tsx, WithdrawFlowModal.tsx, privacyThreatModel.ts",
   },
 ];
 

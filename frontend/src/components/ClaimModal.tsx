@@ -12,12 +12,15 @@ import {
   validateMemo,
   type MemoType,
 } from "../lib/destination-memo";
+import { evaluateDestinationPrivacy } from "../lib/destinationPrivacy";
 import { useMemo, useState } from "react";
 
 type ClaimModalProps = {
   tx: FoundTx;
   asset: TokenInfo;
   destination: string;
+  /** Destinations entered for the other claims, used to flag reuse across stealth accounts. */
+  otherDestinations: readonly string[];
   mainWalletAddress: string | undefined;
   cluster: string | null;
   claiming: boolean;
@@ -37,6 +40,7 @@ export function ClaimModal({
   tx,
   asset,
   destination,
+  otherDestinations,
   mainWalletAddress,
   cluster,
   claiming,
@@ -51,10 +55,11 @@ export function ClaimModal({
   const amountStr = formatXlm(amountRaw);
   const quote = withdrawalPreview?.quote;
   const destinationTrimmed = destination.trim();
-  const isSameAsMain =
-    !!mainWalletAddress &&
-    destinationTrimmed.length > 0 &&
-    destinationTrimmed === mainWalletAddress;
+  const privacyVerdict = evaluateDestinationPrivacy({
+    destination: destinationTrimmed,
+    mainWalletAddress,
+    otherDestinations,
+  });
 
   const [memo, setMemo] = useState("");
   const memoRisk = useMemo(() => memoRiskFor(destinationTrimmed), [destinationTrimmed]);
@@ -185,14 +190,27 @@ export function ClaimModal({
       {/* Privacy meter */}
       <div className="mb-5">
         <p className="text-xs text-mist/70 mb-1.5 font-mono">Privacy check</p>
-        {isSameAsMain ? (
+        {privacyVerdict.kind === "none" && (
+          <div className="p-3 rounded-xl bg-ink-950/40 border border-ink-700 text-mist/70 text-sm">
+            Enter a valid destination to check its privacy.
+          </div>
+        )}
+        {privacyVerdict.kind === "same-as-main" && (
           <div className="p-3 rounded-xl bg-ink-950/40 border border-warning/20 text-warning text-sm">
             Sending to your connected wallet links your identity to this
             transaction. Use a fresh address.
           </div>
-        ) : (
+        )}
+        {privacyVerdict.kind === "reused" && (
+          <div className="p-3 rounded-xl bg-ink-950/40 border border-warning/20 text-warning text-sm">
+            This destination is also used by another claim. Reusing it links those
+            stealth accounts together. Use a fresh address for each claim.
+          </div>
+        )}
+        {privacyVerdict.kind === "fresh" && (
           <div className="p-3 rounded-xl bg-ink-950/40 border border-success/20 text-success text-sm">
-            Destination differs from connected wallet, good for privacy.
+            Destination differs from connected wallet and is not reused by another
+            claim, good for privacy.
           </div>
         )}
       </div>
