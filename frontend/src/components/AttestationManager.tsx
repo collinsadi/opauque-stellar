@@ -12,18 +12,18 @@ import { keccak_256 } from "@noble/hashes/sha3";
 import { useWallet } from "../hooks/useWallet";
 import { useSchemaStore } from "../store/schemaStore";
 import { useTxHistoryStore } from "../store/txHistoryStore";
-import { useIssuedAttestationStore } from "../store/issuedAttestationStore";
+import { usePendingAttestationStore } from "../store/pendingAttestationStore";
 import { getCluster } from "../lib/chain";
 import { getExplorerTxUrl } from "../lib/explorer";
 import { parseFieldDefs } from "../lib/schema";
 import { encodeAttestationData } from "../lib/attestationV2";
 import { computeStealthAddressAndViewTag } from "../lib/stealth";
 import { hexToBytes, invokeAttest } from "../lib/programs";
-import { addressToAuthorityBytes } from "../lib/schemaEncoding";
-import { announceStealthTransfer, SCHEME_ID_SECP256K1 } from "../lib/contracts";
 import { getFeatureFlags } from "../lib/featureFlags";
 import { FeatureDisabledNotice } from "./FeatureDisabledNotice";
-import { fetchAttestationUidForTransaction, fetchSchemasFromChain } from "../lib/chainSync";
+import { fetchSchemasFromChain } from "../lib/chainSync";
+import { toHex, type PendingAttestation } from "../lib/pendingAttestations";
+import { advancePendingAttestation } from "../hooks/usePendingAttestationRecovery";
 import {
   isMetaAddressRecipient,
   recipientDiscoveryMessage,
@@ -75,18 +75,15 @@ export function AttestationManager({
   const [resolvedStealthAddress, setResolvedStealthAddress] = useState<
     string | null
   >(null);
-  const [hasAnnouncement, setHasAnnouncement] = useState(false);
-  const [announcementError, setAnnouncementError] = useState<string | null>(null);
-  const [pendingAnnouncement, setPendingAnnouncement] = useState<{
-    issuer: string;
-    stealthAddress: string;
-    ephemeralPubKey: Uint8Array;
-    viewTag: number;
-    schemaId: Uint8Array;
-    uid: Uint8Array;
-    expirySlot: number;
-  } | null>(null);
+  // This submission carries a recipient announcement; whether it went out is derived from the pending store.
+  const [expectsAnnouncement, setExpectsAnnouncement] = useState(false);
   const [isRetryingAnnouncement, setIsRetryingAnnouncement] = useState(false);
+  const pendingAttestations = usePendingAttestationStore((s) => s.pending);
+  const submissionPending: PendingAttestation | null = txSig
+    ? pendingAttestations.find((p) => p.txHash === txSig && p.cluster === cluster) ?? null
+    : null;
+  // Once the record leaves the pending store, the attestation is fully recorded and announced.
+  const hasAnnouncement = expectsAnnouncement && txSig !== null && submissionPending === null;
 
   const uid = useId();
 
@@ -137,38 +134,11 @@ export function AttestationManager({
     setFieldValues((prev) => ({ ...prev, [name]: value }));
   };
 
-  const publishAnnouncement = async (request: NonNullable<typeof pendingAnnouncement>) => {
-    if (!signTransaction) throw new Error("Wallet cannot sign announcement transactions.");
-    const issuerBytes = addressToAuthorityBytes(request.issuer);
-    const nonce = crypto.getRandomValues(new Uint8Array(32));
-    const metadata = new Uint8Array(134);
-    metadata[0] = request.viewTag;
-    metadata[1] = 0xb2;
-    metadata.set(request.schemaId, 2);
-    metadata.set(issuerBytes, 34);
-    metadata.set(request.uid, 66);
-    metadata.set(nonce, 98);
-    new DataView(metadata.buffer).setUint32(130, request.expirySlot >>> 0, false);
-    await announceStealthTransfer({
-      sourcePublicKey: request.issuer,
-      schemeId: SCHEME_ID_SECP256K1,
-      stealthAddress: hexToBytes(request.stealthAddress),
-      ephemeralPubKey: request.ephemeralPubKey,
-      metadata,
-      signTransaction,
-    });
-  };
-
-  const retryAnnouncement = async () => {
-    if (!pendingAnnouncement) return;
+  const retrySubmissionPending = async () => {
+    if (!submissionPending || !signTransaction) return;
     setIsRetryingAnnouncement(true);
-    setAnnouncementError(null);
     try {
-      await publishAnnouncement(pendingAnnouncement);
-      setPendingAnnouncement(null);
-      setHasAnnouncement(true);
-    } catch (e) {
-      setAnnouncementError(e instanceof Error ? e.message : "Announcement failed. Retry it.");
+      await advancePendingAttestation(submissionPending, signTransaction);
     } finally {
       setIsRetryingAnnouncement(false);
     }
@@ -217,7 +187,7 @@ export function AttestationManager({
   };
 
   const handleSubmit = async () => {
-    if (!canSubmit || !selectedSchema || !publicKey) return;
+    if (!canSubmit || !selectedSchema || !publicKey || !signTransaction) return;
     setIsSubmitting(true);
     setError(null);
 
@@ -264,72 +234,40 @@ export function AttestationManager({
         signTransaction,
       });
 
-      const toHex = (b: Uint8Array) =>
-        "0x" +
-        Array.from(b)
-          .map((x) => x.toString(16).padStart(2, "0"))
-          .join("");
-
-      let uidBytes: Uint8Array | null = null;
-      if (cluster) {
-        for (let attempt = 0; attempt < 8 && !uidBytes; attempt++) {
-          uidBytes = await fetchAttestationUidForTransaction(cluster, signature);
-          if (!uidBytes && attempt < 7) {
-            await new Promise((resolve) => setTimeout(resolve, 750));
-          }
-        }
-      }
-      if (!uidBytes) {
-        setAnnouncementError("The attestation is confirmed, but its on-chain UID is not available yet. Refresh Manage before revoking or announcing it.");
+      let createdAtSlot = 0;
+      try {
+        createdAtSlot = await connection.getSlot();
+      } catch {
+        /* best effort, leave 0 */
       }
 
-      // If we derived the stealth address from a meta-address, we have the ephemeral key
-      // and can create an announcement so the recipient's scanner can discover this attestation.
-      // The metadata MUST be the full V2 payload, or the scanner drops it:
-      //   view_tag(1) || 0xB2(1) || schema_id(32) || issuer(32) || uid(32) || nonce(32) || expiry_be(4)
-      if (uidBytes && ephemeralPubKey && stealthAddressHex && viewTag !== undefined) {
-        const request = {
-          issuer,
-          stealthAddress: stealthAddressHex,
-          ephemeralPubKey,
-          viewTag,
-          schemaId: schemaIdBytes,
-          uid: uidBytes,
-          expirySlot: expirySlotNum,
-        };
-        setPendingAnnouncement(request);
-        try {
-          await publishAnnouncement(request);
-          setPendingAnnouncement(null);
-          setHasAnnouncement(true);
-        } catch (announceErr) {
-          setAnnouncementError(announceErr instanceof Error ? announceErr.message : "Announcement failed. Retry it.");
-        }
-      }
+      // Persist the issuance before any UID lookup or announcement, so a slow RPC or a reload
+      // cannot lose it. Recovery records it on the Manage page and announces it once the UID resolves.
+      // The announcement is the full V2 payload (see lib/pendingAttestations.ts), or the scanner drops it.
+      const pending: PendingAttestation = {
+        cluster,
+        txHash: signature,
+        issuer,
+        schemaIdHex: selectedSchema.schemaId,
+        schemaName: selectedSchema.name,
+        stealthAddressHashHex: toHex(stealthHashBytes),
+        isRevocable: selectedSchema.revocable,
+        createdAtSlot,
+        expirationSlot: expirySlotNum,
+        uidHex: null,
+        // A meta-address gives us the ephemeral key, so the recipient can be notified.
+        announcement:
+          ephemeralPubKey && stealthAddressHex && viewTag !== undefined
+            ? { stealthAddressHex, ephemeralPubKeyHex: toHex(ephemeralPubKey), viewTag }
+            : null,
+        announceError: null,
+        createdAt: Date.now(),
+      };
+      usePendingAttestationStore.getState().upsert(pending);
+      setExpectsAnnouncement(pending.announcement !== null);
+      await advancePendingAttestation(pending, signTransaction);
 
       setTxSig(signature);
-
-      // Record the issuance locally so the Manage page can list and revoke it.
-      if (cluster && uidBytes) {
-        let createdAtSlot = 0;
-        try {
-          createdAtSlot = await connection.getSlot();
-        } catch {
-          /* best effort, leave 0 */
-        }
-        useIssuedAttestationStore.getState().addIssued({
-          cluster,
-          uidHex: toHex(uidBytes),
-          schemaIdHex: selectedSchema.schemaId,
-          schemaName: selectedSchema.name,
-          stealthAddressHashHex: toHex(stealthHashBytes),
-          createdAtSlot,
-          expirationSlot: expirySlotNum,
-          isRevocable: selectedSchema.revocable,
-          revoked: false,
-          txHash: signature,
-        });
-      }
 
       // Log attestation issuance to transaction history
       if (cluster) {
@@ -385,14 +323,16 @@ export function AttestationManager({
           <p className="text-mist text-sm mt-1">
             {recipientDiscoveryMessage(hasAnnouncement && isMetaAddressRecipient(recipientInput))}
           </p>
-          {announcementError && (
+          {submissionPending && (
             <div className="mt-3 space-y-2" role="alert">
-              <p className="text-xs text-neutral-300">{pendingAnnouncement ? "Attestation issued, but announcement failed:" : "Attestation issued:"} {announcementError}</p>
-              {pendingAnnouncement && (
-                <button type="button" onClick={() => void retryAnnouncement()} disabled={isRetryingAnnouncement} className="rounded-lg border border-ink-700 bg-ink-900 px-3 py-1.5 text-xs text-white disabled:opacity-50">
-                  {isRetryingAnnouncement ? "Retrying…" : "Retry announcement"}
-                </button>
-              )}
+              <p className="text-xs text-neutral-300">
+                {submissionPending.announceError
+                  ? `Attestation issued, but announcement failed: ${submissionPending.announceError}`
+                  : "Attestation issued, but its on-chain record is not available yet. It will be recorded and announced automatically. You can also retry now."}
+              </p>
+              <button type="button" onClick={() => void retrySubmissionPending()} disabled={isRetryingAnnouncement} className="rounded-lg border border-ink-700 bg-ink-900 px-3 py-1.5 text-xs text-white disabled:opacity-50">
+                {isRetryingAnnouncement ? "Retrying…" : "Retry"}
+              </button>
             </div>
           )}
           <a
@@ -410,9 +350,7 @@ export function AttestationManager({
             setTxSig(null);
             setRecipientInput("");
             setResolvedStealthAddress(null);
-            setHasAnnouncement(false);
-            setAnnouncementError(null);
-            setPendingAnnouncement(null);
+            setExpectsAnnouncement(false);
             setFieldValues({});
             setHasExpiry(false);
             setExpiryDateTime("");

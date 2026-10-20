@@ -442,7 +442,7 @@ export function MyTraitsView({ onNavigate, readOnly = false }: MyTraitsViewProps
         </div>
       </div>
 
-      <UnscannedRangeNotice range={scanner.progress.unscannedRange} />
+      <UnscannedRangeNotice ranges={scanner.progress.unscannedRanges} />
 
       {(freeze.frozen || freeze.stale) && freeze.message && (
         <div

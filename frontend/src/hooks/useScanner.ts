@@ -19,6 +19,7 @@ import { getManifestForNetwork } from "../contracts/deploymentManifest";
 import {
   getAnnouncementsForCluster,
   getSyncState,
+  getUnscannedRanges,
   setSyncState,
   clearSyncState,
   putAnnouncements,
@@ -58,9 +59,9 @@ export type ScanProgress = {
   /**
    * Ledgers in the requested scan range that could not be read because the
    * RPC no longer retains them. Payments announced there are NOT reflected in
-   * `announcements`; the UI must tell the user. `null` when coverage is complete.
+   * `announcements`; the UI must tell the user. Empty when coverage is complete.
    */
-  unscannedRange: UnscannedRange | null;
+  unscannedRanges: UnscannedRange[];
 };
 
 export type { UnscannedRange };
@@ -480,7 +481,7 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
     toBlock: 0n,
     currentBlock: 0n,
     error: null,
-    unscannedRange: null,
+    unscannedRanges: [],
   });
   const [isBackfilling, setIsBackfilling] = useState(false);
   const refreshKeyRef = useRef(0);
@@ -520,7 +521,7 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
         DEFAULT_FETCH_CONCURRENCY,
         async (range) => {
           const merged = await recordUnscannedRange(cluster!, range);
-          setProgress((p: ScanProgress) => ({ ...p, unscannedRange: merged }));
+          setProgress((p: ScanProgress) => ({ ...p, unscannedRanges: merged }));
         },
       );
     },
@@ -550,8 +551,8 @@ export function useScanner(opts: UseScannerOptions): UseScannerResult {
       const lastScanned = sync?.lastScannedSlot ?? null;
       // Surface a previously recorded retention gap even when this run is a
       // no-op incremental sync; those ledgers are still unscanned.
-      const knownUnscanned = sync?.unscannedRange ?? null;
-      setProgress((p: ScanProgress) => ({ ...p, unscannedRange: knownUnscanned }));
+      const knownUnscanned = getUnscannedRanges(sync);
+      setProgress((p: ScanProgress) => ({ ...p, unscannedRanges: knownUnscanned }));
       // Gap detection: ensure cached announcements cover up to lastScannedSlot
       if (cached.length > 0 && lastScanned != null) {
         const maxCachedSlot = Math.max(...cached.map((a) => a.slot));

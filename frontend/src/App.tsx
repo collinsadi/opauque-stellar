@@ -27,6 +27,8 @@ import { useTxHistoryStore } from "./store/txHistoryStore";
 import { usePoolNoteStore } from "./store/poolNoteStore";
 import { useReputationStore } from "./store/reputationStore";
 import { useIssuedAttestationStore } from "./store/issuedAttestationStore";
+import { usePendingAttestationStore } from "./store/pendingAttestationStore";
+import { usePendingAttestationRecovery } from "./hooks/usePendingAttestationRecovery";
 import { useSchemaStore } from "./store/schemaStore";
 import { useGhostAnnouncementStore } from "./store/ghostAnnouncementStore";
 import { useWatchlistStore } from "./hooks/useWatchlist";
@@ -76,7 +78,8 @@ function AppContent() {
   const [registrationJustCompleted, setRegistrationJustCompleted] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
-  const { isConnected, address, cluster, isConnecting, connect, disconnect } = useWallet();
+  const { isConnected, address, publicKey, signTransaction, cluster, isConnecting, connect, disconnect } = useWallet();
+  usePendingAttestationRecovery(cluster, publicKey, signTransaction);
   const { isSetup, clearKeys, setFromSignature, stealthMetaAddressHex } = useKeys();
   const { isRegistered, isLoading: isRegistrationCheckLoading, error: registrationError, retry: retryRegistrationCheck } = useRegistrationStatus(address, cluster, stealthMetaAddressHex);
   const clearVault = useVaultStore((s) => s.clear);
@@ -178,6 +181,7 @@ function AppContent() {
       useWatchlistStore.getState().clear({ allAccounts: true });
       useReputationStore.getState().clearTraits();
       useIssuedAttestationStore.setState({ issued: [] });
+      usePendingAttestationStore.setState({ pending: [] });
       useSchemaStore.setState({ schemas: {}, discoveredTraits: {}, attestations: {}, lastScannedSlot: 0 });
       useGhostAnnouncementStore.setState({ keys: {} });
       useGhostAddressStore.getState().setEntries([]);

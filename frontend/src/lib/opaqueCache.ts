@@ -32,8 +32,11 @@ export type SyncState = {
    * Ledgers inside the scan range that were never fetched because they fell
    * outside the RPC retention window. Announcements there are invisible to
    * this device, so the UI must disclose the gap rather than imply a complete
-   * scan. Persisted so incremental syncs keep reporting it.
+   * scan. Persisted so incremental syncs keep reporting it. Disjoint gaps are
+   * kept as separate entries, sorted by `fromLedger`.
    */
+  unscannedRanges?: UnscannedRange[];
+  /** Single-span form written before gaps were stored separately. Read only. */
   unscannedRange?: UnscannedRange | null;
 };
 
@@ -141,34 +144,67 @@ export async function getSyncState(cluster: string): Promise<SyncState | null> {
   return state ?? null;
 }
 
-export async function setSyncState(cluster: string, lastScannedSlot: number): Promise<void> {
+/**
+ * Read-modify-write one cluster's sync state inside a single readwrite
+ * transaction. IndexedDB runs overlapping readwrite transactions on the same
+ * store one after another, so a cursor update and a gap update can no longer
+ * read the same snapshot and overwrite each other's field.
+ */
+async function updateSyncState(
+  cluster: string,
+  update: (prev: SyncState | undefined) => SyncState,
+): Promise<SyncState> {
   const db = await getDB();
-  // Preserve any recorded unscanned range: advancing the cursor does not make
-  // pruned ledgers readable again.
-  const prev = await db.get("syncState", cluster);
-  await db.put("syncState", { ...prev, cluster, lastScannedSlot });
+  const tx = db.transaction("syncState", "readwrite");
+  const next = update(await tx.store.get(cluster));
+  await tx.store.put(next);
+  await tx.done;
+  return next;
+}
+
+/** Disjoint unscanned gaps for a sync state, including records written before gaps were split. */
+export function getUnscannedRanges(state: SyncState | null | undefined): UnscannedRange[] {
+  if (state?.unscannedRanges) return state.unscannedRanges;
+  return state?.unscannedRange ? [state.unscannedRange] : [];
 }
 
 /**
- * Merge `range` into the cluster's recorded unscanned range (union of the two
- * spans). Creates the sync state record if none exists yet.
+ * Insert `range` into a sorted list of disjoint gaps. A gap is joined only with
+ * the gaps it overlaps or touches, so ledgers that were scanned between two
+ * gaps stay scanned.
  */
-export async function recordUnscannedRange(cluster: string, range: UnscannedRange): Promise<UnscannedRange> {
-  const db = await getDB();
-  const prev = await db.get("syncState", cluster);
-  const existing = prev?.unscannedRange ?? null;
-  const merged: UnscannedRange = existing
-    ? {
-        fromLedger: Math.min(existing.fromLedger, range.fromLedger),
-        toLedger: Math.max(existing.toLedger, range.toLedger),
-      }
-    : range;
-  await db.put("syncState", {
+export function mergeUnscannedRanges(ranges: UnscannedRange[], range: UnscannedRange): UnscannedRange[] {
+  const sorted = [...ranges, range].sort((a, b) => a.fromLedger - b.fromLedger);
+  const merged: UnscannedRange[] = [];
+  for (const next of sorted) {
+    const last = merged[merged.length - 1];
+    if (last && next.fromLedger <= last.toLedger + 1) {
+      last.toLedger = Math.max(last.toLedger, next.toLedger);
+    } else {
+      merged.push({ ...next });
+    }
+  }
+  return merged;
+}
+
+export async function setSyncState(cluster: string, lastScannedSlot: number): Promise<void> {
+  // Keep any recorded unscanned ranges: advancing the cursor does not make
+  // pruned ledgers readable again.
+  await updateSyncState(cluster, (prev) => ({ ...prev, cluster, lastScannedSlot }));
+}
+
+/**
+ * Add `range` to the cluster's recorded unscanned ranges. Creates the sync
+ * state record if none exists yet. Returns the full list after the merge.
+ */
+export async function recordUnscannedRange(cluster: string, range: UnscannedRange): Promise<UnscannedRange[]> {
+  const next = await updateSyncState(cluster, (prev) => ({
+    ...prev,
     cluster,
     lastScannedSlot: prev?.lastScannedSlot ?? 0,
-    unscannedRange: merged,
-  });
-  return merged;
+    unscannedRanges: mergeUnscannedRanges(getUnscannedRanges(prev), range),
+  }));
+  return getUnscannedRanges(next);
 }
 
 export async function clearSyncState(cluster: string): Promise<void> {

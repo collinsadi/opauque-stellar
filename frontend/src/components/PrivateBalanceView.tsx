@@ -1201,7 +1201,7 @@ export function PrivateBalanceView() {
             </div>
           )}
         </div>
-        <UnscannedRangeNotice range={scanner.progress.unscannedRange} className="mt-3" />
+        <UnscannedRangeNotice ranges={scanner.progress.unscannedRanges} className="mt-3" />
       </div>
 
       {claimError && (
