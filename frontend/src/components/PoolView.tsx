@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { StrKey } from "@stellar/stellar-sdk";
 import type { Tab } from "./Layout";
 import { useWallet } from "../hooks/useWallet";
@@ -12,7 +12,6 @@ import {
   downloadBlob,
   poolNoteBackupFilename,
 } from "../lib/poolNoteBackup";
-import { getDocUrl } from "../lib/docsLinks";
 import { deriveDeposit, newNoteSecrets, toHex32, unspentTotal, type PoolNote } from "../lib/poolNotes";
 import {
   invokePoolDeposit,
@@ -60,9 +59,18 @@ import {
 const STROOPS_PER_XLM = 10_000_000n;
 const RELAYER_SUBMISSION_POLL_MS = 2_000;
 
-/** Fallback denomination presets when the deployment manifest doesn't specify any. */
-const DEFAULT_DEPOSIT_PRESETS_XLM = [10, 100, 1000, 10000];
+type PassphraseStrength = { score: number; label: string };
 
+function getPassphraseStrength(value: string): PassphraseStrength {
+  if (!value) return { score: 0, label: "Not set" };
+  let score = 0;
+  if (value.length >= 12) score++;
+  if (value.length >= 16) score++;
+  if (/[a-z]/.test(value) && /[A-Z]/.test(value)) score++;
+  if (/\d/.test(value) && /[^A-Za-z0-9]/.test(value)) score++;
+  if (/^\d+$/.test(value)) return { score: 1, label: "Weak" };
+  return { score, label: score >= 4 ? "Strong" : score >= 2 ? "Moderate" : "Weak" };
+}
 function parseXlm(input: string): bigint | null {
   const s = input.trim();
   if (!/^\d+(\.\d{1,7})?$/.test(s)) return null;
@@ -145,7 +153,7 @@ function relayerSteps(): WithdrawStep[] {
       id: "create-job",
       title: "Escrow the relayer fee",
       detail:
-        "Posting a job to the relayer registry and locking the fee in escrow. This transaction is signed by your connected wallet and is public, so anyone watching the registry can see that this wallet created a job shortly before the withdrawal. It does not reveal the recipient or the amount.",
+        "Posting a job to the relayer registry and locking the fee in escrow. This transaction is public but reveals nothing about the recipient or amount.",
       status: "pending",
     },
     {
@@ -171,7 +179,7 @@ function relayerSteps(): WithdrawStep[] {
       id: "deliver",
       title: "Hand off & submit",
       detail:
-        "The payload is sealed to the relayer's key. They submit it on-chain, so the withdrawal itself is not sent from your wallet. Your wallet still signs the escrow job, which can show timing.",
+        "The payload is sealed to the relayer's key. They submit it on-chain, so your wallet is never linked to the withdrawal.",
       status: "pending",
     },
   ];
@@ -214,6 +222,7 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
   const [backupAcknowledged, setBackupAcknowledged] = useState(false);
   const [backupError, setBackupError] = useState<string | null>(null);
   const [backupBusy, setBackupBusy] = useState(false);
+    const backupStrength = getPassphraseStrength(backupPin);
   const [poolBalance, setPoolBalance] = useState<bigint | null>(null);
   const [roots, setRoots] = useState<{ stateRoot: string | null; aspRoot: string | null } | null>(null);
   const [submitMode, setSubmitMode] = useState<"wallet" | "relayer">("wallet");
@@ -249,15 +258,6 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
   const clusterNotes = notes.filter((n) => n.cluster === cluster && (!n.poolId || n.poolId === cfg?.poolId));
   const unspent = clusterNotes.filter((n) => !n.spent);
   const selectedRelayerBid = relayerBids.find((bid) => bid.operator === selectedRelayer) ?? null;
-
-  const depositPresets = cfg?.depositPresetsXlm.length ? cfg.depositPresetsXlm : DEFAULT_DEPOSIT_PRESETS_XLM;
-  const isNonPresetAmount = useMemo(() => {
-    const trimmed = amount.trim();
-    if (!trimmed) return false;
-    const parsed = parseFloat(trimmed);
-    if (Number.isNaN(parsed) || parsed <= 0) return false;
-    return !depositPresets.some((p) => p === parsed);
-  }, [amount, depositPresets]);
 
   const refreshChain = useCallback(async () => {
     if (!cfg || !publicKey) return;
@@ -325,18 +325,6 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
   );
 
   // Map the prover's progress callbacks onto the shared first three steps.
-  // #1131: each pool proof gets a fresh AbortController so the user can cancel it mid-proof.
-  const proofAbortRef = useRef<AbortController | null>(null);
-  const beginProofSignal = useCallback(() => {
-    const controller = new AbortController();
-    proofAbortRef.current = controller;
-    return controller.signal;
-  }, []);
-  const cancelProof = useCallback(() => {
-    proofAbortRef.current?.abort();
-    proofAbortRef.current = null;
-  }, []);
-
   const onProveProgress = useCallback(
     (stage: string) => {
       if (stage === "reading-chain") {
@@ -488,7 +476,6 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
       const note: PoolNote = {
         cluster,
         poolId: cfg.poolId,
-        account: publicKey,
         value: value.toString(),
         scope: cfg.scope,
         leafIndex,
@@ -557,7 +544,6 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
         relayer: publicKey,
         caller: publicKey,
         onProgress: onProveProgress,
-        signal: beginProofSignal(),
       });
       updateStep("prove", "done");
       updateStep("submit", "active");
@@ -605,7 +591,6 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
     validateWithdrawInputs,
     updateStep,
     onProveProgress,
-    beginProofSignal,
     failActiveStep,
   ]);
 
@@ -665,7 +650,6 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
         relayer: boundRelayer,
         caller: publicKey,
         onProgress: onProveProgress,
-        signal: beginProofSignal(),
       });
       updateStep("prove", "done");
       updateStep("create-job", "active");
@@ -735,7 +719,6 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
     validateWithdrawInputs,
     updateStep,
     onProveProgress,
-    beginProofSignal,
     failActiveStep,
   ]);
 
@@ -750,7 +733,7 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
       setAwaitingPick(false);
       setFlowDone(true);
       setFlowSuccessHash(submittedTx);
-      setFlowSuccessText(`A relayer submitted your withdrawal to ${recipient.slice(0, 6)}…. The escrow job was signed by your wallet shortly before, so its timing may be visible on the relayer registry.`);
+      setFlowSuccessText(`A relayer submitted your withdrawal to ${recipient.slice(0, 6)}… — never linked to your wallet.`);
       showToast(
         `Relayer submitted withdrawal to ${recipient.slice(0, 6)}…`,
         submittedTx ? { explorerTx: { txSig: submittedTx } } : undefined,
@@ -861,7 +844,6 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
         relayer: alt.operator,
         caller: publicKey,
         onProgress: onProveProgress,
-        signal: beginProofSignal(),
       });
       updateStep("prove", "done", "re-proved fee binding for the new relayer");
       updateStep("create-job", "active");
@@ -913,7 +895,6 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
     selectedNote,
     gateway,
     onProveProgress,
-    beginProofSignal,
     updateStep,
     failActiveStep,
     showToast,
@@ -982,7 +963,7 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
         return;
       }
       if (backupPin !== backupConfirm) {
-        setBackupError("PINs do not match.");
+        setBackupError("Passphrases do not match.");
         return;
       }
       setBackupBusy(true);
@@ -1071,27 +1052,26 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
       {/* Deposit */}
       <div className={card} data-tour="pool-deposit">
         <h2 className="text-sm font-semibold text-white">Deposit</h2>
-        <p className="mt-1 text-xs text-mist/60">
-          Pick a common denomination so your deposit blends in with others.
-        </p>
-        <div className="mt-3 flex flex-wrap gap-2">
-          {depositPresets.map((preset) => (
-            <button
-              key={preset}
-              type="button"
-              onClick={() => setAmount(String(preset))}
-              disabled={readOnly || !!busy}
-              aria-pressed={amount === String(preset)}
-              className={`rounded-xl border px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-                amount === String(preset)
-                  ? "border-glow bg-black/30 text-white"
-                  : "border-ink-700 text-mist hover:border-white/30"
-              }`}
-            >
-              {preset.toLocaleString()} XLM
-            </button>
-          ))}
-        </div>
+        {!!cfg?.depositPresetsXlm.length && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {cfg.depositPresetsXlm.map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => setAmount(String(preset))}
+                disabled={readOnly || !!busy}
+                aria-pressed={amount === String(preset)}
+                className={`rounded-xl border px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                  amount === String(preset)
+                    ? "border-glow bg-black/30 text-white"
+                    : "border-ink-700 text-mist hover:border-white/30"
+                }`}
+              >
+                {preset.toLocaleString()} XLM
+              </button>
+            ))}
+          </div>
+        )}
         <div className="mt-3 flex flex-col gap-3 sm:flex-row">
           <input
             type="text"
@@ -1111,25 +1091,17 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
             {busy === "Depositing…" ? "Depositing…" : "Deposit"}
           </button>
         </div>
-        {isNonPresetAmount && (
-          <div className="mt-3 rounded-xl border border-amber-400/30 bg-amber-400/10 p-3 text-sm text-amber-100">
-            <strong>Linkability warning:</strong> This amount does not match a common pool
-            denomination. A unique deposit amount makes the deposit–withdrawal pair trivially
-            linkable, undermining your privacy.{" "}
-            <a
-              href={getDocUrl("pool-linkability")}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline hover:no-underline"
-            >
-              Learn more about the threat model.
-            </a>
-          </div>
-        )}
         <p className="mt-2 text-xs text-mist/60">
           A secret note is generated and saved locally. Keep your backup — losing notes loses the
           funds.
         </p>
+        {!!cfg?.depositPresetsXlm.length && (
+          <p className="mt-2 text-xs text-mist/60">
+            Custom amounts are still allowed, but depositing a preset size means your note looks
+            like everyone else's — an unusual amount narrows the set of deposits it could be
+            withdrawn from later, weakening unlinkability.
+          </p>
+        )}
       </div>
 
       {/* Pending Deposits */}
@@ -1337,7 +1309,6 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
 
       <WithdrawFlowModal
         open={flowOpen}
-        onCancelProof={cancelProof}
         mode={flowMode}
         steps={flowSteps}
         busy={!!busy}
@@ -1377,7 +1348,7 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
           <form onSubmit={handleBackupSubmit} className="space-y-4">
             <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 p-3 text-sm text-amber-100">
               Anyone with the decrypted notes can withdraw the matching pool funds. Store the ZIP and
-              PIN separately. If you lose the PIN, this backup cannot be recovered.
+              passphrase separately. If you lose the PIN, this backup cannot be recovered.
             </div>
 
             <div className="space-y-4">
@@ -1393,12 +1364,11 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
 
               <div className="space-y-1.5">
                 <label htmlFor="pool-backup-pin" className="block text-sm font-medium text-white">
-                  Backup PIN
+                  Backup passphrase
                 </label>
                 <input
                   id="pool-backup-pin"
                   type="password"
-                  inputMode="numeric"
                   autoComplete="new-password"
                   value={backupPin}
                   onChange={(e) => setBackupPin(e.target.value)}
@@ -1408,18 +1378,27 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
                   className="w-full rounded-xl border border-ink-700 bg-ink-900 px-3 py-2 text-sm text-white placeholder:text-mist/40 focus:border-glow focus:outline-none focus-visible:ring-2 focus-visible:ring-glow disabled:opacity-50"
                 />
                 <p id="pool-backup-pin-help" className="text-xs text-mist/60">
-                  Use 6-12 digits. This PIN encrypts the note JSON inside the ZIP.
-                </p>
+                    Use at least 12 characters. A mix of words, letters, numbers, and symbols protects the note JSON inside the ZIP.
+                  </p>                  <div className="flex items-center gap-2" role="status" aria-live="polite">
+                    <div className="flex flex-1 gap-1">
+                      {Array.from({ length: 4 }, (_, index) => (
+                        <span key={index} className={`h-1.5 flex-1 rounded-full ${index < backupStrength.score ? "bg-glow" : "bg-ink-700"}`} />
+                      ))}
+                    </div>
+                    <span className="text-xs text-mist/70">{backupStrength.label}</span>
+                  </div>
+                  {backupPin && /^\d+$/.test(backupPin) && (
+                    <p className="text-xs text-amber-200">Numeric-only passphrases are easier to brute-force offline. Add words and symbols.</p>
+                  )}
               </div>
 
               <div className="space-y-1.5">
                 <label htmlFor="pool-backup-pin-confirm" className="block text-sm font-medium text-white">
-                  Confirm PIN
+                  Confirm passphrase
                 </label>
                 <input
                   id="pool-backup-pin-confirm"
                   type="password"
-                  inputMode="numeric"
                   autoComplete="new-password"
                   value={backupConfirm}
                   onChange={(e) => setBackupConfirm(e.target.value)}
