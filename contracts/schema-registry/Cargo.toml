@@ -9,7 +9,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 soroban-sdk = { workspace = true, features = ["alloc"] }
-sha2 = { version = "0.10", default-features = false }
+sha2 = { version = "0.11", default-features = false }
 opaque-schema-core = { path = "../opaque-schema-core", default-features = false }
 
 [dev-dependencies]
