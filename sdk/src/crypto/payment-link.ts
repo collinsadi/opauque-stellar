@@ -47,9 +47,7 @@ export function isValidNetwork(network: string): network is Network {
 
 /** Validate a Stellar public key (G..., 56 chars, base32). */
 export function isValidStellarPublicKey(publicKey: string): boolean {
-  if (publicKey.length !== 56) return false;
-  if (!publicKey.startsWith("G")) return false;
-  return /^[A-Z2-7]{55}$/.test(publicKey);
+  return /^G[A-Z2-7]{55}$/.test(publicKey);
 }
 
 export function isValidAssetCode(assetCode: string): boolean {
@@ -80,6 +78,11 @@ export function isValidUrl(url: string): boolean {
   }
 }
 
+/** Stellar text memos carry at most 28 UTF-8 bytes (not characters). */
+export function isValidMemo(memo: string): boolean {
+  return new TextEncoder().encode(memo).byteLength <= 28;
+}
+
 /** Encode a payment link from components. Throws on invalid input. */
 export function encodePaymentLink(link: PaymentLink): string {
   if (!isValidMetaAddress(link.metaAddress)) {
@@ -106,7 +109,12 @@ export function encodePaymentLink(link: PaymentLink): string {
     }
     params.set("issuer", link.params.issuer);
   }
-  if (link.params.memo) params.set("memo", link.params.memo);
+  if (link.params.memo) {
+    if (!isValidMemo(link.params.memo)) {
+      throw new Error("Payment link memo must be 28 UTF-8 bytes or fewer");
+    }
+    params.set("memo", link.params.memo);
+  }
   if (link.params.sep) params.set("sep", link.params.sep);
   if (link.params.callback) {
     if (!isValidUrl(link.params.callback)) throw new Error("Invalid callback URL");
@@ -219,7 +227,19 @@ export function decodePaymentLink(
       }
       params.issuer = issuer;
     }
-    if (searchParams.has("memo")) params.memo = searchParams.get("memo")!;
+    if (searchParams.has("memo")) {
+      const memo = searchParams.get("memo")!;
+      if (!isValidMemo(memo)) {
+        return {
+          error: {
+            type: "INVALID_PARAMETER",
+            message: "Payment link memo must be 28 UTF-8 bytes or fewer",
+            details: { parameter: "memo", value: memo },
+          },
+        };
+      }
+      params.memo = memo;
+    }
     if (searchParams.has("sep")) params.sep = searchParams.get("sep")!;
     if (searchParams.has("callback")) {
       const callback = searchParams.get("callback")!;

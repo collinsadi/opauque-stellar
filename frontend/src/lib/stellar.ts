@@ -412,7 +412,7 @@ function horizonInt(value: unknown): bigint {
   return 0n;
 }
 
-async function getLatestLedgerRules(): Promise<{
+export async function getLatestLedgerRules(): Promise<{
   baseFeeStroops: bigint;
   baseReserveStroops: bigint;
 }> {
@@ -445,7 +445,7 @@ async function getLatestLedgerRules(): Promise<{
   return { baseFeeStroops: BigInt(BASE_FEE), baseReserveStroops: 5_000_000n };
 }
 
-function minimumBalanceForAccount(
+export function minimumBalanceForAccount(
   account: HorizonAccountLike,
   baseReserveStroops: bigint,
 ): bigint {

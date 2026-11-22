@@ -55,9 +55,7 @@ export function isValidNetwork(network: string): network is Network {
  */
 export function isValidStellarPublicKey(publicKey: string): boolean {
   // Stellar public keys are 56 characters, base32 encoded (G...)
-  if (publicKey.length !== 56) return false;
-  if (!publicKey.startsWith("G")) return false;
-  return /^[A-Z2-7]{55}$/.test(publicKey);
+  return /^G[A-Z2-7]{55}$/.test(publicKey);
 }
 
 /**
@@ -103,6 +101,13 @@ export function isValidUrl(url: string): boolean {
 }
 
 /**
+ * Stellar text memos carry at most 28 UTF-8 bytes (not characters).
+ */
+export function isValidMemo(memo: string): boolean {
+  return new TextEncoder().encode(memo).byteLength <= 28;
+}
+
+/**
  * Encodes a payment link from components
  */
 export function encodePaymentLink(link: PaymentLink): string {
@@ -142,6 +147,9 @@ export function encodePaymentLink(link: PaymentLink): string {
   }
   
   if (link.params.memo) {
+    if (!isValidMemo(link.params.memo)) {
+      throw new Error("Payment link memo must be 28 UTF-8 bytes or fewer");
+    }
     params.set("memo", link.params.memo);
   }
   
@@ -311,7 +319,17 @@ export function decodePaymentLink(
     }
 
     if (searchParams.has("memo")) {
-      params.memo = searchParams.get("memo")!;
+      const memo = searchParams.get("memo")!;
+      if (!isValidMemo(memo)) {
+        return {
+          error: {
+            type: "INVALID_PARAMETER",
+            message: "Payment link memo must be 28 UTF-8 bytes or fewer",
+            details: { parameter: "memo", value: memo },
+          },
+        };
+      }
+      params.memo = memo;
     }
 
     if (searchParams.has("sep")) {
@@ -381,6 +399,79 @@ export function decodePaymentLink(
       },
     };
   }
+}
+
+/**
+ * Parameters a sender must honour for a payment link to be payable.
+ */
+export type PaymentLinkRequest = {
+  metaAddress: string;
+  amount?: string;
+  memo?: string;
+  asset?: string;
+  issuer?: string;
+  label?: string;
+  expires?: string;
+};
+
+export type PaymentLinkRequestResult =
+  | { ok: true; request: PaymentLinkRequest }
+  | { ok: false; error: string };
+
+/**
+ * Validate that a decoded link can actually be paid with this app (XLM only,
+ * unexpired, and with a memo the Stellar protocol will accept).
+ */
+export function paymentLinkValidationError(params: PaymentLinkParams): string | null {
+  if (params.expires && new Date(params.expires).getTime() <= Date.now()) {
+    return "This payment link has expired. Contact the recipient for a new link.";
+  }
+  if ((params.asset && params.asset !== "XLM") || params.issuer) {
+    return "This payment link requests a non-native asset. Only XLM payments are supported currently.";
+  }
+  if (params.memo && !isValidMemo(params.memo)) {
+    return "Payment link memo must be 28 UTF-8 bytes or fewer";
+  }
+  return null;
+}
+
+/**
+ * Decode a pasted opaque:// or web payment link into everything a send view
+ * needs. Returns `null` when the value is not a payment link at all, so the
+ * caller can fall through to its normal address handling. Decode/validation
+ * failures return their specific reason instead of being silently dropped.
+ */
+export function decodePaymentLinkRequest(
+  value: string,
+  currentNetwork: Network,
+): PaymentLinkRequestResult | null {
+  const trimmed = value.trim();
+  let result: { link: PaymentLink } | { error: PaymentLinkError } | null = null;
+
+  if (trimmed.startsWith("opaque://")) {
+    result = decodePaymentLink(trimmed, currentNetwork);
+  } else if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    result = decodeWebPaymentLink(trimmed, currentNetwork);
+  }
+  if (!result) return null;
+  if ("error" in result) return { ok: false, error: result.error.message };
+
+  const { metaAddress, params } = result.link;
+  const validationError = paymentLinkValidationError(params);
+  if (validationError) return { ok: false, error: validationError };
+
+  return {
+    ok: true,
+    request: {
+      metaAddress,
+      amount: params.amount,
+      memo: params.memo,
+      asset: params.asset,
+      issuer: params.issuer,
+      label: params.label,
+      expires: params.expires,
+    },
+  };
 }
 
 /**
