@@ -7,11 +7,16 @@
  * update_merkle_root); Phase 3 replaces it with a real indexed attestation set.
  *
  * Requires the admin (deployer) secret to publish the root and submit:
+ *   npm run fetch:circuits   # from the repo root
  *   DEPLOYER_SECRET=$(stellar keys show opaque-deployer) \
  *     npx tsx scripts/smoke-reputation-v2.ts
+ *
+ * The verification key is derived from the fetched proving key (as in
+ * smoke-reputation-realset.ts) because the circuit build directory is not
+ * available in CI checkouts.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -42,7 +47,6 @@ const REP_ID = manifest.contracts.reputationVerifier.id;
 const GROTH_ID = manifest.contracts.groth16Verifier.id;
 const WASM = join(FE, "public", "circuits", "v2", "stealth_reputation.wasm");
 const ZKEY = join(FE, "public", "circuits", "v2", "stealth_reputation_final.zkey");
-const VKEY = JSON.parse(readFileSync(join(REPO, "circuits", "v2", "build", "verification_key.json"), "utf8"));
 
 const secret = process.env.DEPLOYER_SECRET?.trim();
 if (!secret) throw new Error("set DEPLOYER_SECRET (stellar keys show opaque-deployer)");
@@ -54,6 +58,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let step = 0;
 const log = (m) => console.log(`\n[${++step}] ${m}`);
 const detail = (m) => console.log(`    ${m}`);
+
+function requireArtifact(path, label) {
+  if (!existsSync(path)) {
+    throw new Error(
+      `${label} not found at ${path}. Run "npm run fetch:circuits" from the repo root ` +
+        "before running smoke:reputation.",
+    );
+  }
+  return path;
+}
 
 function be32(v) {
   const out = new Uint8Array(32);
@@ -97,7 +111,7 @@ async function invoke(method, args, label) {
   return res;
 }
 
-async function buildProof(poseidon) {
+async function buildProof(poseidon, verificationKey) {
   const F = poseidon.F;
   const stealth_pk = 12345678901234567890n;
   const schema_id = 42n; // == attestation_id
@@ -133,7 +147,7 @@ async function buildProof(poseidon) {
   };
 
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(input, WASM, ZKEY);
-  const ok = await snarkjs.groth16.verify(VKEY, publicSignals, proof);
+  const ok = await snarkjs.groth16.verify(verificationKey, publicSignals, proof);
   if (!ok) throw new Error("local snarkjs verify failed — witness/zkey mismatch");
 
   // Serialize proof to the contract's BN254 byte layout (G2 = c1||c0).
@@ -164,9 +178,13 @@ async function main() {
   console.log(`  reputation-verifier: ${REP_ID}`);
   console.log(`  groth16-verifier:    ${GROTH_ID}`);
 
+  requireArtifact(WASM, "V2 witness WASM");
+  requireArtifact(ZKEY, "V2 proving key");
+  const VKEY = await snarkjs.zKey.exportVerificationKey(ZKEY);
+
   log("Generating V2 Groth16 proof (snarkjs) + local verify…");
   const poseidon = await buildPoseidon();
-  const p = await buildProof(poseidon);
+  const p = await buildProof(poseidon, VKEY);
   detail(`local snarkjs verify ✓  publicSignals=[root, attId, extNull, nullHash]`);
   detail(`attestation_id=${p.attestation_id}  external_nullifier=${p.external_nullifier}`);
 
