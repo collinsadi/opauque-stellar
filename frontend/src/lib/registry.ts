@@ -12,6 +12,36 @@ import { getSorobanServer, u64ToScVal } from "./stellar";
 /**
  * Resolves a Stellar account (G…) to its 66-byte stealth meta-address via the registry contract.
  */
+
+export type RegistryStatus =
+  | { kind: 'registered'; metaAddress: string }
+  | { kind: 'unregistered'; reason: 'account_not_found' | 'no_entry' }
+  | { kind: 'mismatch'; onChain: string; expected: string }
+  | { kind: 'unreachable'; error: unknown };
+
+/** Unfunded wallet: the account doesn't exist on the ledger yet. */
+function isAccountNotFound(err: unknown): boolean {
+  const e = err as any;
+  const status = e?.response?.status ?? e?.status ?? e?.code;
+  const msg = String(e?.message ?? '');
+  return (
+    e?.name === 'NotFoundError' ||
+    status === 404 ||
+    /account not found|account does not exist|not found/i.test(msg)
+  );
+}
+
+/** Genuine connectivity problems: worth showing Retry. */
+function isConnectivityError(err: unknown): boolean {
+  const e = err as any;
+  const status = e?.response?.status ?? e?.status;
+  const msg = String(e?.message ?? '');
+  return (
+    (typeof status === 'number' && (status >= 500 || status === 429 || status === 408)) ||
+    /network|fetch failed|timeout|timed out|ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|Failed to fetch/i.test(msg) ||
+    e?.name === 'AbortError'
+  );
+}
 export async function resolveMetaAddress(address: string): Promise<Hex | null> {
   try {
     const server = getSorobanServer();
