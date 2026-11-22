@@ -2,7 +2,7 @@
  * In-app help links: recovery and protocol notes live in README.md on GitHub.
  */
 
-const DEFAULT_REPO = "https://github.com/collinsadi/opaque-stellar/blob/main";
+const DEFAULT_REPO = "https://github.com/collinsadi/opauque-stellar/blob/main";
 
 function docsBaseUrl(): string {
   const fromEnv = import.meta.env.VITE_DOCS_BASE_URL as string | undefined;
@@ -16,7 +16,8 @@ export type DocId =
   | "payment-link-format"
   | "privacy-pool"
   | "proof-submission-privacy"
-  | "pool-linkability";
+  | "pool-linkability"
+  | "horizon-history-sync";
 
 const DOC_PATHS: Record<DocId, string> = {
   "user-recovery": "README.md#honest-trade-offs",
@@ -24,7 +25,8 @@ const DOC_PATHS: Record<DocId, string> = {
   "payment-link-format": "README.md#what-opaque-does",
   "privacy-pool": "README.md#where-the-zero-knowledge-does-the-work",
   "proof-submission-privacy": "docs/PROOF_SUBMISSION_PRIVACY.md",
-  "pool-linkability": "docs/PRIVACY_GUARANTEES.md",
+  "pool-linkability": "docs/PRIVACY_GUARANTEES.md#pool-deposit-linkability",
+  "horizon-history-sync": "docs/PRIVACY_GUARANTEES.md#horizon-history-sync",
 };
 
 export function getDocUrl(doc: DocId): string {

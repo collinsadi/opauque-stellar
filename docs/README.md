@@ -74,7 +74,7 @@ Security audits, threat models, privacy reviews, and verification procedures.
 | [CIRCUIT_RANGE_CHECK_AUDIT.md](CIRCUIT_RANGE_CHECK_AUDIT.md) | Amount-signal range check audit |
 | [CIRCUIT_SOUNDNESS_CHECKLIST.md](CIRCUIT_SOUNDNESS_CHECKLIST.md) | PR checklist for circom changes |
 | [NULLIFIER_SPEC.md](NULLIFIER_SPEC.md) | Nullifier derivation and security properties |
-| [PRIVACY_GUARANTEES.md](PRIVACY_GUARANTEES.md) | Formal privacy guarantees and boundaries |
+| [PRIVACY_GUARANTEES.md](PRIVACY_GUARANTEES.md) | Formal privacy guarantees, publisher data flow, and pool linkability boundaries |
 | [PROOF_SUBMISSION_PRIVACY.md](PROOF_SUBMISSION_PRIVACY.md) | On-chain proof transaction privacy analysis |
 | [GHOST_THREAT_MODEL.md](GHOST_THREAT_MODEL.md) | Browser localStorage ephemeral key threat model |
 | [INDEXER_PRIVACY_REVIEW.md](INDEXER_PRIVACY_REVIEW.md) | ASP indexer privacy review |

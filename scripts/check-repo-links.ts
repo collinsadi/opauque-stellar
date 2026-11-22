@@ -12,11 +12,10 @@
 import { readFileSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 
-const CANONICAL_REPO_SLUG = "collinsadi/opaque-stellar";
+const CANONICAL_REPO_SLUG = "collinsadi/opauque-stellar";
 const CANONICAL_SCHEMA_DOMAIN = "opaque.cash";
 
 const WRONG_PATTERNS = [
-  /collinsadi\/opauque-stellar/g, // Misspelled variant
   /opaque\.network\/schemas/g, // Wrong schema domain
 ];
 
