@@ -48,6 +48,30 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      - name: Check required secrets
+        # Fail fast with an actionable message (also written to the smoke log so it lands in
+        # the tracking issue) instead of letting the script die with a local-only hint.
+        env:
+          SCRIPT: ${{ matrix.script }}
+          SLUG: ${{ matrix.slug }}
+          DEPLOYER_SECRET: ${{ secrets.SMOKE_DEPLOYER_SECRET }}
+          RELAYER_ENDPOINT: ${{ secrets.SMOKE_RELAYER_ENDPOINT }}
+        run: |
+          mkdir -p smoke-logs
+          missing=""
+          if [ "$SCRIPT" != "smoke:payments" ] && [ -z "$DEPLOYER_SECRET" ]; then
+            missing="SMOKE_DEPLOYER_SECRET"
+          fi
+          if [ "$SCRIPT" = "smoke:pool:relayer" ] && [ -z "$RELAYER_ENDPOINT" ]; then
+            missing="$missing SMOKE_RELAYER_ENDPOINT"
+          fi
+          if [ -n "$missing" ]; then
+            msg="$SCRIPT cannot run: missing repository secret(s):$missing. Add them under Settings > Secrets and variables > Actions (see the header of .github/workflows/testnet-smoke.yml)."
+            echo "::error::$msg"
+            echo "$msg" > "smoke-logs/$SLUG.log"
+            exit 1
+          fi
+
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
