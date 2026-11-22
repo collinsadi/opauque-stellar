@@ -10,6 +10,19 @@ crate-type = ["cdylib", "rlib"]
 
 [workspace]
 
+# Deterministic codegen for the WASM build (byte-reproducibility). These are
+# profile settings: they were previously under `[target.wasm32-unknown-unknown]`
+# in .cargo/config.toml, which cargo rejects ("expected a table, but found a
+# string for `target.wasm32-unknown-unknown.opt-level`"). The crate declares its
+# own `[workspace]`, so the repo-root `[profile.release]` does not apply here.
+[profile.release]
+# Single codegen unit eliminates nondeterministic partitioning that would
+# otherwise vary across host environments.
+codegen-units = 1
+opt-level = "z"
+lto = true
+strip = true
+
 [dependencies]
 k256 = { version = "0.13", features = ["ecdh", "arithmetic"] }
 sha3 = "0.10"
