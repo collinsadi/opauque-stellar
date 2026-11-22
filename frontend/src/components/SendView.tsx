@@ -6,6 +6,7 @@ import {
   TransactionBuilder,
   nativeToScVal,
   StrKey,
+  Memo,
 } from "@stellar/stellar-sdk";
 import {
   computeStealthAddressAndViewTag,
@@ -27,7 +28,7 @@ import {
   parseXlmToStroops,
   u64ToScVal,
 } from "../lib/stellar";
-import { parseHorizonBalanceToStroops } from "../lib/decimalParser";
+import { getMaxSendableQuote } from "../lib/maxSendable";
 import { deployedAddresses } from "../contracts/deployedAddresses";
 import { ProtocolStepper } from "./ProtocolStepper";
 import type { ProtocolStep } from "./ProtocolStepper";
@@ -37,14 +38,12 @@ import { PrivacyWarningCallout } from "./PrivacyWarningCallout";
 import { SEND_PRIVACY_WARNING } from "../lib/privacyThreatModel";
 import { QrScanner } from "./QrScanner";
 import {
-  decodePaymentLink,
-  isOpaquePaymentLink,
-  decodeWebPaymentLink,
+  decodePaymentLinkRequest,
+  isValidMemo,
   type Network,
+  type PaymentLinkRequest,
 } from "../lib/paymentLink";
 import { NetworkValidationService } from "../services/networkValidation";
-
-const STROOP_FEE_BUFFER = 100_000n;
 
 const isMetaAddress = (value: string): boolean => {
   const normalized = value.startsWith("0x") ? value : `0x${value}`;
@@ -62,24 +61,9 @@ const isGAddress = (value: string): boolean => {
   }
 };
 
-/** Try to extract a meta-address from an opaque:// or web payment link. */
-function extractMetaFromPaymentLink(
-  value: string,
-  currentNetwork: string,
-): { metaAddress: string; amount?: string } | null {
-  const trimmed = value.trim();
-  // opaque:// URI
-  if (isOpaquePaymentLink(trimmed)) {
-    const result = decodePaymentLink(trimmed, currentNetwork as Network);
-    if ("link" in result) return { metaAddress: result.link.metaAddress, amount: result.link.params.amount };
-    return null;
-  }
-  // https web link
-  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-    const result = decodeWebPaymentLink(trimmed, currentNetwork as Network);
-    if (result && "link" in result) return { metaAddress: result.link.metaAddress, amount: result.link.params.amount };
-  }
-  return null;
+/** Fully decode a pasted opaque:// or web payment link. */
+function extractMetaFromPaymentLink(value: string, currentNetwork: string) {
+  return decodePaymentLinkRequest(value, currentNetwork as Network);
 }
 
 export function SendView() {
@@ -92,29 +76,30 @@ export function SendView() {
 
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("");
+  const [memo, setMemo] = useState("");
+  const [linkRequest, setLinkRequest] = useState<PaymentLinkRequest | null>(null);
+  const [linkError, setLinkError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [steps, setSteps] = useState<ProtocolStep[]>([]);
-  const [activeBalance, setActiveBalance] = useState<bigint | null>(null);
+  const [maxSendableStroops, setMaxSendableStroops] = useState<bigint | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [showQrScanner, setShowQrScanner] = useState(false);
 
   useEffect(() => {
     if (!address) {
-      setActiveBalance(null);
+      setMaxSendableStroops(null);
       return;
     }
     let cancelled = false;
     setBalanceLoading(true);
     (async () => {
       try {
-        const account = await getHorizonServer().loadAccount(address);
-        const native = account.balances.find((b) => b.asset_type === "native");
-        const stroops = parseHorizonBalanceToStroops((native as { balance: string })?.balance ?? "0");
-        if (!cancelled) setActiveBalance(stroops);
+        const quote = await getMaxSendableQuote({ sourcePublicKey: address });
+        if (!cancelled) setMaxSendableStroops(quote.maxSendableStroops);
       } catch {
-        if (!cancelled) setActiveBalance(null);
+        if (!cancelled) setMaxSendableStroops(null);
       } finally {
         if (!cancelled) setBalanceLoading(false);
       }
@@ -123,16 +108,6 @@ export function SendView() {
       cancelled = true;
     };
   }, [address]);
-
-  const maxSendableBalance = useMemo(() => {
-    if (activeBalance == null) return null;
-    const BASE_RESERVE_STROOPS = 5_000_000n;
-    const SUBENTRY_RESERVE_STROOPS = 5_000_000n;
-    const MIN_TRANSACTION_FEE = 100n;
-    const estimatedSubentries = 2n;
-    const totalReserve = BASE_RESERVE_STROOPS + (estimatedSubentries * SUBENTRY_RESERVE_STROOPS) + MIN_TRANSACTION_FEE;
-    return activeBalance > totalReserve ? activeBalance - totalReserve : 0n;
-  }, [activeBalance]);
 
   const inputStroops = useMemo(() => {
     const raw = amount.trim();
@@ -145,18 +120,34 @@ export function SendView() {
   }, [amount]);
 
   const isInsufficientBalance = Boolean(
-    maxSendableBalance != null &&
+    maxSendableStroops != null &&
     inputStroops != null &&
     inputStroops > 0n &&
-    inputStroops > maxSendableBalance,
+    inputStroops > maxSendableStroops,
   );
 
   const formattedMaxBalance =
-    maxSendableBalance != null ? formatXlm(maxSendableBalance) : null;
+    maxSendableStroops != null ? formatXlm(maxSendableStroops) : null;
 
   const handleMaxAmount = () => {
-    if (maxSendableBalance == null || maxSendableBalance === 0n) return;
+    if (maxSendableStroops == null || maxSendableStroops === 0n) return;
     setAmount(formattedMaxBalance ?? "0");
+  };
+
+  const handleRecipientChange = (value: string) => {
+    setRecipient(value);
+    setLinkError(null);
+    setLinkRequest(null);
+    const result = extractMetaFromPaymentLink(value, network);
+    if (!result) return;
+    if (!result.ok) {
+      setLinkError(result.error);
+      return;
+    }
+    setLinkRequest(result.request);
+    // Prefill link parameters so they are visible and editable before sending.
+    if (result.request.amount) setAmount(result.request.amount);
+    if (result.request.memo) setMemo(result.request.memo);
   };
 
   const handleQrScan = (scanned: string) => {
@@ -181,22 +172,39 @@ export function SendView() {
       return;
     }
     let recipientMeta = recipient.trim();
-    if (!recipientMeta || !amount) {
+    if (!recipientMeta) {
       setError("Enter recipient and amount.");
       return;
     }
 
-    // Try to extract meta-address from a pasted payment link
-    const linkMeta = extractMetaFromPaymentLink(recipientMeta, network);
-    if (linkMeta) {
-      recipientMeta = linkMeta.metaAddress;
-      if (linkMeta.amount && !amount) {
-        setAmount(linkMeta.amount);
+    // A pasted payment link was decoded on input: its amount and memo were
+    // prefilled and its asset/issuer/expiry validated. Re-decode defensively
+    // in case the value arrived without a change event.
+    let resolvedLink = linkRequest;
+    if (!resolvedLink) {
+      const result = extractMetaFromPaymentLink(recipientMeta, network);
+      if (result && !result.ok) {
+        setError(result.error);
+        return;
       }
+      if (result?.ok) {
+        resolvedLink = result.request;
+        if (result.request.amount && !amount) setAmount(result.request.amount);
+        if (result.request.memo && !memo) setMemo(result.request.memo);
+      }
+    }
+    if (linkError) {
+      setError(linkError);
+      return;
+    }
+    if (resolvedLink) recipientMeta = resolvedLink.metaAddress;
+    if (!amount) {
+      setError("Enter recipient and amount.");
+      return;
     }
 
     // If a G-address is entered, resolve it to a meta-address via the registry.
-    if (!linkMeta && isGAddress(recipientMeta)) {
+    if (!resolvedLink && isGAddress(recipientMeta)) {
       setSending(true);
       setSteps([]);
       addStep("wait", "Resolving stealth meta-address from registry…");
@@ -212,7 +220,7 @@ export function SendView() {
       }
       addStep("ok", "Meta-address resolved from registry.", resolved);
       recipientMeta = resolved;
-    } else if (!linkMeta && !isMetaAddress(recipientMeta)) {
+    } else if (!resolvedLink && !isMetaAddress(recipientMeta)) {
       setError(
         "Enter a valid Stellar address (G…), stealth meta-address (0x + 132 hex chars), or a payment link.",
       );
@@ -228,6 +236,14 @@ export function SendView() {
     }
     if (value === 0n) {
       setError("Amount must be greater than 0.");
+      return;
+    }
+    if (memo.trim() && !isValidMemo(memo.trim())) {
+      setError("Memo must be 28 UTF-8 bytes or fewer.");
+      return;
+    }
+    if (maxSendableStroops != null && value > maxSendableStroops) {
+      setError(`Insufficient balance. Maximum: ${formattedMaxBalance} XLM`);
       return;
     }
 
@@ -277,13 +293,12 @@ export function SendView() {
         destination: stealthStellarAddress,
         amountStroops: value,
       });
-      const transferTx = new TransactionBuilder(source, {
+      let transferBuilder = new TransactionBuilder(source, {
         fee: BASE_FEE,
         networkPassphrase: passphrase,
-      })
-        .addOperation(transferOp)
-        .setTimeout(180)
-        .build();
+      }).addOperation(transferOp);
+      if (memo.trim()) transferBuilder = transferBuilder.addMemo(Memo.text(memo.trim()));
+      const transferTx = transferBuilder.setTimeout(180).build();
       addStep("wait", "Awaiting Freighter signature for the transfer…");
       // Pre-sign network validation (threat model M8)
       await NetworkValidationService.requireValidNetwork();
@@ -413,8 +428,8 @@ export function SendView() {
             <input
               type="text"
               value={recipient}
-              onChange={(e) => setRecipient(e.target.value)}
-              placeholder="G… Stellar address or 0x02… meta-address"
+              onChange={(e) => handleRecipientChange(e.target.value)}
+              placeholder="G… Stellar address, 0x02… meta-address, or payment link"
               className="flex-1 rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white"
             />
             <button
@@ -426,10 +441,14 @@ export function SendView() {
               QR
             </button>
           </div>
-          {recipient && !isGAddress(recipient) && !isMetaAddress(recipient) && (
-            <p className="text-xs text-neutral-400 mt-1">
-              Enter a registered Stellar address (G…) or a stealth meta-address (0x + 132 hex chars).
-            </p>
+          {linkError ? (
+            <p className="text-xs text-neutral-300 mt-1">{linkError}</p>
+          ) : (
+            recipient && !isGAddress(recipient) && !isMetaAddress(recipient) && !linkRequest && (
+              <p className="text-xs text-neutral-400 mt-1">
+                Enter a registered Stellar address (G…), a stealth meta-address (0x + 132 hex chars), or a payment link.
+              </p>
+            )
           )}
         </div>
         <div>
@@ -461,10 +480,27 @@ export function SendView() {
                 Available: {formattedMaxBalance} XLM
               </p>
               <p className="text-xs text-neutral-400 mt-1">
-                New stealth accounts require at least 1 XLM to be created.
+                Reserve and both transaction fees are already deducted. New stealth accounts require at least 1 XLM.
               </p>
             </>
           ) : null}
+        </div>
+        <div>
+          <label className="block text-sm text-neutral-400 mb-1">
+            Memo from payment link (public)
+          </label>
+          <input
+            type="text"
+            value={memo}
+            onChange={(e) => setMemo(e.target.value)}
+            placeholder="Optional"
+            className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white"
+          />
+          {memo && (
+            <p className="text-xs text-neutral-400 mt-1">
+              Memos are public and permanently visible on-chain.
+            </p>
+          )}
         </div>
 
         {error && <p className="text-sm text-neutral-400">{error}</p>}
@@ -487,7 +523,7 @@ export function SendView() {
         <button
           type="button"
           onClick={() => void handleSend()}
-          disabled={sending || isInsufficientBalance || !connected}
+          disabled={sending || isInsufficientBalance || !connected || Boolean(linkError)}
           className="w-full py-2.5 rounded-lg bg-neutral-600 text-white font-medium hover:bg-black hover:text-white disabled:opacity-50"
         >
           {sending ? "Sending…" : "Send privately"}

@@ -21,7 +21,6 @@ import {
 import { getCluster, getNetworkPassphrase } from "../lib/chain";
 import { getConfigForCluster } from "../contracts/contract-config";
 import { SCHEME_ID_SECP256K1 } from "../lib/contracts";
-import { getExplorerTxUrl } from "../lib/explorer";
 import { useWallet } from "../hooks/useWallet";
 import {
   bytesToScVal,
@@ -31,12 +30,11 @@ import {
   parseXlmToStroops,
   u64ToScVal,
 } from "../lib/stellar";
-import { parseHorizonBalanceToStroops } from "../lib/decimalParser";
 import { deployedAddresses } from "../contracts/deployedAddresses";
+import { getMaxSendableQuote } from "../lib/maxSendable";
 import {
   decodePaymentLink,
-  isOpaquePaymentLink,
-  decodeWebPaymentLink,
+  paymentLinkValidationError,
   type PaymentLink,
 } from "../lib/paymentLink";
 import { usePendingTxStore } from "../store/pendingTxStore";
@@ -97,9 +95,10 @@ export function PayPage() {
   const [displayName, setDisplayName] = useState<string>("");
   const [amount, setAmount] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [linkValidationError, setLinkValidationError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  const [activeBalance, setActiveBalance] = useState<bigint | null>(null);
+  const [maxSendableStroops, setMaxSendableStroops] = useState<bigint | null>(null);
   const [_balanceLoading, setBalanceLoading] = useState(false);
   const [decodedPaymentLink, setDecodedPaymentLink] = useState<PaymentLink | null>(null);
   const [linkLabel, setLinkLabel] = useState<string | null>(null);
@@ -120,65 +119,52 @@ export function PayPage() {
     setDecodedPaymentLink(null);
     setLinkLabel(null);
     setLinkMemo(null);
+    setLinkValidationError(null);
+    setError(null);
     let cancelled = false;
     (async () => {
       try {
-        // Try decoding as a base64url-encoded opaque:// URI (web payment link)
+        // Try decoding as a base64url-encoded opaque:// URI (web payment link).
+        // Decode raw opaque links too even when invalid, so expired/malformed
+        // links surface their specific error instead of "User Not Found".
         const webLinkResult = tryDecodeBase64UrlOpaqueUri(id, cluster);
-        const linkResult = webLinkResult ?? (isOpaquePaymentLink(id) ? decodePaymentLink(id, cluster) : null);
+        const linkResult =
+          webLinkResult ??
+          (id.startsWith("opaque://") ? decodePaymentLink(id, cluster) : null);
 
         if (linkResult) {
           if ("error" in linkResult) {
             if (!cancelled) {
-              if (linkResult.error.type === "NETWORK_MISMATCH") {
-                setResolveStatus("network_mismatch");
-                setError(linkResult.error.message);
-              } else {
-                setResolveStatus("invalid_link");
-                setError(linkResult.error.message);
-              }
+              setError(linkResult.error.message);
+              setLinkValidationError(linkResult.error.message);
+              setResolveStatus(
+                linkResult.error.type === "NETWORK_MISMATCH"
+                  ? "network_mismatch"
+                  : "invalid_link",
+              );
             }
             return;
           }
           const link = linkResult.link;
           setDecodedPaymentLink(link);
           setDisplayName(link.metaAddress);
-          setResolvedMeta(link.metaAddress as Hex);
+          if (link.params.label) setLinkLabel(link.params.label);
+          if (link.params.memo) setLinkMemo(link.params.memo);
+          if (link.params.amount) setAmount((prev) => prev || link.params.amount!);
 
-          // Extract and validate link parameters
-          if (link.params.label) {
-            setLinkLabel(link.params.label);
-          }
-          if (link.params.memo) {
-            setLinkMemo(link.params.memo);
-          }
-
-          // Check if link has expired
-          if (link.params.expires) {
-            const expirationTime = new Date(link.params.expires).getTime();
-            if (expirationTime < Date.now()) {
-              if (!cancelled) {
-                setResolveStatus("found");
-                setError("This payment link has expired. Contact the recipient for a new link.");
-              }
-              return;
-            }
-          }
-
-          // Check for unsupported asset/issuer (only XLM native is supported currently)
-          if ((link.params.asset && link.params.asset !== "XLM") || link.params.issuer) {
+          // Asset, issuer, expiry and memo validation gates sending below.
+          const validationError = paymentLinkValidationError(link.params);
+          if (validationError) {
             if (!cancelled) {
+              setLinkValidationError(validationError);
               setResolveStatus("found");
-              setError("This payment link requests a non-native asset. Only XLM payments are supported currently.");
             }
             return;
           }
-
-          // Pre-fill amount if specified in the link
-          if (link.params.amount && !amount) {
-            setAmount(link.params.amount);
+          if (!cancelled) {
+            setResolvedMeta(link.metaAddress as Hex);
+            setResolveStatus("found");
           }
-          if (!cancelled) setResolveStatus("found");
           return;
         }
 
@@ -224,19 +210,17 @@ export function PayPage() {
 
   useEffect(() => {
     if (!address) {
-      setActiveBalance(null);
+      setMaxSendableStroops(null);
       return;
     }
     let cancelled = false;
     setBalanceLoading(true);
     (async () => {
       try {
-        const account = await getHorizonServer().loadAccount(address);
-        const native = account.balances.find((b) => b.asset_type === "native");
-        const stroops = parseHorizonBalanceToStroops((native as { balance: string })?.balance);
-        if (!cancelled) setActiveBalance(stroops);
+        const quote = await getMaxSendableQuote({ sourcePublicKey: address });
+        if (!cancelled) setMaxSendableStroops(quote.maxSendableStroops);
       } catch {
-        if (!cancelled) setActiveBalance(null);
+        if (!cancelled) setMaxSendableStroops(null);
       } finally {
         if (!cancelled) setBalanceLoading(false);
       }
@@ -245,19 +229,6 @@ export function PayPage() {
       cancelled = true;
     };
   }, [address]);
-
-  const BASE_RESERVE_STROOPS = 5_000_000n; // 0.5 XLM
-  const SUBENTRY_RESERVE_STROOPS = 5_000_000n; // 0.5 XLM per subentry
-  const MIN_TRANSACTION_FEE = 100n; // BASE_FEE in stroops
-
-  const maxSendableBalance = useMemo(() => {
-    if (activeBalance == null) return null;
-    // Assume 2 subentries as a conservative estimate (account + 1 trustline/signer)
-    // Real calculation would need to query the account's actual subentries
-    const estimatedSubentries = 2n;
-    const totalReserve = BASE_RESERVE_STROOPS + (estimatedSubentries * SUBENTRY_RESERVE_STROOPS) + MIN_TRANSACTION_FEE;
-    return activeBalance > totalReserve ? activeBalance - totalReserve : 0n;
-  }, [activeBalance]);
 
   const inputStroops = useMemo(() => {
     const raw = amount.trim();
@@ -272,10 +243,27 @@ export function PayPage() {
   const handleSendPrivately = async () => {
     setError(null);
     setTxHash(null);
-    if (!config || !resolvedMeta || !address || !signTransaction || !connected)
+    // Re-check validation here as well: an invalid link must never be payable,
+    // even if a stale render left the button enabled.
+    const validationError = decodedPaymentLink
+      ? paymentLinkValidationError(decodedPaymentLink.params)
+      : null;
+    if (
+      linkValidationError ||
+      validationError ||
+      !config ||
+      !resolvedMeta ||
+      !address ||
+      !signTransaction ||
+      !connected
+    )
       return;
     if (inputStroops == null || inputStroops <= 0n) {
       setError("Enter a valid amount.");
+      return;
+    }
+    if (maxSendableStroops != null && inputStroops > maxSendableStroops) {
+      setError("Insufficient balance to cover the reserve and both transaction fees.");
       return;
     }
     setSending(true);
@@ -296,7 +284,7 @@ export function PayPage() {
         amountStroops: inputStroops,
       });
 
-      let tx = new TransactionBuilder(source, {
+      const tx = new TransactionBuilder(source, {
         fee: BASE_FEE,
         networkPassphrase: passphrase,
       });
@@ -425,7 +413,12 @@ export function PayPage() {
         {resolveStatus === "resolving" && (
           <p className="text-sm text-mist">Resolving…</p>
         )}
-        {resolveStatus === "found" && (
+        {resolveStatus === "found" && linkValidationError && (
+          <div role="alert" className="rounded-lg border border-red-500/40 bg-red-500/10 p-4">
+            <p className="text-sm text-red-300">{linkValidationError}</p>
+          </div>
+        )}
+        {resolveStatus === "found" && !linkValidationError && (
           <>
             <input
               type="text"
@@ -434,6 +427,11 @@ export function PayPage() {
               placeholder="Amount in XLM"
               className="w-full mb-4 rounded-lg bg-ink-900 border border-ink-600 px-3 py-2"
             />
+            {linkMemo && (
+              <p className="mb-3 text-xs text-amber-300">
+                Memos are public: this memo will be permanently visible on-chain.
+              </p>
+            )}
             {!connected ? (
               <button
                 type="button"
@@ -459,13 +457,13 @@ export function PayPage() {
                 Transaction submitted. Confirming...
               </p>
             )}
-            {maxSendableBalance != null && connected && (
+            {maxSendableStroops != null && connected && (
               <>
                 <p className="text-xs text-mist mt-2">
-                  Available to send: {formatXlm(maxSendableBalance)} XLM
+                  Available to send: {formatXlm(maxSendableStroops)} XLM
                 </p>
                 <p className="text-xs text-mist/70 mt-1">
-                  New stealth accounts require at least 1 XLM to be created.
+                  Reserve and both transaction fees are already deducted. New stealth accounts require at least 1 XLM.
                 </p>
               </>
             )}

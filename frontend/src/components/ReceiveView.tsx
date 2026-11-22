@@ -115,14 +115,15 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
     );
   }
 
-  // #1132: Include optional amount, memo, and expiry in payment link params
-  const linkParams: { amount?: string; memo?: string; expiry?: number } = {};
+  // #1132: Include optional amount, memo, and expiry in both link formats.
+  // Decode expects `expires` as an ISO 8601 timestamp.
+  const linkParams: { amount?: string; memo?: string; expires?: string } = {};
   if (linkAmount) linkParams.amount = linkAmount;
   if (linkMemo) linkParams.memo = linkMemo;
-  if (linkExpiry) linkParams.expiry = Math.floor(new Date(linkExpiry).getTime() / 1000);
+  if (linkExpiry) linkParams.expires = new Date(linkExpiry).toISOString();
 
   const paymentLink = createPaymentLink(stealthMetaAddressHex, cluster, linkParams);
-  const webPaymentLink = createWebPaymentLink(stealthMetaAddressHex, cluster);
+  const webPaymentLink = createWebPaymentLink(stealthMetaAddressHex, cluster, linkParams);
 
   if (mode === "choose") {
     return (
