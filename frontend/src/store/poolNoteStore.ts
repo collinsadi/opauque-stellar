@@ -20,7 +20,10 @@ export type ImportConflict = {
 };
 
 function noteKey(n: PoolNote): string {
-  return `${n.cluster}:${n.poolId ?? ""}:${n.leafIndex}`;
+  // #1104: include account so dedup identity matches addNote's de-dup logic.
+  // Legacy notes (no account) use "" so they form their own key namespace and
+  // are not silently collapsed with scoped notes that share the same index.
+  return `${n.account ?? ""}:${n.cluster}:${n.poolId ?? ""}:${n.leafIndex}`;
 }
 
 type PoolNoteState = {
@@ -66,14 +69,24 @@ export const usePoolNoteStore = create<PoolNoteState>()(
         }),
       markSpent: (cluster, poolId, leafIndex) =>
         set((s) => ({
-          notes: s.notes.map((n) =>
-            n.cluster === cluster &&
-            (n.poolId ?? "") === (poolId ?? "") &&
-            n.leafIndex === leafIndex &&
-            (n.account ?? "") === (s.activeAccount ?? "")
-              ? { ...n, spent: true }
-              : n,
-          ),
+          notes: s.notes.map((n) => {
+            if (
+              n.cluster !== cluster ||
+              (n.poolId ?? "") !== (poolId ?? "") ||
+              n.leafIndex !== leafIndex
+            ) {
+              return n;
+            }
+            // #1104: mark spent for the active account's note AND for legacy
+            // notes that have no account (they predate account-scoping and are
+            // shown to any active account via getForCluster).
+            const noteOwner = n.account ?? "";
+            const activeOwner = s.activeAccount ?? "";
+            if (noteOwner === activeOwner || noteOwner === "") {
+              return { ...n, spent: true };
+            }
+            return n;
+          }),
         })),
       getForCluster: (cluster) => {
         const s = get();
