@@ -71,4 +71,6 @@ export function callbackSigner(opts: {
   };
 }
 
-export { freighterSigner, stellarWalletsKitSigner } from "./adapters";
+export { stellarWalletsKitSigner, isWalletRejection, type WalletApiError } from "./adapters";
+// The Freighter adapter is exported from `@opaquecash/stellar/freighter` so that
+// `@stellar/freighter-api` stays an optional peer dependency (#1079).

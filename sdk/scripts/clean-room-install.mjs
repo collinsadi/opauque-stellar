@@ -3,8 +3,10 @@
  *
  * Packs the SDK exactly as it would publish, installs the tarball into a
  * throwaway project with ONLY the required peers (no optional `circomlibjs`,
- * `snarkjs`, or `tweetnacl`), then imports and exercises it via ESM, CJS, and
- * both subpaths. This catches the class of bug a published package can have that
+ * `snarkjs`, `tweetnacl`, or `@stellar/freighter-api`), then imports and
+ * exercises it via ESM, CJS, and the subpaths. Features that need a missing
+ * optional peer must fail with a typed `MissingPeerDependencyError`, not at
+ * import time (#1078, #1079). This catches the class of bug a published package can have that
  * in-repo tests cannot — an optional peer accidentally required, or a broken
  * exports map — because the SDK's own node_modules always has everything.
  *
@@ -40,7 +42,7 @@ try {
     JSON.stringify({ name: "cleanroom", version: "1.0.0", type: "module", private: true }, null, 2),
   );
 
-  log("installing WITHOUT optional peers (circomlibjs / snarkjs / tweetnacl)...");
+  log("installing WITHOUT optional peers (circomlibjs / snarkjs / tweetnacl / @stellar/freighter-api)...");
   run(
     `npm install "${tgz}" @stellar/stellar-sdk "@noble/curves@^1" "@noble/hashes@^1" --no-audit --no-fund`,
     work,
@@ -59,7 +61,17 @@ try {
       'if (m[0]?.stealthStellarAddress !== t.stealthStellarAddress) throw new Error("payments scan failed");',
       'if (typeof deriveKeysFromSignature !== "function") throw new Error("crypto subpath broken");',
       'if (typeof hashPoolWithdrawPayload !== "function") throw new Error("relayer-protocol subpath broken");',
-      'console.log("[clean-room] ESM + subpaths OK (v" + VERSION + ")");',
+      "// #1078: the main entry loaded without tweetnacl; box functions fail with a typed error.",
+      'import { sealBox, generateX25519Keypair, MissingPeerDependencyError } from "@opaquecash/stellar";',
+      "for (const call of [() => generateX25519Keypair(), () => sealBox(new Uint8Array([1]), new Uint8Array(32))]) {",
+      "  const err = await call().then(() => null, (e) => e);",
+      '  if (!(err instanceof MissingPeerDependencyError) || err.dependency !== "tweetnacl") throw new Error("box without tweetnacl did not raise MissingPeerDependencyError: " + err);',
+      "}",
+      "// #1079: the freighter subpath loads without @stellar/freighter-api; use fails with a typed error.",
+      'import { freighterSigner } from "@opaquecash/stellar/freighter";',
+      "const ferr = await Promise.resolve().then(() => freighterSigner().publicKey()).then(() => null, (e) => e);",
+      'if (!(ferr instanceof MissingPeerDependencyError) || ferr.dependency !== "@stellar/freighter-api") throw new Error("freighter without its peer did not raise MissingPeerDependencyError: " + ferr);',
+      'console.log("[clean-room] ESM + subpaths OK without optional peers (v" + VERSION + ")");',
     ].join("\n"),
   );
 
@@ -70,7 +82,15 @@ try {
       'const crypto = require("@opaquecash/stellar/crypto");',
       'if (typeof OpaqueClient !== "function") throw new Error("CJS main broken");',
       'if (typeof crypto.computeStealthAddressAndViewTag !== "function") throw new Error("CJS crypto subpath broken");',
-      'console.log("[clean-room] CJS OK");',
+      'const { sealBox, MissingPeerDependencyError } = require("@opaquecash/stellar");',
+      'const { freighterSigner } = require("@opaquecash/stellar/freighter");',
+      "(async () => {",
+      "  const err = await sealBox(new Uint8Array([1]), new Uint8Array(32)).then(() => null, (e) => e);",
+      '  if (!(err instanceof MissingPeerDependencyError)) throw new Error("CJS box without tweetnacl did not raise MissingPeerDependencyError: " + err);',
+      "  const ferr = await Promise.resolve().then(() => freighterSigner().publicKey()).then(() => null, (e) => e);",
+      '  if (!(ferr instanceof MissingPeerDependencyError)) throw new Error("CJS freighter without its peer did not raise MissingPeerDependencyError: " + ferr);',
+      '  console.log("[clean-room] CJS OK");',
+      "})().catch((e) => { console.error(e); process.exit(1); });",
     ].join("\n"),
   );
 

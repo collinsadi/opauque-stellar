@@ -69,6 +69,16 @@
         "default": "./dist/relayer-protocol/index.cjs"
       }
     },
+    "./freighter": {
+      "import": {
+        "types": "./dist/freighter.d.ts",
+        "default": "./dist/freighter.js"
+      },
+      "require": {
+        "types": "./dist/freighter.d.cts",
+        "default": "./dist/freighter.cjs"
+      }
+    },
     "./node": {
       "import": {
         "types": "./dist/node.d.ts",
@@ -108,12 +118,16 @@
   "peerDependencies": {
     "@noble/curves": "^1.9.7",
     "@noble/hashes": "^1.8.0",
+    "@stellar/freighter-api": ">=2.0.0",
     "@stellar/stellar-sdk": "^15.1.0",
     "circomlibjs": "^0.1.7",
     "snarkjs": "^0.7.6",
     "tweetnacl": "^1.0.3"
   },
   "peerDependenciesMeta": {
+    "@stellar/freighter-api": {
+      "optional": true
+    },
     "snarkjs": {
       "optional": true
     },
@@ -130,6 +144,7 @@
     "@eslint/js": "^9.39.4",
     "@noble/curves": "^1.9.7",
     "@noble/hashes": "^1.8.0",
+    "@stellar/freighter-api": "^6.0.1",
     "@stellar/stellar-sdk": "^15.1.0",
     "@types/node": "^22.15.0",
     "@vitest/coverage-istanbul": "^4.1.9",

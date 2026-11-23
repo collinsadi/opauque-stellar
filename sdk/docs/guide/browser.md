@@ -1,7 +1,23 @@
 # Browser (Freighter)
 
-In the browser, adapt a wallet such as [Freighter](https://www.freighter.app/)
-with `callbackSigner` — the SDK never sees a private key.
+The SDK ships a Freighter signer on its own subpath. `@stellar/freighter-api`
+is an optional peer dependency: install it to use this signer.
+
+```ts
+import { OpaqueClient } from "@opaquecash/stellar";
+import { freighterSigner } from "@opaquecash/stellar/freighter";
+
+const opaque = new OpaqueClient({ network: "testnet", signer: freighterSigner() });
+```
+
+A user rejection fails with `SignerRejectedError`; other wallet errors with
+`SignerError`. `publicKey()` always reads Freighter's active account, and signing
+with a different account than the transaction was built for fails with
+`SignerError` `reason: "account-changed"`. Without `@stellar/freighter-api`
+installed, the signer fails with `MissingPeerDependencyError`.
+
+You can also adapt any wallet with `callbackSigner` — the SDK never sees a
+private key:
 
 ```ts
 import { OpaqueClient, callbackSigner } from "@opaquecash/stellar";
