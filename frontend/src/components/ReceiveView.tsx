@@ -11,6 +11,8 @@ import { BackupReminderModal } from "./security/BackupReminderModal";
 import { useSecurityStore } from "../store/securityStore";
 import { getFeatureFlags } from "../lib/featureFlags";
 import { FeatureDisabledNotice } from "./FeatureDisabledNotice";
+import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
+import { CopyStatusHint } from "./CopyStatusHint";
 
 /** Detect the user's OS color-scheme preference for QR rendering. */
 function prefersLightTheme(): boolean {
@@ -31,7 +33,9 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedWebLink, setCopiedWebLink] = useState(false);
   const [copiedGhost, setCopiedGhost] = useState(false);
-  const [copiedEphemeralKey, setCopiedEphemeralKey] = useState(false);
+  // #1102: Ephemeral private keys are secrets — route through the secure-clipboard
+  // hook so they auto-clear and copy failures surface as errors.
+  const ephemeralKeyCopy = useCopyToClipboard({ secret: true });
   const [ephemeralKeyRevealed, setEphemeralKeyRevealed] = useState(false);
   // #1132: Payment link parameters
   const [linkAmount, setLinkAmount] = useState("");
@@ -83,7 +87,7 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
     downloadCleanPng(canvas, "meta-address-qr.png");
   }, [downloadCleanPng]);
 
-  const handleCopy = useCallback(async (value: string, type: "meta" | "link" | "weblink" | "ghost" | "ephemeralKey") => {
+  const handleCopy = useCallback(async (value: string, type: "meta" | "link" | "weblink" | "ghost") => {
     try {
       await navigator.clipboard.writeText(value);
       if (type === "meta") {
@@ -95,9 +99,6 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
       } else if (type === "weblink") {
         setCopiedWebLink(true);
         window.setTimeout(() => setCopiedWebLink(false), 1200);
-      } else if (type === "ephemeralKey") {
-        setCopiedEphemeralKey(true);
-        window.setTimeout(() => setCopiedEphemeralKey(false), 1200);
       } else {
         setCopiedGhost(true);
         window.setTimeout(() => setCopiedGhost(false), 1200);
@@ -470,11 +471,16 @@ export function ReceiveView({ onBack }: { onBack: () => void }) {
               </div>
               <button
                 type="button"
-                onClick={() => handleCopy(ghostResult.ephemeralPrivKeyHex, "ephemeralKey")}
+                onClick={() => ephemeralKeyCopy.copy(ghostResult.ephemeralPrivKeyHex)}
                 className="w-full rounded-xl border border-orange-500/50 bg-orange-500/10 px-3 py-2 text-xs font-medium text-orange-300 hover:border-orange-400 hover:text-orange-200 transition-colors"
               >
-                {copiedEphemeralKey ? "Copied!" : "Copy ephemeral key"}
+                {ephemeralKeyCopy.status === "copied" ? "Copied!" : "Copy ephemeral key"}
               </button>
+              <CopyStatusHint
+                status={ephemeralKeyCopy.status}
+                remaining={ephemeralKeyCopy.remaining}
+                onCancelClear={ephemeralKeyCopy.cancelClear}
+              />
             </>
           )}
         </div>
