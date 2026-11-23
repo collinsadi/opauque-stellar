@@ -52,6 +52,9 @@ export function loadConfig() {
   const scope = manifest.wiring?.privacyPool?.scope ?? 1;
   const secret = process.env.ASP_SECRET?.trim();
   if (!secret) throw new Error("set ASP_SECRET (the ASP authority S... seed)");
+  // Ed25519 key that signs every published manifest (#1081). Defaults to the ASP
+  // authority key, whose G-address is already the pool's published ASP identity.
+  const manifestSecret = process.env.ASP_MANIFEST_SECRET?.trim() || secret;
 
   return {
     network,
@@ -60,6 +63,7 @@ export function loadConfig() {
     poolId,
     scope,
     authority: Keypair.fromSecret(secret),
+    manifestSigner: Keypair.fromSecret(manifestSecret),
     rpcUrl: process.env.STELLAR_RPC_URL ?? manifest.rpcUrl ?? "https://soroban-testnet.stellar.org",
     deploymentLedger: manifest.deploymentLedger ?? undefined,
     intervalMs: numberEnv("ASP_INTERVAL_MS", 15000, { min: 1 }),
@@ -98,6 +102,7 @@ export async function tick(cfg, adapter, store, monitor, guard, metrics = undefi
       store,
       policy: cfg.policy ?? approveAll,
       dataDir: cfg.dataDir,
+      manifestSigner: cfg.manifestSigner,
       confirmations: cfg.confirmations,
       publicationMonitor: monitor,
       reorgGuard: guard,

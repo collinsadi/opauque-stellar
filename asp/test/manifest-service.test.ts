@@ -11,7 +11,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MerkleTree, computeLabel, getPoseidon, toHex32 } from "../src/merkle.ts";
-import { writeManifest } from "../src/publish.ts";
+import { Keypair } from "@stellar/stellar-sdk";
+import { computeDatasetHash, verifyManifestSignature, writeManifest } from "../src/publish.ts";
 import {
   isValidLabel,
   isValidRoot,
@@ -23,6 +24,33 @@ import type { SetManifest } from "../src/types.ts";
 
 const POOL_ID = "7";
 const SCOPE = 42;
+const SIGNER = Keypair.random();
+
+/** Root of a depth-20 tree over `leaves`. */
+function rootOf(poseidon: any, leaves: bigint[]): string {
+  const tree = new MerkleTree(poseidon);
+  for (const leaf of leaves) tree.insert(leaf);
+  return toHex32(tree.root());
+}
+
+/** Unsigned manifest fields for a label set. */
+function manifestFor(poolId: string, leaves: bigint[], indices: number[]) {
+  const root = rootOf(poseidon, leaves);
+  const labelStrings = leaves.map((l) => l.toString());
+  return {
+    poolId,
+    root,
+    version: leaves.length,
+    levels: 20,
+    algo: "poseidon-bn254" as const,
+    labels: labelStrings,
+    indices,
+    generatedAt: new Date().toISOString(),
+    datasetHash: computeDatasetHash(root, labelStrings),
+    policy: "approve-all",
+    ledger: 100,
+  };
+}
 
 let dataDir: string;
 let poseidon: any;
@@ -37,18 +65,8 @@ beforeAll(async () => {
   // retention pruning are exercised too.
   const leaves = [0, 1, 2].map((i) => computeLabel(poseidon, SCOPE, i));
   labels = leaves.map((l) => l.toString());
-  const root = toHex32(new MerkleTree(poseidon, leaves).root());
-  manifest = {
-    poolId: POOL_ID,
-    root,
-    version: leaves.length,
-    levels: 20,
-    algo: "poseidon-bn254",
-    labels,
-    indices: [0, 1, 2],
-    generatedAt: new Date().toISOString(),
-  };
-  writeManifest(dataDir, manifest);
+  manifest = manifestFor(POOL_ID, leaves, [0, 1, 2]);
+  writeManifest(dataDir, manifest, SIGNER);
 });
 
 afterAll(() => {
@@ -88,6 +106,12 @@ describe("GET /manifest", () => {
     expect((result.body as SetManifest).root).toBe(manifest.root);
   });
 
+  it("serves a manifest signed by the ASP key (#1081)", () => {
+    const body = readLatestManifest(dataDir, POOL_ID).body as SetManifest;
+    expect(body.signer).toBe(SIGNER.publicKey());
+    expect(verifyManifestSignature(body, SIGNER.publicKey())).toBe(true);
+  });
+
   it("404s before anything is published", () => {
     const result = readLatestManifest(join(dataDir, "empty"), POOL_ID);
     expect(result.status).toBe(404);
@@ -119,14 +143,7 @@ describe("GET /manifest/:root (#972)", () => {
     const olderRoot = manifest.root;
     // Publish a second, larger set; the older root must remain retrievable.
     const leaves = [0, 1, 2, 3].map((i) => computeLabel(poseidon, SCOPE, i));
-    const newer = writeManifest(dataDir, {
-      ...manifest,
-      root: toHex32(new MerkleTree(poseidon, leaves).root()),
-      version: leaves.length,
-      labels: leaves.map((l) => l.toString()),
-      indices: [0, 1, 2, 3],
-      generatedAt: new Date().toISOString(),
-    });
+    const newer = writeManifest(dataDir, manifestFor(POOL_ID, leaves, [0, 1, 2, 3]), SIGNER);
     expect(newer).toContain(".json");
 
     const old = readManifestByRoot(dataDir, POOL_ID, olderRoot);
@@ -160,11 +177,8 @@ describe("GET /inclusion/:root/:label (#972)", () => {
     expect(proof.pathIndices).toHaveLength(20);
 
     // Recompute the root from the returned path — this is what the circuit does.
-    const rebuilt = new MerkleTree(
-      poseidon,
-      labels.map((l) => BigInt(l)),
-      proof.levels,
-    );
+    const rebuilt = new MerkleTree(poseidon, proof.levels);
+    for (const l of labels) rebuilt.insert(BigInt(l));
     const recomputed = rebuilt.proof(proof.index);
     expect(proof.pathElements).toEqual(recomputed.pathElements.map((e) => e.toString()));
     expect(proof.pathIndices).toEqual(recomputed.pathIndices);
@@ -206,23 +220,9 @@ describe("retention (#972)", () => {
       const published: string[] = [];
       for (let i = 0; i < 5; i += 1) {
         const leaves = Array.from({ length: i + 1 }, (_, k) => computeLabel(poseidon, SCOPE + i, k));
-        const root = toHex32(new MerkleTree(poseidon, leaves).root());
-        published.push(root);
-        writeManifest(
-          dir,
-          {
-            poolId,
-            root,
-            version: leaves.length,
-            levels: 20,
-            algo: "poseidon-bn254",
-            labels: leaves.map((l) => l.toString()),
-            indices: leaves.map((_, k) => k),
-            generatedAt: new Date().toISOString(),
-          },
-          undefined,
-          2, // keep only the two most recent
-        );
+        const m = manifestFor(poolId, leaves, leaves.map((_, k) => k));
+        published.push(m.root);
+        writeManifest(dir, m, SIGNER, 2); // keep only the two most recent
       }
 
       // Retention keeps a bounded number of roots, and the rest are reported as

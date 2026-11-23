@@ -86,6 +86,16 @@ export interface SetManifest {
   /** Deposit index for each label (parallel to `labels`). */
   indices: number[];
   generatedAt: string;
+  /** sha256 binding `root` to its exact label set — the value posted on-chain (see `computeDatasetHash`). */
+  datasetHash: string;
+  /** Name of the screening policy that produced this set. */
+  policy: string;
+  /** Highest ledger the set reflects (the ASP's deposit cursor when it was built). */
+  ledger: number;
+  /** Stellar G-address of the Ed25519 key that signed this manifest (#1081). */
+  signer?: string;
+  /** Hex Ed25519 signature over `canonicalManifestBytes` (#1081). */
+  signature?: string;
 }
 
 /**

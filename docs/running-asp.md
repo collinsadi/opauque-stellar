@@ -51,6 +51,26 @@ ASP_MAX_ROOT_AGE_MS=120000
 
 `ASP_SECRET` must be able to call `update_asp_root` and `update_state_root` for the deployed privacy pool.
 
+### Manifest signing
+
+Every published manifest (`data/sets/<poolId>/<root>.json` and `latest.json`) carries
+`datasetHash`, `policy`, `ledger`, and an Ed25519 `signature` by `signer` (a Stellar
+G-address) over a canonical, length-prefixed encoding (domain `opaque-asp-manifest/v1`).
+The signing key is `ASP_MANIFEST_SECRET`, or `ASP_SECRET` when unset; the engine refuses
+to write an unsigned manifest. Publish the signer's G-address so clients can verify:
+
+- SDK: pass `aspPublicKey` to `fetchAspInclusion` / `fetchAspManifest`.
+- CLI cross-check (signature, dataset hash, Merkle root, circuit depth):
+
+  ```bash
+  npm run verify:manifest -- --key G... --url http://127.0.0.1:8791/manifest/0x...
+  npm run verify:manifest -- --key G... --manifest data/sets/<poolId>/latest.json
+  ```
+
+Clients compute their inclusion path locally from `GET /manifest/:root`.
+`GET /inclusion/:root/:label` remains for legacy callers only: it reveals which
+deposit is about to be withdrawn to the ASP operator.
+
 `ASP_MAX_ROOT_AGE_MS` is the max age of the last published root before the built-in
 `PublicationMonitor` fires a stale-root alert (logged as `[ALERT] ...`) and `/health`
 (see below) starts reporting unhealthy. A ledger reorg is handled separately by the
