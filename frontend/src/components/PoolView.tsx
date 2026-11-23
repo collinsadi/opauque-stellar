@@ -11,7 +11,11 @@ import {
   buildEncryptedPoolNoteBackup,
   downloadBlob,
   poolNoteBackupFilename,
+  importEncryptedPoolNoteBackup,
+  CorruptedBackupError,
+  InvalidPasswordError,
 } from "../lib/poolNoteBackup";
+import type { ImportConflict } from "../store/poolNoteStore";
 import { getDocUrl } from "../lib/docsLinks";
 import { presetChunkStroops } from "../lib/poolSweep";
 import { deriveDeposit, newNoteSecrets, toHex32, unspentTotal, type PoolNote } from "../lib/poolNotes";
@@ -211,6 +215,7 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
   const unspent = clusterNotes.filter((n) => !n.spent);
   const addNote = usePoolNoteStore((s) => s.addNote);
   const markSpent = usePoolNoteStore((s) => s.markSpent);
+  const importNotes = usePoolNoteStore((s) => s.importNotes);
   const pendingDeposits = usePendingDepositStore((s) => s.deposits);
   const addOptimistic = usePendingDepositStore((s) => s.addOptimistic);
   const confirmDeposit = usePendingDepositStore((s) => s.confirmDeposit);
@@ -236,6 +241,13 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
   const [backupAcknowledged, setBackupAcknowledged] = useState(false);
   const [backupError, setBackupError] = useState<string | null>(null);
   const [backupBusy, setBackupBusy] = useState(false);
+  // #1105: restore state
+  const [restoreOpen, setRestoreOpen] = useState(false);
+  const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  const [restorePin, setRestorePin] = useState("");
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [restoreBusy, setRestoreBusy] = useState(false);
+  const [restoreResult, setRestoreResult] = useState<ImportConflict | null>(null);
     const backupStrength = getPassphraseStrength(backupPin);
   const [poolBalance, setPoolBalance] = useState<bigint | null>(null);
   const [roots, setRoots] = useState<{ stateRoot: string | null; aspRoot: string | null } | null>(null);
@@ -387,6 +399,48 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
     setBackupAcknowledged(false);
     setBackupError(null);
   }, [backupBusy]);
+
+  const closeRestoreDialog = useCallback(() => {
+    if (restoreBusy) return;
+    setRestoreOpen(false);
+    setRestoreFile(null);
+    setRestorePin("");
+    setRestoreError(null);
+    setRestoreResult(null);
+  }, [restoreBusy]);
+
+  const handleRestoreSubmit = useCallback(
+    async (event: React.FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (!restoreFile) {
+        setRestoreError("Select a backup ZIP file.");
+        return;
+      }
+      if (!restorePin) {
+        setRestoreError("Enter the backup passphrase.");
+        return;
+      }
+      setRestoreBusy(true);
+      setRestoreError(null);
+      setRestoreResult(null);
+      try {
+        const payload = await importEncryptedPoolNoteBackup(restoreFile, restorePin);
+        const result = importNotes(payload.notes);
+        setRestoreResult(result);
+      } catch (e) {
+        if (e instanceof InvalidPasswordError) {
+          setRestoreError("Incorrect passphrase. Please try again.");
+        } else if (e instanceof CorruptedBackupError) {
+          setRestoreError(`Backup appears corrupted: ${(e as Error).message}`);
+        } else {
+          setRestoreError((e as Error).message || "Restore failed.");
+        }
+      } finally {
+        setRestoreBusy(false);
+      }
+    },
+    [restoreFile, restorePin, importNotes],
+  );
 
   useEffect(() => {
     if (!backupOpen) return;
@@ -1043,6 +1097,19 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
           >
             Download backup
           </button>
+          {/* #1105: Restore backup button */}
+          <button
+            type="button"
+            onClick={() => {
+              setRestoreError(null);
+              setRestoreResult(null);
+              setRestoreOpen(true);
+            }}
+            disabled={restoreBusy}
+            className="mt-2 min-h-10 rounded-xl border border-ink-600 px-3 py-2 text-sm font-medium text-mist transition-colors hover:border-white/30 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-glow disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Restore from backup
+          </button>
         </div>
         <div className={card} data-tour="pool-balance">
           <div className="text-xs uppercase tracking-wide text-mist/70">Pool TVL (on-chain)</div>
@@ -1462,6 +1529,113 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
               </button>
             </div>
           </form>
+        </ModalShell>
+      )}
+
+      {/* #1105: Restore backup modal */}
+      {restoreOpen && (
+        <ModalShell
+          open={restoreOpen}
+          title="Restore pool notes from backup"
+          description="Decrypt and merge notes from an encrypted backup ZIP. Already-spent notes are never reverted."
+          onClose={closeRestoreDialog}
+          maxWidthClassName="max-w-lg"
+          closeOnBackdrop={!restoreBusy}
+        >
+          {restoreResult ? (
+            <div className="space-y-4">
+              <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-200">
+                <p className="font-semibold text-emerald-100 mb-2">Restore complete</p>
+                <ul className="space-y-1">
+                  <li>
+                    <span className="font-medium text-white">{restoreResult.imported}</span>{" "}
+                    note{restoreResult.imported === 1 ? "" : "s"} imported or updated.
+                  </li>
+                  {restoreResult.spentPreserved > 0 && (
+                    <li>
+                      <span className="font-medium text-amber-200">{restoreResult.spentPreserved}</span>{" "}
+                      already-spent note{restoreResult.spentPreserved === 1 ? "" : "s"} preserved
+                      (not reverted to unspent).
+                    </li>
+                  )}
+                </ul>
+              </div>
+              <button
+                type="button"
+                onClick={closeRestoreDialog}
+                className="w-full min-h-10 rounded-xl bg-glow px-4 py-2 text-sm font-semibold text-ink-950 transition-colors hover:bg-[#ffe24f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-glow"
+              >
+                Done
+              </button>
+            </div>
+          ) : (
+            <form onSubmit={handleRestoreSubmit} className="space-y-4">
+              <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 p-3 text-sm text-amber-100">
+                Import merges notes conservatively — a note already spent locally is never
+                reverted to unspent, even if the backup says it is unspent.
+              </div>
+
+              <div className="space-y-1.5">
+                <label htmlFor="restore-file" className="block text-sm font-medium text-white">
+                  Backup file (.zip)
+                </label>
+                <input
+                  id="restore-file"
+                  type="file"
+                  accept=".zip,.json"
+                  disabled={restoreBusy}
+                  onChange={(e) => {
+                    setRestoreFile(e.target.files?.[0] ?? null);
+                    setRestoreError(null);
+                  }}
+                  className="w-full text-sm text-mist/70 file:mr-3 file:rounded-lg file:border-0 file:bg-ink-800 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-ink-700 disabled:opacity-50"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label htmlFor="restore-pin" className="block text-sm font-medium text-white">
+                  Backup passphrase
+                </label>
+                <input
+                  id="restore-pin"
+                  type="password"
+                  autoComplete="current-password"
+                  value={restorePin}
+                  onChange={(e) => {
+                    setRestorePin(e.target.value);
+                    setRestoreError(null);
+                  }}
+                  disabled={restoreBusy}
+                  className="w-full rounded-xl border border-ink-700 bg-ink-900 px-3 py-2 text-sm text-white placeholder:text-mist/40 focus:border-glow focus:outline-none focus-visible:ring-2 focus-visible:ring-glow disabled:opacity-50"
+                />
+              </div>
+
+              {restoreError && (
+                <p className="rounded-xl border border-red-400/30 bg-red-400/10 p-3 text-sm text-red-100">
+                  {restoreError}
+                </p>
+              )}
+
+              <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={closeRestoreDialog}
+                  disabled={restoreBusy}
+                  className="min-h-10 rounded-xl border border-ink-700 px-4 py-2 text-sm font-medium text-mist transition-colors hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-glow disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={restoreBusy || !restoreFile}
+                  aria-busy={restoreBusy ? "true" : undefined}
+                  className="min-h-10 rounded-xl bg-glow px-4 py-2 text-sm font-semibold text-ink-950 transition-colors hover:bg-[#ffe24f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-glow disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {restoreBusy ? "Decrypting…" : "Restore notes"}
+                </button>
+              </div>
+            </form>
+          )}
         </ModalShell>
       )}
 
