@@ -4,7 +4,7 @@
  * is optional and the file store is purely a convenience/cache.
  */
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync, readdirSync, unlinkSync, renameSync, statSync } from "node:fs";
+import { mkdirSync, writeFileSync, readdirSync, unlinkSync, renameSync, statSync, openSync, fsyncSync, closeSync } from "node:fs";
 import { join } from "node:path";
 import type { SetManifest } from "./types.ts";
 
@@ -59,7 +59,9 @@ export function verifyManifestSignature(
  * Default retention policy: keep the most recent N set files per pool (issue #1011).
  * Older roots are pruned to prevent unbounded disk growth.
  */
-const DEFAULT_MAX_SETS_PER_POOL = 50;
+// Must cover the contract's MAX_ROOT_HISTORY (100); retaining fewer manifests
+// makes still-valid on-chain roots unusable by withdrawers.
+const DEFAULT_MAX_SETS_PER_POOL = 100;
 
 /**
  * Write `data/sets/<poolId>/<root>.json` and `latest.json` atomically (issue #1011).
@@ -88,12 +90,16 @@ export function writeManifest(
   const rootPath = join(dir, `${manifest.root}.json`);
   const tmpPath = `${rootPath}.tmp.${Date.now()}`;
   writeFileSync(tmpPath, manifestJson);
+  const rootFd = openSync(tmpPath, "r");
+  try { fsyncSync(rootFd); } finally { closeSync(rootFd); }
   renameSync(tmpPath, rootPath);
 
   // Atomic write for latest.json
   const latestPath = join(dir, "latest.json");
   const latestTmpPath = `${latestPath}.tmp.${Date.now()}`;
   writeFileSync(latestTmpPath, manifestJson);
+  const latestFd = openSync(latestTmpPath, "r");
+  try { fsyncSync(latestFd); } finally { closeSync(latestFd); }
   renameSync(latestTmpPath, latestPath);
 
   // Prune old sets (issue #1011)
