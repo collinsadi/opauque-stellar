@@ -108,14 +108,14 @@ export function DashboardView({ onNavigate, address, cluster }: DashboardViewPro
   const vaultEntries = useVaultStore((s) => s.entries);
   const stealthEntries = vaultEntries.filter((e) => !e.isSpent);
   const stealthTotal = stealthEntries.reduce((sum, e) => sum + e.amountStroops, 0n);
-  const poolNotes = usePoolNoteStore((s) => s.notes);
   const poolId = cluster != null ? getPoolConfig()?.poolId : undefined;
-  const unspentPoolNotes =
-    cluster != null
-      ? poolNotes.filter(
-          (n) => n.cluster === cluster && !n.spent && (!n.poolId || n.poolId === poolId),
-        )
-      : [];
+  // #1103: read pool notes through the account-scoped selector so the
+  // dashboard only sums the active account's notes, not all accounts'.
+  const unspentPoolNotes = usePoolNoteStore((s) =>
+    cluster == null
+      ? []
+      : s.getForCluster(cluster).filter((n) => !n.spent && (!n.poolId || n.poolId === poolId)),
+  );
   const poolTotal = unspentTotal(unspentPoolNotes);
 
   const walletValue =

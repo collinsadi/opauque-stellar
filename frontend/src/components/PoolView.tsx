@@ -203,7 +203,12 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
     return getRelayerConfig();
   }, [cluster]);
 
-  const notes = usePoolNoteStore((s) => s.notes);
+  const clusterNotes = usePoolNoteStore((s) =>
+    // #1103: use the account-scoped selector so another account's notes are
+    // never listed, spendable, or included in backup exports.
+    s.getForCluster(cluster).filter((n) => !n.poolId || n.poolId === cfg?.poolId),
+  );
+  const unspent = clusterNotes.filter((n) => !n.spent);
   const addNote = usePoolNoteStore((s) => s.addNote);
   const markSpent = usePoolNoteStore((s) => s.markSpent);
   const pendingDeposits = usePendingDepositStore((s) => s.deposits);
@@ -264,8 +269,6 @@ export function PoolView({ readOnly = false }: { onNavigate?: (tab: Tab) => void
   // drives the "possible censorship" banner and the one-click fallback resubmission.
   const [stalledJob, setStalledJob] = useState<{ operator: string; jobId: string } | null>(null);
 
-  const clusterNotes = notes.filter((n) => n.cluster === cluster && (!n.poolId || n.poolId === cfg?.poolId));
-  const unspent = clusterNotes.filter((n) => !n.spent);
   const selectedRelayerBid = relayerBids.find((bid) => bid.operator === selectedRelayer) ?? null;
 
   const refreshChain = useCallback(async () => {
