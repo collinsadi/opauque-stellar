@@ -23,6 +23,9 @@ opt-level = "z"
 lto = true
 strip = true
 
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
 [dependencies]
 k256 = { version = "0.13", features = ["ecdh", "arithmetic"] }
 sha3 = "0.10"

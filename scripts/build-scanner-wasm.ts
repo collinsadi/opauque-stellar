@@ -91,10 +91,8 @@ function main() {
   let env = process.env;
   ({ wasmPack, env } = maybeBootstrapToolchain(wasmPack, env));
 
-  // --mode no-install prevents wasm-pack from downloading its own Rust
-  // toolchain, ensuring the build uses the version pinned in
-  // scanner/rust-toolchain.toml for byte-reproducible output.
-  const args = ["build", "--target", "web", "--out-dir", OUT, "--mode", "no-install"];
+  const mode = process.env.WASM_PACK_MODE ?? (canRun("wasm-bindgen", ["--version"], env) ? "no-install" : "normal");
+  const args = ["build", "--target", "web", "--out-dir", OUT, "--mode", mode];
   console.log(`> cd scanner && ${wasmPack} ${args.join(" ")}`);
 
   const result = spawnSync(wasmPack, args, {
