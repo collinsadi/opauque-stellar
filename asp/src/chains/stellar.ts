@@ -153,6 +153,7 @@ export class StellarChainAdapter implements ChainAdapter {
     // pages before the populated ones, so follow the cursor until it stops advancing
     // (caught up to latestLedger). Breaking on the first short page would miss every
     // deposit beyond the first page.
+    let exhausted = false;
     for (let page = 0; page < 400; page++) {
       const res = cursor
         ? await this.server.getEvents({ cursor, filters, limit: 100 })
@@ -170,9 +171,10 @@ export class StellarChainAdapter implements ChainAdapter {
         });
       }
       cursor = res.cursor;
-      if (!cursor || cursor === prevCursor) break;
+      if (!cursor || cursor === prevCursor) { exhausted = true; break; }
       prevCursor = cursor;
     }
+    if (!exhausted) throw new Error("ASP deposit event page limit reached; cursor was not advanced. Increase pagination capacity or backfill from a recent ledger.");
     deposits.sort((a, b) => a.index - b.index);
     return deposits;
   }
@@ -216,6 +218,7 @@ export class StellarChainAdapter implements ChainAdapter {
     const events: Array<{ index: number; leaf: string }> = [];
     let eventCount = 0;
 
+    let completedLedger = startLedger;
     for (const [topic, isDeposit] of [
       [depositTopic, true],
       [withdrawTopic, false],
@@ -226,6 +229,7 @@ export class StellarChainAdapter implements ChainAdapter {
       // Follow the cursor until it stops advancing; getEvents returns many EMPTY
       // pages before the populated ones, so breaking on a short page would miss
       // leaves beyond the first page.
+      let exhausted = false;
       for (let page = 0; page < 400; page++) {
         const res = cursor
           ? await this.server.getEvents({ cursor, filters, limit: 100 })
@@ -238,11 +242,13 @@ export class StellarChainAdapter implements ChainAdapter {
           byIndex.set(index, leaf);
           events.push({ index, leaf });
           eventCount++;
+          completedLedger = Math.max(completedLedger, Number(ev.ledger));
         }
         cursor = res.cursor;
-        if (!cursor || cursor === prevCursor) break;
+        if (!cursor || cursor === prevCursor) { exhausted = true; break; }
         prevCursor = cursor;
       }
+      if (!exhausted) throw new Error("ASP state event page limit reached; cursor was not advanced. Retry with a larger page limit or backfill from deployment.");
     }
 
     const maxIndex = byIndex.size === 0 ? -1 : Math.max(...byIndex.keys());
@@ -250,6 +256,6 @@ export class StellarChainAdapter implements ChainAdapter {
     for (let i = 0; i <= maxIndex; i++) {
       leaves.push(byIndex.get(i) ?? `0x${"00".repeat(32)}`);
     }
-    return { leaves, eventCount, maxIndex, events, cursor: await this.latestLedger() };
+    return { leaves, eventCount, maxIndex, events, cursor: completedLedger };
   }
 }

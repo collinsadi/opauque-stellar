@@ -34,6 +34,11 @@ function send(res, status, body, corsOrigin, contentType = "application/json") {
   res.end(contentType === "application/json" ? JSON.stringify(body) : body);
 }
 
+const publicErrors: Record<string, { code: string; message: string }> = {
+  "root must be a 0x-prefixed 32-byte hex string": { code: "INVALID_ROOT", message: "The requested root is invalid." },
+  "label must be a decimal field element": { code: "INVALID_LABEL", message: "The requested label is invalid." },
+};
+
 async function main() {
   const cfg = loadConfig();
   const host = process.env.ASP_HTTP_HOST ?? "127.0.0.1";
@@ -52,6 +57,7 @@ async function main() {
   const monitor = createPublicationMonitor(cfg);
   const guard = createReorgGuard();
   const metrics = createAspMetrics();
+  const requestWindow = new Map<string, { startedAt: number; count: number }>();
 
   const log = createLogger("asp", { poolId: cfg.poolId, network: cfg.network, policy: cfg.policy.name });
   async function loop() {
@@ -79,6 +85,17 @@ async function main() {
         return;
       }
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+
+      if (req.method === "GET" && (url.pathname === "/manifest" || url.pathname.startsWith("/manifest/") || url.pathname.startsWith("/inclusion/"))) {
+        const now = Date.now();
+        const key = req.socket.remoteAddress ?? "unknown";
+        const window = requestWindow.get(key);
+        if (!window || now - window.startedAt >= 60_000) requestWindow.set(key, { startedAt: now, count: 1 });
+        else if (++window.count > 60) {
+          send(res, 429, { ok: false, code: "RATE_LIMITED", error: "Too many requests." }, corsOrigin);
+          return;
+        }
+      }
 
       if (req.method === "GET" && url.pathname === "/health") {
         const age = rootAgeMs(metrics);
@@ -136,8 +153,12 @@ async function main() {
 
       send(res, 404, { ok: false, error: "not found" }, corsOrigin);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      send(res, 500, { ok: false, error: message }, corsOrigin);
+      const rawMessage = err instanceof Error ? err.message : String(err);
+      log.error("HTTP request failed", { error: err, path: req.url });
+      const known = publicErrors[rawMessage];
+      send(res, known ? 400 : 500, known
+        ? { ok: false, ...known }
+        : { ok: false, code: "INTERNAL_ERROR", error: "The request could not be completed." }, corsOrigin);
     }
   });
 

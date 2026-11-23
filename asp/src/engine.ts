@@ -199,6 +199,10 @@ export async function runPoolTick(cfg: TickConfig): Promise<TickResult> {
     const leaves = state.stateLeaves ?? snapshot.leaves;
     stateLeafCount = leaves.length;
     if (snapshot.eventCount > 0 || leaves.length > 0) {
+      const missing = leaves.findIndex((leaf) => typeof leaf !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(leaf));
+      if (missing >= 0) {
+        throw new Error(`ASP state history is incomplete at leaf ${missing}; restore an ASP state snapshot or configure the pool deployment ledger and backfill events before restarting.`);
+      }
       const poseidon = await getPoseidon();
       const tree = new MerkleTree(poseidon);
       for (const leaf of leaves) {
