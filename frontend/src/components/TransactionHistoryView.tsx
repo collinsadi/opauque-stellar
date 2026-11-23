@@ -1,5 +1,6 @@
 import { getCluster } from "../lib/chain";
 import { getExplorerTxUrl } from "../lib/explorer";
+import { getDocUrl } from "../lib/docsLinks";
 import { maskCounterparty, useTxHistoryStore } from "../store/txHistoryStore";
 import type { TxHistoryEntry } from "../store/txHistoryStore";
 import { formatXlm } from "../lib/stealth";
@@ -188,8 +189,15 @@ export function TransactionHistoryView() {
         />
         <span>
           Rebuild history from chain automatically on this device when it is empty.
-          Sync sends your wallet and this account&apos;s ghost addresses to Horizon.
-          See docs/PRIVACY_GUARANTEES.md.
+          Sync sends your wallet and this account&apos;s ghost addresses to Horizon.{" "}
+          <a
+            href={getDocUrl("horizon-history-sync")}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline hover:no-underline"
+          >
+            See the privacy guarantee.
+          </a>
         </span>
       </label>
 
