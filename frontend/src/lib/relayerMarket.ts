@@ -216,7 +216,7 @@ export async function deliverPayloadToRelayer(args: {
   bid: RelayerBid;
   gateway?: string;
 }): Promise<{ acceptedTx?: string; submittedTx?: string } | null> {
-  const box = sealBox(
+  const box = await sealBox(
     encodePoolWithdrawPayload(args.draft.payload),
     hexToBytes(args.bid.x25519Pk),
   );
