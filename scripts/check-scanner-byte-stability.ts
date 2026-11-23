@@ -21,6 +21,11 @@ const ROOT = resolve(__dirname, "..");
 const SCANNER = join(ROOT, "scanner");
 const OUT = join(ROOT, "frontend", "public", "pkg");
 
+function canRun(cmd, args = [], env = process.env) {
+  const result = spawnSync(cmd, args, { cwd: ROOT, stdio: "ignore", env });
+  return !result.error && result.status === 0;
+}
+
 function run(label, cmd, args, opts = {}) {
   console.log(`\n> ${label}`);
   const result = spawnSync(cmd, args, {
@@ -45,7 +50,8 @@ function main() {
   // --mode no-install prevents wasm-pack from overriding the
   // Rust version pinned in scanner/rust-toolchain.toml.
   const wasmPack = process.env.WASM_PACK ?? "wasm-pack";
-  const buildArgs = ["build", "--target", "web", "--out-dir", OUT, "--mode", "no-install"];
+  const mode = process.env.WASM_PACK_MODE ?? (canRun("wasm-bindgen", ["--version"]) ? "no-install" : "normal");
+  const buildArgs = ["build", "--target", "web", "--out-dir", OUT, "--mode", mode];
   run(`Rebuilding scanner WASM (pinned toolchain)`, wasmPack, buildArgs, { cwd: SCANNER });
 
   // Step 2: Load manifest

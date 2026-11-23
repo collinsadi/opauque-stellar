@@ -2,6 +2,7 @@
 set -euo pipefail
 
 version="${WASM_PACK_VERSION:-0.14.0}"
+bindgen_version="${WASM_BINDGEN_VERSION:-0.2.108}"
 install_dir="${WASM_PACK_INSTALL_DIR:-/usr/local/bin}"
 
 if [[ -n "${WASM_PACK_TARGET:-}" ]]; then
@@ -30,3 +31,10 @@ curl -fsSL "$url" -o "$tmp_dir/$archive"
 tar -xzf "$tmp_dir/$archive" -C "$tmp_dir"
 install -m 0755 "$tmp_dir/wasm-pack-v${version}-${target}/wasm-pack" "$install_dir/wasm-pack"
 "$install_dir/wasm-pack" --version
+
+bindgen_archive="wasm-bindgen-${bindgen_version}-${target}.tar.gz"
+bindgen_url="https://github.com/wasm-bindgen/wasm-bindgen/releases/download/${bindgen_version}/${bindgen_archive}"
+curl -fsSL "$bindgen_url" -o "$tmp_dir/$bindgen_archive"
+tar -xzf "$tmp_dir/$bindgen_archive" -C "$tmp_dir"
+install -m 0755 "$tmp_dir/wasm-bindgen-${bindgen_version}-${target}/wasm-bindgen" "$install_dir/wasm-bindgen"
+"$install_dir/wasm-bindgen" --version
