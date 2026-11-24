@@ -5,6 +5,8 @@
  * announcement list; `scanIterator()` reads announcements from chain itself
  * and streams matches incrementally with a resumable cursor.
  */
+import { secp256k1 } from "@noble/curves/secp256k1";
+import { sha256 } from "@noble/hashes/sha2";
 import {
   computeStealthAddressAndViewTag,
   deriveKeysFromSignature,
@@ -23,7 +25,8 @@ import {
   type TransferMemo,
 } from "../crypto/index";
 import { keypairSigner } from "../signer/index";
-import { MemoError, UnannouncedPaymentError } from "../errors/index";
+import { MemoError, RetentionGapError, UnannouncedPaymentError } from "../errors/index";
+import type { RetentionGap } from "../rpc/events";
 import type { OpaqueClientContext } from "./context";
 
 export interface StealthIdentity {
@@ -33,15 +36,34 @@ export interface StealthIdentity {
   metaHex: Hex;
 }
 
+/** Domain separator for scan-cursor keys. Bump it to re-key every stored cursor. */
+const SCAN_CURSOR_DOMAIN = "opaque-scan-cursor-v1";
+
 /**
  * The `ScanStore` key a scan for `identity` persists its cursor under.
- * Keyed by viewing key so one client can watch many identities without their
- * cursors colliding — identity A's scan can no longer resume past ledger N and
- * silently skip identity B's payments.
+ *
+ * Derived from the **public** viewing key through a domain-separated SHA-256,
+ * never from the private viewing scalar. A `ScanStore` (including plaintext and
+ * third-party implementations) sees these keys, and the viewing key is the
+ * secret that discovers every incoming payment, so it must not be stored.
+ *
+ * Keyed per identity, so one client can watch many identities without one
+ * identity's scan resuming past another's payments.
  */
-export function scanCursorKey(
-  identity: Pick<StealthIdentity, "viewingKey">,
-): string {
+export function scanCursorKey(identity: Pick<StealthIdentity, "viewingKey">): string {
+  const publicViewingKey = secp256k1.getPublicKey(identity.viewingKey, true);
+  const domain = new TextEncoder().encode(SCAN_CURSOR_DOMAIN);
+  const input = new Uint8Array(domain.length + publicViewingKey.length);
+  input.set(domain, 0);
+  input.set(publicViewingKey, domain.length);
+  return `sc1:${bytesToHex(sha256(input))}`;
+}
+
+/**
+ * The pre-#1076 cursor key, which embedded the private viewing key. It is only
+ * ever read, to migrate a cursor saved before the change, and never written.
+ */
+function legacyScanCursorKey(identity: Pick<StealthIdentity, "viewingKey">): string {
   return `vk:${bytesToHex(identity.viewingKey)}`;
 }
 
@@ -252,26 +274,36 @@ export class PaymentsService {
 
   /**
    * Stream announcement matches from chain instead of waiting for the full
-   * range to resolve: each match yields as soon as it is found, and the scan
-   * position persists to the configured `ScanStore` after every page so a
-   * caller can resume later without re-reading (and re-yielding) events already
-   * seen. Stop early (`break` out of the `for await`) to release the scan
-   * without reading further pages.
+   * range to resolve. The scan position persists to the configured `ScanStore`
+   * after every page, so a caller can resume later without re-reading (and
+   * re-yielding) announcements already delivered. Stop early (`break` out of
+   * the `for await`) to release the scan without reading further pages.
    *
-   * The cursor is **per identity** (keyed by viewing key, see
-   * {@link scanCursorKey}), so several identities can be watched from one
-   * client without one identity's scan resuming past another's.
+   * **Resumption is exact.** The cursor is a ledger, and a page can end partway
+   * through one. Matches from the newest ledger seen are therefore held back
+   * until a later page (or the end of the scan) shows that ledger is complete,
+   * and a cut-short page persists the ledger *before* it. A resumed run re-reads
+   * the partly-read ledger in full, so no announcement is skipped and none is
+   * yielded twice. The cost is that a match is delivered once the scan has moved
+   * past its ledger, rather than the moment its page arrives.
+   *
+   * The cursor is **per identity** (see {@link scanCursorKey}), so several
+   * identities can be watched from one client without one identity's scan
+   * resuming past another's.
    *
    * The cursor also advances through ranges that hold no announcements: a page
    * that comes back quiet still counts as scanned, and the last page of a
-   * drained scan persists `endLedger` — the end of the whole scanned range, not
-   * just the last transfer in it. Without that, a quiet range would be re-read
-   * on every single run, forever.
+   * drained scan persists `endLedger`, the end of the whole scanned range rather
+   * than just the last transfer in it. Without that, a quiet range would be
+   * re-read on every single run, forever.
    *
    * @throws EventTruncationError when the event page cap is hit with events
-   * left unread (transfers may be missing). The persisted cursor is left at
-   * the last fully-read page, so the next run resumes exactly there. Pass
+   * left unread (transfers may be missing). The persisted cursor stays at the
+   * last ledger read in full, so the next run resumes exactly there. Pass
    * `allowTruncation` to accept a partial scan instead of failing.
+   * @throws RetentionGapError when the scan needs ledgers the RPC has pruned, so
+   * some announcements can never be read. Pass `allowRetentionGap` to accept the
+   * partial scan; `onRetentionGap` then reports the pruned range.
    */
   async *scanIterator(
     opts: ScanIteratorOptions,
@@ -279,34 +311,78 @@ export class PaymentsService {
     const cursorKey = opts.cursorKey ?? scanCursorKey(opts.identity);
     let startLedger = opts.startLedger;
     if (startLedger == null && !opts.skipCursor) {
-      const cursor = await this.ctx.scanStore.getCursor(cursorKey);
-      // The stored cursor is the last *processed* ledger; resume after it so
+      let cursor = await this.ctx.scanStore.getCursor(cursorKey);
+      if (cursor == null && opts.cursorKey == null) {
+        cursor = await this.migrateLegacyCursor(opts.identity, cursorKey);
+      }
+      // The stored cursor is the last ledger read in full; resume after it so
       // its events are not re-fetched (`getEvents`' startLedger is inclusive).
       if (cursor != null) startLedger = cursor + 1;
     }
 
+    let held: Array<ScanMatch & { ledger: number }> = [];
     for await (const page of this.ctx.contracts.stealthAnnouncer.scanEvents({
       startLedger,
       maxPages: opts.maxPages,
       throwOnTruncation: !opts.allowTruncation,
     })) {
+      if (page.retentionGap) {
+        if (!opts.allowRetentionGap) {
+          throw new RetentionGapError({
+            scope: "stealth-announcer:Announcement",
+            ...page.retentionGap,
+          });
+        }
+        opts.onRetentionGap?.(page.retentionGap);
+      }
+
+      const ledgerOf = new Map<StealthAnnouncement, number>(
+        page.announcements.map((a): [StealthAnnouncement, number] => [a, a.ledger]),
+      );
       for (const match of scanAnnouncements({
         announcements: page.announcements,
         viewingKey: opts.identity.viewingKey,
         spendingKey: opts.identity.spendingKey,
       })) {
-        yield { ...match, ledger: page.ledger };
+        held.push({ ...match, ledger: ledgerOf.get(match.announcement) ?? page.ledger });
       }
+
+      // Every ledger before `boundary` has been read in full. A drained scan has
+      // read them all; a cut-short page leaves `page.ledger` itself still open.
+      const boundary = page.complete ? Number.POSITIVE_INFINITY : page.ledger;
+      const ready = held.filter((m) => m.ledger < boundary);
+      held = held.filter((m) => m.ledger >= boundary);
+      for (const match of ready) yield match;
+
       if (!opts.skipCursor) {
-        // A page that drained the scan read every ledger up to `endLedger` —
-        // quiet ones included — so persist that rather than the last transfer's
-        // ledger, and the next run starts after the whole range.
+        // A drained scan read every ledger through `endLedger`, quiet ones
+        // included, so persist that and the next run starts after the whole
+        // range. A cut-short page proves only the ledgers before `page.ledger`.
         await this.ctx.scanStore.setCursor(
-          page.complete ? page.endLedger : page.ledger,
+          page.complete ? page.endLedger : page.ledger - 1,
           cursorKey,
         );
       }
     }
+  }
+
+  /**
+   * One-time move of a cursor saved under the pre-#1076 key to
+   * {@link scanCursorKey}. The legacy key is read through the store the caller
+   * already gave the SDK, then deleted where the store supports it, so it is
+   * never written again. Returns the migrated cursor, or null when none exists.
+   */
+  private async migrateLegacyCursor(
+    identity: Pick<StealthIdentity, "viewingKey">,
+    cursorKey: string,
+  ): Promise<number | null> {
+    const store = this.ctx.scanStore;
+    const legacyKey = legacyScanCursorKey(identity);
+    const legacy = await store.getCursor(legacyKey);
+    if (legacy == null) return null;
+    await store.setCursor(legacy, cursorKey);
+    await store.deleteCursor?.(legacyKey);
+    return legacy;
   }
 }
 
@@ -328,7 +404,18 @@ export interface ScanIteratorOptions {
   /**
    * Return a partial scan instead of throwing {@link EventTruncationError} when
    * the page cap is hit (default false). Only safe when the caller can detect
-   * the gap some other way — a truncated scan may have missed transfers.
+   * the gap some other way — a truncated scan may have missed transfers. Matches
+   * from the last ledger reached are not yielded in that case; the next run
+   * delivers them, because that ledger is re-read in full.
    */
   allowTruncation?: boolean;
+  /**
+   * Accept a scan that needs ledgers the RPC has pruned (default false). Without
+   * it, such a scan throws {@link RetentionGapError}. A stale persisted cursor,
+   * older than the retention window, hits this too; pass `startLedger` to start
+   * from a retained ledger instead.
+   */
+  allowRetentionGap?: boolean;
+  /** Called with the pruned range when {@link allowRetentionGap} lets the scan continue. */
+  onRetentionGap?: (gap: RetentionGap) => void;
 }

@@ -117,6 +117,13 @@ returning a tree with holes in it (a wrong Merkle root looks like a right one).
 Widen the read with `reconstruct: { maxPages }`, or ask for the partial state
 explicitly with `onTruncation: "return"`, which hands back
 `complete: false` plus the `continuation` cursors to resume from.
+
+Pass the pool's `startLedger` (its deployment ledger) so the read covers the
+pool's whole life. Without it the read starts at the oldest retained ledger.
+If the RPC has pruned history the pool needs, `reconstructState` raises
+`RetentionGapError` rather than building a tree with missing deposits. Pass
+`allowRetentionGap: true` to accept the partial result, which then reports
+`complete: false` and the `retentionGap` range.
 :::
 
 ## Step 4 — Withdraw

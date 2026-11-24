@@ -227,6 +227,8 @@ describe("payments service", () => {
     const mine1 = computeStealthAddressAndViewTag(identity.metaHex);
     const mine2 = computeStealthAddressAndViewTag(identity.metaHex);
 
+    const mine3 = computeStealthAddressAndViewTag(identity.metaHex);
+
     inv.eventPages = [
       {
         events: [announcementEvent({ ...mine1, ledger: 100, caller: PK })],
@@ -236,6 +238,11 @@ describe("payments service", () => {
       {
         events: [announcementEvent({ ...mine2, ledger: 200, caller: PK })],
         latestLedger: 200,
+        cursor: "page2",
+      } as unknown as rpc.Api.GetEventsResponse,
+      {
+        events: [announcementEvent({ ...mine3, ledger: 300, caller: PK })],
+        latestLedger: 300,
         cursor: "",
       } as unknown as rpc.Api.GetEventsResponse,
     ];
@@ -243,9 +250,9 @@ describe("payments service", () => {
     for await (const _match of client.payments.scanIterator({ identity })) {
       break;
     }
-    // Only the first page was fetched; breaking early released the scan
-    // before a second `getEvents` call was made.
-    expect(inv.eventsCallCount).toBe(1);
+    // The ledger-100 match is delivered once the scan has moved on to ledger 200
+    // (its page 2), so breaking then releases the scan before page 3 is read.
+    expect(inv.eventsCallCount).toBe(2);
   });
 });
 

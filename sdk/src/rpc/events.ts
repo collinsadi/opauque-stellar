@@ -2,14 +2,18 @@
  * Shared `getEvents` pagination for the SDK's contract-event loops (announcement
  * scanning and privacy-pool state reconstruction). Both walk the same protocol —
  * a ledger-range first page, then opaque cursors until one stops advancing — so
- * the mechanics live here once: the retained-window retry, the page cap, and
- * truncation reporting.
+ * the mechanics live here once: the retained-window retry, the page cap,
+ * retention-gap reporting, and truncation reporting.
  *
  * Truncation is never silent. A loop that just stops at the cap returns an
  * incomplete scan (missed stealth payments) or an incomplete tree (a wrong
  * Merkle root) that is indistinguishable from a complete one. Every page
  * therefore says whether it is the last one, and a caller can ask for an
  * {@link EventTruncationError} instead of a truncated marker.
+ *
+ * Retention is never silent either. When the RPC has pruned the requested start
+ * ledger, the ledgers it cannot serve are reported as a {@link RetentionGap} on
+ * every page from the clamp onward, rather than quietly restarting the scan.
  */
 import type { rpc } from "@stellar/stellar-sdk";
 import { EventTruncationError } from "../errors/index";
@@ -27,11 +31,28 @@ export const EVENT_PAGE_SIZE = 100;
 /** Ledgers a topic is scanned back over when the caller gives no start ledger. */
 export const EVENT_LOOKBACK_LEDGERS = 16_000;
 
+/**
+ * Ledgers a scan could not read because the RPC has pruned them. Both ends are
+ * inclusive. Results built from these ledgers are incomplete.
+ */
+export interface RetentionGap {
+  /** First pruned ledger the scan was asked to start from (inclusive). */
+  fromLedger: number;
+  /** Last pruned ledger (inclusive); the first retained ledger is this + 1. */
+  toLedger: number;
+}
+
 /** One `getEvents` response, plus how far the scan can be trusted to have read. */
 export interface ContractEventPage {
-  /** Events from this response, undecoded — each caller decodes its own shape. */
+  /**
+   * Events from this response, undecoded — each caller decodes its own shape.
+   * An event id already yielded by this scan is never repeated.
+   */
   events: rpc.Api.EventResponse[];
-  /** Highest ledger represented in `events` (the scan's start ledger when empty). */
+  /**
+   * Highest ledger represented in `events` (the scan's start ledger when empty).
+   * That ledger may be only partly read: later pages can still add its events.
+   */
   ledger: number;
   /**
    * Highest ledger the scan has read through. On the final page of a drained
@@ -45,6 +66,13 @@ export interface ContractEventPage {
   truncated: boolean;
   /** Opaque `getEvents` cursor to continue the truncated scan from. */
   continuationCursor?: string;
+  /**
+   * Ledgers the scan skipped because the RPC has pruned them, when the requested
+   * start predates its retention window. Set on every page from the clamp on, so
+   * a consumer sees the gap whichever page it stops at. Absent when nothing was
+   * clamped.
+   */
+  retentionGap?: RetentionGap;
 }
 
 export interface PaginateContractEventsOptions {
@@ -78,7 +106,8 @@ export interface PaginateContractEventsOptions {
  * what `endLedger` reports on that final page.
  *
  * The first page is retried from the oldest retained ledger when the RPC
- * rejects the requested range as outside the retention window.
+ * rejects the requested range as outside the retention window. That retry is
+ * reported through {@link ContractEventPage.retentionGap}.
  */
 export async function* paginateContractEvents(
   opts: PaginateContractEventsOptions,
@@ -97,6 +126,12 @@ export async function* paginateContractEvents(
   // Highest ledger covered by a page read so far; the floor for the next page
   // so a quiet page never walks a yielded ledger backwards.
   let covered = startLedger;
+  // Set when the RPC prunes the requested start; see ContractEventPage.retentionGap.
+  let retentionGap: RetentionGap | undefined;
+  // Every event id this scan has yielded. Cursor paging never re-reads a ledger,
+  // so a repeated id means the RPC handed the same event back, which must not be
+  // counted twice (a duplicated deposit would corrupt the reconstructed tree).
+  const seenEventIds = new Set<string>();
 
   for (let page = 0; page < maxPages; page++) {
     let res: rpc.Api.GetEventsResponse;
@@ -110,21 +145,29 @@ export async function* paginateContractEvents(
       // retention window is rejected outright, so retry from its floor.
       const oldest = parseOldestLedgerFromRangeError(err);
       if (cursor || oldest == null || startLedger >= oldest) throw err;
+      // Ledgers [requested start, oldest) are pruned and will never be read.
+      retentionGap = { fromLedger: startLedger, toLedger: oldest - 1 };
       startLedger = oldest;
       covered = Math.max(covered, oldest);
       res = await opts.invoker.getEvents({ startLedger, filters, limit: pageSize });
     }
 
-    const events = res.events ?? [];
+    const events = (res.events ?? []).filter((ev) => {
+      if (!ev.id) return true;
+      if (seenEventIds.has(ev.id)) return false;
+      seenEventIds.add(ev.id);
+      return true;
+    });
     let ledger = covered;
     for (const ev of events) ledger = Math.max(ledger, Number(ev.ledger));
     covered = ledger;
     const endLedger = Math.max(ledger, Number(res.latestLedger ?? 0), latest);
+    const gap = retentionGap ? { retentionGap } : {};
 
     const nextCursor = res.cursor;
     const drained = !nextCursor || nextCursor === prevCursor;
     if (drained) {
-      yield { events, ledger, endLedger, complete: true, truncated: false };
+      yield { events, ledger, endLedger, complete: true, truncated: false, ...gap };
       return;
     }
     if (page + 1 >= maxPages) {
@@ -133,7 +176,9 @@ export async function* paginateContractEvents(
           scope: opts.scope,
           pagesRead: maxPages,
           pageCap: maxPages,
-          lastScannedLedger: ledger,
+          // `ledger` may be only partly read, so the last ledger known to be
+          // complete is the one before it.
+          lastScannedLedger: Math.max(0, ledger - 1),
           continuationCursor: nextCursor,
         });
       }
@@ -144,11 +189,12 @@ export async function* paginateContractEvents(
         complete: false,
         truncated: true,
         continuationCursor: nextCursor,
+        ...gap,
       };
       return;
     }
     prevCursor = nextCursor;
     cursor = nextCursor;
-    yield { events, ledger, endLedger, complete: false, truncated: false };
+    yield { events, ledger, endLedger, complete: false, truncated: false, ...gap };
   }
 }

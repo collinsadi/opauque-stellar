@@ -6,7 +6,7 @@
 import { scValToNative, xdr } from "@stellar/stellar-sdk";
 import type { ContractInvoker, SimulationReport } from "../rpc/client";
 import type { OpaqueSigner } from "../signer/index";
-import { NotWiredError, SimulationError } from "../errors/index";
+import { NotWiredError, RetentionGapError, SimulationError } from "../errors/index";
 import {
   addressToScVal,
   boolToScVal,
@@ -14,9 +14,7 @@ import {
   i128ToScVal,
   u64ToScVal,
 } from "../rpc/scval";
-import { paginateContractEvents } from "../rpc/events";
-
-const POOL_EVENT_LOOKBACK = 16_000;
+import { paginateContractEvents, type RetentionGap } from "../rpc/events";
 
 /** Live on-chain pool configuration, as read by `get_config`. */
 export interface PoolConfig {
@@ -79,14 +77,18 @@ export interface PoolStateReconstruction {
   stateLeaves: bigint[];
   depositIndices: number[];
   /**
-   * False when the event page cap stopped a topic's scan with events left
-   * unread: the leaves cover only part of the tree, so a proof built from them
-   * would be against a root the pool never published. Absent the cap, a scan
-   * of the retained window is complete by construction.
+   * False when the leaves may be missing history: the event page cap stopped a
+   * topic's scan with events left unread, or the RPC pruned part of the range
+   * (see {@link retentionGap}). Either way the leaves cover only part of the
+   * tree, so a proof built from them would be against a root the pool never
+   * published. A default call raises instead of returning `false`; this is
+   * reported only when `allowRetentionGap` or `onTruncation: "return"` asked for it.
    */
   complete: boolean;
   /** Per-topic cursors to resume a truncated read from. */
   continuation?: PoolStateContinuation;
+  /** Ledgers the RPC pruned before the read could reach them, when any. */
+  retentionGap?: RetentionGap;
 }
 
 /** Opaque `getEvents` cursors for the pool's Deposit/Withdraw topics. */
@@ -97,7 +99,11 @@ export interface PoolStateContinuation {
 
 /** Options for {@link PrivacyPool.reconstructState}. */
 export interface ReconstructStateOptions {
-  /** First ledger to read (inclusive). Defaults to a lookback window. */
+  /**
+   * First ledger to read (inclusive). Pass the pool's deployment ledger so the
+   * read covers the pool's whole life. Without it the read starts at the oldest
+   * retained ledger, and any pruned history is reported rather than skipped.
+   */
   startLedger?: number;
   /** Event page cap per topic (default `EVENT_PAGE_LIMIT`). */
   maxPages?: number;
@@ -107,6 +113,12 @@ export interface ReconstructStateOptions {
    * `complete: false` and the cursors to continue from. Never silent either way.
    */
   onTruncation?: "throw" | "return";
+  /**
+   * Accept leaves built from pruned history (default false). Without it, a read
+   * that needs ledgers the RPC no longer retains raises `RetentionGapError`. With
+   * it, the partial leaves come back with `complete: false` and `retentionGap`.
+   */
+  allowRetentionGap?: boolean;
 }
 
 export class PrivacyPool {
@@ -469,6 +481,14 @@ export class PrivacyPool {
    * root the pool never published, so the default is to raise
    * `EventTruncationError`; pass `onTruncation: "return"` to get the
    * partial leaves with `complete: false` and the cursors to continue from.
+   *
+   * History the RPC has pruned is handled the same way. A read that starts before
+   * the retention window raises `RetentionGapError` unless `allowRetentionGap` is
+   * set. Leaves built across a pruned range are never returned as complete.
+   *
+   * Without `startLedger` the read starts at the oldest retained ledger. It does
+   * not use a fixed lookback, which would silently drop older deposits from the
+   * tree. Pass the pool's deployment ledger to read only the pool's own history.
    */
   async reconstructState(opts?: ReconstructStateOptions): Promise<PoolStateReconstruction> {
     const depositTopic = xdr.ScVal.scvSymbol("Deposit").toXDR("base64");
@@ -476,7 +496,11 @@ export class PrivacyPool {
     const byIndex = new Map<number, bigint>();
     const depositIndices: number[] = [];
     const continuation: PoolStateContinuation = {};
+    // Ledger 1 is never retained on a pruning RPC, so the first page is clamped and
+    // the clamp is reported as a retention gap instead of being hidden by a lookback.
+    const startLedger = opts?.startLedger && opts.startLedger > 0 ? opts.startLedger : 1;
     let complete = true;
+    let retentionGap: RetentionGap | undefined;
 
     for (const [topic, kind, isDeposit] of [
       [depositTopic, "Deposit", true],
@@ -491,11 +515,25 @@ export class PrivacyPool {
         invoker: this.rpc,
         filters,
         scope: `privacy-pool:${kind}`,
-        startLedger: opts?.startLedger,
-        lookback: POOL_EVENT_LOOKBACK,
+        startLedger,
         maxPages: opts?.maxPages,
         throwOnTruncation: opts?.onTruncation !== "return",
       })) {
+        if (page.retentionGap) {
+          if (!opts?.allowRetentionGap) {
+            throw new RetentionGapError({
+              scope: `privacy-pool:${kind}`,
+              ...page.retentionGap,
+            });
+          }
+          const gap = page.retentionGap;
+          retentionGap = retentionGap
+            ? {
+                fromLedger: Math.min(retentionGap.fromLedger, gap.fromLedger),
+                toLedger: Math.max(retentionGap.toLedger, gap.toLedger),
+              }
+            : { ...gap };
+        }
         for (const ev of page.events) {
           const data = scValToNative(ev.value) as unknown[];
           if (isDeposit) {
@@ -524,8 +562,13 @@ export class PrivacyPool {
     const stateLeaves: bigint[] = [];
     for (let i = 0; i <= max; i++) stateLeaves.push(byIndex.get(i) ?? 0n);
     depositIndices.sort((a, b) => a - b);
-    return complete
-      ? { stateLeaves, depositIndices, complete }
-      : { stateLeaves, depositIndices, complete, continuation };
+    const result: PoolStateReconstruction = {
+      stateLeaves,
+      depositIndices,
+      complete: complete && retentionGap === undefined,
+    };
+    if (!complete) result.continuation = continuation;
+    if (retentionGap) result.retentionGap = retentionGap;
+    return result;
   }
 }
