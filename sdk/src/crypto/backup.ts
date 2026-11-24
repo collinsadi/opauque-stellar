@@ -186,6 +186,8 @@ export async function importEncryptedBackup(
 // decryptable via version migration in `decryptVaultBackup`.
 const VAULT_BACKUP_ITERATIONS = 600_000;
 const VAULT_BACKUP_LEGACY_ITERATIONS = 100_000;
+/** Upper bound on a file-supplied iteration count, so a crafted file cannot hang the importer. */
+const VAULT_BACKUP_MAX_ITERATIONS = 10_000_000;
 const VAULT_BACKUP_KEY_LENGTH = 256; // matches RecoveryManager.KEY_LENGTH
 const VAULT_BACKUP_SCHEMA = "https://opaque.cash/schemas/recovery-backup-v2.json";
 
@@ -214,6 +216,12 @@ export interface VaultBackupFile {
   salt: string;
   /** Base64 AES-GCM nonce (IV). */
   nonce: string;
+  /**
+   * PBKDF2 iteration count used to derive the key (issue #1071). Same field name
+   * as the frontend's `BackupFile.iterations`. When absent the file predates
+   * recorded parameters and the importer probes the known counts.
+   */
+  iterations?: number;
 }
 
 async function deriveVaultKey(
@@ -277,6 +285,7 @@ export async function exportVaultBackup(
     encrypted_payload: bytesToBase64(ciphertext),
     salt: bytesToBase64(salt),
     nonce: bytesToBase64(nonce),
+    iterations: VAULT_BACKUP_ITERATIONS,
   };
 }
 
@@ -285,9 +294,9 @@ export async function exportVaultBackup(
  * frontend's `RecoveryManager.exportBackup`. Missing/legacy fields default
  * to an empty array so older or partial backups still restore.
  *
- * Handles version migration: old backups produced with 100,000 iterations
- * (VAULT_BACKUP_LEGACY_ITERATIONS) are transparently re-derivated with the
- * current 600,000 iteration count (issue #1010).
+ * The PBKDF2 iteration count is read from the file's `iterations` field
+ * (issue #1071), so version-2 files written with 100,000 iterations still
+ * decrypt; files with no recorded count are tried at 600,000 and 100,000.
  *
  * @throws if the checksum (when present) doesn't match, or if decryption
  * fails (wrong password or corrupt payload).
@@ -311,40 +320,41 @@ export async function importVaultBackup(
     }
   }
 
-  // Issue #1010: Detect legacy backups (formatVersion < 2 used 100k iterations)
-  // and try the current 600k iterations first, falling back to legacy.
-  const isLegacy = (backup.formatVersion ?? 1) < 2;
-  const key = isLegacy
-    ? await deriveVaultKey(password, salt, VAULT_BACKUP_ITERATIONS)
-    : await deriveVaultKey(password, salt);
+  // Issue #1071: use the iteration count recorded in the file. formatVersion
+  // alone cannot tell 100k from 600k (version-2 files exist with both). Files
+  // without a recorded count are tried at every known count.
+  const recorded =
+    typeof backup.iterations === "number" &&
+    Number.isInteger(backup.iterations) &&
+    backup.iterations > 0
+      ? backup.iterations
+      : undefined;
+  if (recorded !== undefined && recorded > VAULT_BACKUP_MAX_ITERATIONS) {
+    throw new Error("Unsupported backup: PBKDF2 iteration count is out of range.");
+  }
+  const candidates =
+    recorded !== undefined
+      ? [recorded]
+      : (backup.formatVersion ?? 1) < 2
+        ? [VAULT_BACKUP_LEGACY_ITERATIONS, VAULT_BACKUP_ITERATIONS]
+        : [VAULT_BACKUP_ITERATIONS, VAULT_BACKUP_LEGACY_ITERATIONS];
 
-  let parsed: Record<string, unknown>;
-  try {
-    const decrypted = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: toArrayBuffer(nonce) },
-      key,
-      toArrayBuffer(ciphertext),
-    );
-    parsed = JSON.parse(new TextDecoder().decode(decrypted)) as Record<string, unknown>;
-  } catch (err) {
-    if (err instanceof Error && err.message.includes("Integrity check failed")) throw err;
-    // If decryption failed with current iterations, try legacy for old files
-    if (isLegacy) {
-      try {
-        const legacyKey = await deriveVaultKey(password, salt, VAULT_BACKUP_LEGACY_ITERATIONS);
-        const decrypted = await crypto.subtle.decrypt(
-          { name: "AES-GCM", iv: toArrayBuffer(nonce) },
-          legacyKey,
-          toArrayBuffer(ciphertext),
-        );
-        parsed = JSON.parse(new TextDecoder().decode(decrypted)) as Record<string, unknown>;
-      } catch {
-        throw new Error("Invalid password or corrupted backup file.");
-      }
-    } else {
-      throw new Error("Invalid password or corrupted backup file.");
+  let parsed: Record<string, unknown> | undefined;
+  for (const iterations of candidates) {
+    try {
+      const key = await deriveVaultKey(password, salt, iterations);
+      const decrypted = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: toArrayBuffer(nonce) },
+        key,
+        toArrayBuffer(ciphertext),
+      );
+      parsed = JSON.parse(new TextDecoder().decode(decrypted)) as Record<string, unknown>;
+      break;
+    } catch {
+      // try the next candidate
     }
   }
+  if (!parsed) throw new Error("Invalid password or corrupted backup file.");
 
   return {
     stealthMasterKeys: Array.isArray(parsed.stealthMasterKeys) ? parsed.stealthMasterKeys : [],

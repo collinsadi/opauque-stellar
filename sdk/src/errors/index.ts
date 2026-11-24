@@ -99,6 +99,25 @@ export class ContractError extends OpaqueError {
   }
 }
 
+/**
+ * An optional contract entrypoint is not present on the deployed contract
+ * (an older deployment than this SDK). Names the contract and method so callers
+ * can degrade gracefully instead of surfacing an opaque simulation failure.
+ */
+export class ContractCompatibilityError extends OpaqueError {
+  readonly contract: string;
+  readonly method: string;
+  constructor(opts: { contract: string; method: string; cause?: unknown }) {
+    super(
+      `Deployed contract ${opts.contract} does not support method "${opts.method}" (older deployment than this SDK expects).`,
+      "CONTRACT_COMPATIBILITY",
+      { cause: opts.cause },
+    );
+    this.contract = opts.contract;
+    this.method = opts.method;
+  }
+}
+
 /** The published reputation/pool root is unavailable or not yet indexed. */
 export class RootUnavailableError extends OpaqueError {
   constructor(message: string, options?: { cause?: unknown }) {

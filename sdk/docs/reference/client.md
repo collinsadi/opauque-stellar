@@ -53,7 +53,7 @@ signer, including the blind-signing limitations of Soroban invocations.
 - `withdrawBatch({ notes, recipient, fee?, relayer? })` — proves + submits multiple notes to one recipient, reports per-note success/failure *(needs `artifacts`)*
 - `proveWithdraw({ note, recipient })` — reconstructs leaves from chain *(needs `artifacts`)*
 - `getDepositCount()`, `getRoots()`
-- `isDepositCovered({ stateRoot?, aspRoot? })` — can a withdrawal be proven right now? reports `reasons` (`no-state-root`, `unknown-asp-root`, `withdrawals-paused`, `tree-at-capacity`, …)
+- `isDepositCovered({ note?, stateRoot?, aspRoot?, rootLedgers? })` — can a withdrawal be proven and accepted right now? Pass `note` to check that deposit. Reports `reasons` (`no-state-root`, `unknown-asp-root`, `note-not-in-state`, `excluded-from-asp`, `state-root-expired`, `withdrawals-paused`, …); optional entrypoints missing on older deployments are skipped
 - `isKnownStateRoot({ root })`, `isKnownAspRoot({ root })`
 - `isDepositsPaused()`, `isWithdrawalsPaused()`, `getWithdrawalPauseRequest()`, `getWithdrawalMinimum()`, `getCustody()`, `getTreeCapacityInfo()`
 - `contracts.privacyPool.reconstructState({ startLedger, maxPages, onTruncation })` — raw leaf reconstruction; `EventTruncationError` at the page cap unless `onTruncation: "return"`

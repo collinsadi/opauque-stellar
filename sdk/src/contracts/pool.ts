@@ -6,7 +6,11 @@
 import { scValToNative, xdr } from "@stellar/stellar-sdk";
 import type { ContractInvoker, SimulationReport } from "../rpc/client";
 import type { OpaqueSigner } from "../signer/index";
+
 import { NotWiredError, RetentionGapError, SimulationError } from "../errors/index";
+
+import { ContractCompatibilityError, NotWiredError, SimulationError } from "../errors/index";
+
 import {
   addressToScVal,
   boolToScVal,
@@ -121,11 +125,57 @@ export interface ReconstructStateOptions {
   allowRetentionGap?: boolean;
 }
 
+/** Simulation failure text the host produces when an entrypoint does not exist in the deployed wasm. */
+const MISSING_ENTRYPOINT = /non-existent contract function|MissingValue|function.{0,20}not found|no such (contract )?function/i;
+
 export class PrivacyPool {
+  /** Optional entrypoints this deployment is known not to have (per instance, so per contract). */
+  private readonly unsupported = new Set<string>();
+
   constructor(
     private readonly rpc: ContractInvoker,
     readonly contractId: string,
   ) {}
+
+  /**
+   * Run a read of an optional entrypoint (added after the first deployments).
+   * A deployment without it yields a typed {@link ContractCompatibilityError}
+   * naming this contract and the method; the result is remembered so later
+   * calls skip the doomed simulation. Every other failure propagates.
+   */
+  private async optionalRead<T>(method: string, read: () => Promise<T>): Promise<T> {
+    const unavailable = () =>
+      new ContractCompatibilityError({ contract: this.contractId, method });
+    if (this.unsupported.has(method)) throw unavailable();
+    try {
+      return await read();
+    } catch (err) {
+      const text =
+        err instanceof SimulationError
+          ? `${err.diagnostics ?? ""} ${err.message}`
+          : err instanceof Error
+            ? err.message
+            : "";
+      if (MISSING_ENTRYPOINT.test(text)) {
+        this.unsupported.add(method);
+        throw new ContractCompatibilityError({ contract: this.contractId, method, cause: err });
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Like {@link getTreeCapacityInfo} but resolves to `null` when the deployed
+   * pool predates `get_tree_capacity_info`, so composite helpers can skip it.
+   */
+  async tryGetTreeCapacityInfo(source: string): Promise<TreeCapacityInfo | null> {
+    try {
+      return await this.getTreeCapacityInfo(source);
+    } catch (err) {
+      if (err instanceof ContractCompatibilityError) return null;
+      throw err;
+    }
+  }
 
   /** Read the deployed contract interface version. */
   async version(source: string): Promise<number> {
@@ -400,12 +450,14 @@ export class PrivacyPool {
   async getWithdrawalPauseRequest(
     source: string,
   ): Promise<WithdrawalPauseRequest> {
-    const raw = await this.rpc.readNative<[number, number]>({
-      source,
-      contractId: this.contractId,
-      method: "get_withdrawal_pause_request",
-      args: [],
-    });
+    const raw = await this.optionalRead("get_withdrawal_pause_request", () =>
+      this.rpc.readNative<[number, number]>({
+        source,
+        contractId: this.contractId,
+        method: "get_withdrawal_pause_request",
+        args: [],
+      }),
+    );
     const requestedAt = Number(raw?.[0] ?? 0);
     const activatesAt = Number(raw?.[1] ?? 0);
     const pending = requestedAt > 0;
@@ -425,23 +477,27 @@ export class PrivacyPool {
    * has been generated and the fee paid.
    */
   async getWithdrawalMinimum(source: string): Promise<bigint> {
-    const minimum = await this.rpc.readNative<bigint | number | string>({
-      source,
-      contractId: this.contractId,
-      method: "get_withdrawal_minimum",
-      args: [],
-    });
+    const minimum = await this.optionalRead("get_withdrawal_minimum", () =>
+      this.rpc.readNative<bigint | number | string>({
+        source,
+        contractId: this.contractId,
+        method: "get_withdrawal_minimum",
+        args: [],
+      }),
+    );
     return BigInt(minimum ?? 0);
   }
 
   /** Lifetime custody counters, in the pool's native asset's smallest unit. */
   async getCustody(source: string): Promise<PoolCustody> {
-    const raw = await this.rpc.readNative<[bigint, bigint]>({
-      source,
-      contractId: this.contractId,
-      method: "get_custody",
-      args: [],
-    });
+    const raw = await this.optionalRead("get_custody", () =>
+      this.rpc.readNative<[bigint, bigint]>({
+        source,
+        contractId: this.contractId,
+        method: "get_custody",
+        args: [],
+      }),
+    );
     const totalDeposited = BigInt(raw?.[0] ?? 0);
     const totalWithdrawn = BigInt(raw?.[1] ?? 0);
     return { totalDeposited, totalWithdrawn, netHeld: totalDeposited - totalWithdrawn };
@@ -453,12 +509,14 @@ export class PrivacyPool {
    * treat `utilization` as the headroom indicator, not an exact occupancy.
    */
   async getTreeCapacityInfo(source: string): Promise<TreeCapacityInfo> {
-    const raw = await this.rpc.readNative<Record<string, unknown>>({
-      source,
-      contractId: this.contractId,
-      method: "get_tree_capacity_info",
-      args: [],
-    });
+    const raw = await this.optionalRead("get_tree_capacity_info", () =>
+      this.rpc.readNative<Record<string, unknown>>({
+        source,
+        contractId: this.contractId,
+        method: "get_tree_capacity_info",
+        args: [],
+      }),
+    );
     const maxCapacity = Number(raw.max_capacity);
     const currentCount = Number(raw.current_count);
     return {
