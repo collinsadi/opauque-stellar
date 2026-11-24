@@ -1,15 +1,5 @@
-import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
-const sdkProtocolPath = fileURLToPath(new URL("../sdk/src/relayer-protocol/", import.meta.url));
-
-export default defineConfig({
-  resolve: {
-    alias: [
-      {
-        find: /^@opaque-stellar\/sdk\/relayer-protocol\/(.*)$/,
-        replacement: `${sdkProtocolPath}$1`,
-      },
-    ],
-  },
-});
+// The relayer imports the SDK's relayer-protocol sources by relative path
+// (see relayer/src/shared), so no module aliasing is needed here.
+export default defineConfig({});
