@@ -11,6 +11,9 @@ export default defineConfig({
     node: "src/node.ts",
     "crypto/index": "src/crypto/index.ts",
     "relayer-protocol/index": "src/relayer-protocol/index.ts",
+    // Freighter signer: its own entry so the optional `@stellar/freighter-api`
+    // peer is never referenced from the main bundle (#1079).
+    freighter: "src/signer/freighter.ts",
     // Standalone Node worker_threads / browser Worker entry point for the
     // proof worker pool (src/prove/worker-pool.ts loads it by URL at runtime,
     // so it must build to its own chunk rather than get inlined elsewhere).

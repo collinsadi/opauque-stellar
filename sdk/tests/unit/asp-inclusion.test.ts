@@ -1,22 +1,29 @@
 /**
- * #972 — the SDK consumes the ASP's historical-manifest and inclusion endpoints.
+ * #972 / #1080 / #1081 — the SDK consumes the ASP's historical manifests.
  *
- * Covers the client itself (fetching `GET /inclusion/:root/:label` and
- * `GET /manifest/:root`, plus the local root re-derivation that keeps the proof
- * self-authenticating) and the prover's use of a fetched path in place of
- * rebuilding the association tree from every approved deposit index.
+ * Covers the client itself (fetching `GET /manifest/:root` and computing the
+ * label's path locally, so the label is never sent to the ASP; the root and
+ * signature checks that keep the result self-authenticating) and the prover's
+ * use of that path in place of rebuilding the tree from every deposit index.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   assertAspInclusionMatchesRoot,
   buildPoolWithdrawWitness,
   deriveDeposit,
+  computeAspInclusionFromManifest,
   fetchAspInclusion,
   fetchAspManifest,
+  verifyAspManifestSignature,
+  type AspSetManifest,
   type AspInclusionProof,
   type PoolNote,
 } from "../../src/index";
 import { getPoseidon, hashFields } from "../../src/crypto/notes";
+import signedVector from "../fixtures/asp-signed-manifest.json";
+
+/** Manifest signed by the ASP's `signManifest` (asp/test/manifest-signing.test.ts checks the same vector). */
+const SIGNED = signedVector as { publicKey: string; manifest: AspSetManifest };
 
 const RECIPIENT = "GCMPINZMMQVQ7MWIJLB34F5JRAHLQQTWCP6XB5HEZR353PPPWRUWHLPU";
 const RELAYER = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ";
@@ -90,7 +97,7 @@ function toProof(
     depositIndex: index,
     levels: DEPTH,
     pathElements: pathElements.map((e) => e.toString()),
-    pathIndices,
+    pathIndices: pathIndices.map(String),
   };
 }
 
@@ -106,79 +113,154 @@ function stubFetch(seen: string[], status: number, body: unknown): void {
   });
 }
 
-describe("fetchAspInclusion (#972)", () => {
-  it("requests the inclusion endpoint and returns a root-verified proof", async () => {
+/** A published manifest for `labels`, as the ASP serves it from `GET /manifest/:root`. */
+function manifestFor(labels: bigint[], root: bigint) {
+  return {
+    poolId: "7",
+    root: toHex32(root),
+    version: labels.length,
+    levels: DEPTH,
+    algo: "poseidon-bn254",
+    labels: labels.map((l) => l.toString()),
+    indices: DEPOSIT_INDICES,
+    generatedAt: "2026-01-01T00:00:00.000Z",
+  };
+}
+
+describe("fetchAspInclusion computes the path locally (#1080)", () => {
+  it("fetches the whole manifest, never the label, and returns a root-verified proof", async () => {
     const labels = await Promise.all(DEPOSIT_INDICES.map((i) => labelFor(i)));
     const built = await buildPath(labels, LEAF_INDEX);
-    const proof = toProof(labels[LEAF_INDEX]!, built.root, built.pathElements, built.pathIndices, LEAF_INDEX);
+    const label = labels[LEAF_INDEX]!.toString();
 
     const seen: string[] = [];
-    stubFetch(seen, 200, proof);
+    stubFetch(seen, 200, manifestFor(labels, built.root));
 
     const fetched = await fetchAspInclusion({
       baseUrl: "https://asp.example.com",
       poolId: "7",
-      root: proof.root,
-      label: labels[LEAF_INDEX]!.toString(),
+      root: toHex32(built.root),
+      label,
     });
 
-    expect(fetched.root).toBe(proof.root);
+    expect(seen).toEqual([`https://asp.example.com/manifest/${toHex32(built.root)}`]);
+    expect(seen.some((u) => u.includes(label) || u.includes("/inclusion/"))).toBe(false);
+    expect(fetched.root).toBe(toHex32(built.root));
     expect(fetched.index).toBe(LEAF_INDEX);
-    expect(seen[0]).toBe(`https://asp.example.com/inclusion/${proof.root}/${labels[LEAF_INDEX]}`);
+    expect(fetched.depositIndex).toBe(LEAF_INDEX);
+    expect(fetched.pathElements).toEqual(built.pathElements.map((e) => e.toString()));
+    // Path indices are strings, matching the prover's `aspIndex` input.
+    expect(fetched.pathIndices).toEqual(built.pathIndices.map((i) => i.toString()));
+  });
+
+  it("matches computeAspInclusionFromManifest", async () => {
+    const labels = await Promise.all(DEPOSIT_INDICES.map((i) => labelFor(i)));
+    const built = await buildPath(labels, 1);
+    const local = await computeAspInclusionFromManifest(manifestFor(labels, built.root), labels[1]!.toString());
+    await expect(assertAspInclusionMatchesRoot(local)).resolves.toBeUndefined();
   });
 
   it("normalizes a base URL that has a trailing slash", async () => {
     const labels = await Promise.all(DEPOSIT_INDICES.map((i) => labelFor(i)));
     const built = await buildPath(labels, LEAF_INDEX);
-    const proof = toProof(labels[LEAF_INDEX]!, built.root, built.pathElements, built.pathIndices, LEAF_INDEX);
 
     const seen: string[] = [];
-    stubFetch(seen, 200, proof);
+    stubFetch(seen, 200, manifestFor(labels, built.root));
 
     await fetchAspInclusion({
       baseUrl: "https://asp.example.com/",
       poolId: "7",
-      root: proof.root,
+      root: toHex32(built.root),
       label: labels[LEAF_INDEX]!.toString(),
     });
-    expect(seen[0]!.startsWith("https://asp.example.com/inclusion/")).toBe(true);
+    expect(seen[0]!.startsWith("https://asp.example.com/manifest/")).toBe(true);
   });
 
-  it("rejects a proof that does not reproduce the root it claims", async () => {
+  it("rejects a manifest whose labels do not hash to its root", async () => {
     const labels = await Promise.all(DEPOSIT_INDICES.map((i) => labelFor(i)));
     const built = await buildPath(labels, LEAF_INDEX);
-    const proof = toProof(labels[LEAF_INDEX]!, built.root, built.pathElements, built.pathIndices, LEAF_INDEX);
-    // Claim a different root than the path actually implies.
-    proof.root = toHex32(built.root + 1n);
-
-    stubFetch([], 200, proof);
+    const forged = manifestFor(labels, built.root + 1n);
+    stubFetch([], 200, forged);
 
     await expect(
       fetchAspInclusion({
         baseUrl: "https://asp.example.com",
         poolId: "7",
-        root: proof.root,
+        root: forged.root,
         label: labels[LEAF_INDEX]!.toString(),
       }),
-    ).rejects.toThrow(/does not reproduce its root/);
+    ).rejects.toThrow(/do not hash to the manifest's root/);
   });
 
-  it("rejects a path whose length disagrees with the declared levels", async () => {
+  it("rejects a manifest served for a different root", async () => {
     const labels = await Promise.all(DEPOSIT_INDICES.map((i) => labelFor(i)));
     const built = await buildPath(labels, LEAF_INDEX);
-    const proof = toProof(labels[LEAF_INDEX]!, built.root, built.pathElements, built.pathIndices, LEAF_INDEX);
-    proof.pathElements = proof.pathElements.slice(0, 5);
-    proof.pathIndices = proof.pathIndices.slice(0, 5);
+    stubFetch([], 200, manifestFor(labels, built.root));
 
-    stubFetch([], 200, proof);
     await expect(
       fetchAspInclusion({
         baseUrl: "https://asp.example.com",
         poolId: "7",
-        root: proof.root,
+        root: toHex32(1n),
         label: labels[LEAF_INDEX]!.toString(),
       }),
-    ).rejects.toThrow(/expected 20/);
+    ).rejects.toThrow(/not the requested root/);
+  });
+
+  it("rejects a manifest whose depth differs from the circuit", async () => {
+    const labels = await Promise.all(DEPOSIT_INDICES.map((i) => labelFor(i)));
+    const built = await buildPath(labels, LEAF_INDEX);
+    stubFetch([], 200, { ...manifestFor(labels, built.root), levels: 16 });
+
+    await expect(
+      fetchAspInclusion({
+        baseUrl: "https://asp.example.com",
+        poolId: "7",
+        root: toHex32(built.root),
+        label: labels[LEAF_INDEX]!.toString(),
+      }),
+    ).rejects.toThrow(/circuit's depth 20/);
+  });
+
+  it("reports a label that is not in the set", async () => {
+    const labels = await Promise.all(DEPOSIT_INDICES.map((i) => labelFor(i)));
+    const built = await buildPath(labels, LEAF_INDEX);
+    stubFetch([], 200, manifestFor(labels, built.root));
+
+    await expect(
+      fetchAspInclusion({
+        baseUrl: "https://asp.example.com",
+        poolId: "7",
+        root: toHex32(built.root),
+        label: (await labelFor(99)).toString(),
+      }),
+    ).rejects.toThrow(/not in this root's association set/);
+  });
+
+  it("only calls the per-label endpoint when explicitly opted in, and normalizes its indices", async () => {
+    const labels = await Promise.all(DEPOSIT_INDICES.map((i) => labelFor(i)));
+    const built = await buildPath(labels, LEAF_INDEX);
+    const served = {
+      root: toHex32(built.root),
+      label: labels[LEAF_INDEX]!.toString(),
+      index: LEAF_INDEX,
+      depositIndex: LEAF_INDEX,
+      levels: DEPTH,
+      pathElements: built.pathElements.map((e) => e.toString()),
+      pathIndices: built.pathIndices, // the ASP serves numbers
+    };
+    const seen: string[] = [];
+    stubFetch(seen, 200, served);
+
+    const fetched = await fetchAspInclusion({
+      baseUrl: "https://asp.example.com",
+      poolId: "7",
+      root: served.root,
+      label: served.label,
+      revealLabelToAsp: true,
+    });
+    expect(seen[0]).toBe(`https://asp.example.com/inclusion/${served.root}/${served.label}`);
+    expect(fetched.pathIndices).toEqual(built.pathIndices.map(String));
   });
 
   it("rejects malformed roots and labels before making a request", async () => {
@@ -209,6 +291,47 @@ describe("fetchAspInclusion (#972)", () => {
         label: "5",
       }),
     ).rejects.toThrow(/ASP returned 404/);
+  });
+});
+
+describe("ASP manifest signatures (#1081)", () => {
+  it("verifies the shared ASP-signed test vector with only the public key", () => {
+    expect(verifyAspManifestSignature(SIGNED.manifest, SIGNED.publicKey)).toBe(true);
+  });
+
+  it("rejects another key, a tampered field, and an unsigned manifest", () => {
+    expect(verifyAspManifestSignature(SIGNED.manifest, RECIPIENT)).toBe(false);
+    expect(verifyAspManifestSignature({ ...SIGNED.manifest, ledger: 1 }, SIGNED.publicKey)).toBe(false);
+    expect(
+      verifyAspManifestSignature({ ...SIGNED.manifest, labels: [...SIGNED.manifest.labels].reverse() }, SIGNED.publicKey),
+    ).toBe(false);
+    const { signature: _sig, ...unsigned } = SIGNED.manifest;
+    expect(verifyAspManifestSignature(unsigned, SIGNED.publicKey)).toBe(false);
+  });
+
+  it("fetchAspInclusion enforces the signature when an ASP key is configured", async () => {
+    const m = SIGNED.manifest;
+    stubFetch([], 200, m);
+    const proof = await fetchAspInclusion({
+      baseUrl: "https://asp.example.com",
+      poolId: m.poolId,
+      root: m.root,
+      label: m.labels[2]!,
+      aspPublicKey: SIGNED.publicKey,
+    });
+    expect(proof.index).toBe(2);
+    await expect(assertAspInclusionMatchesRoot(proof)).resolves.toBeUndefined();
+
+    stubFetch([], 200, { ...m, policy: "tampered" });
+    await expect(
+      fetchAspInclusion({
+        baseUrl: "https://asp.example.com",
+        poolId: m.poolId,
+        root: m.root,
+        label: m.labels[2]!,
+        aspPublicKey: SIGNED.publicKey,
+      }),
+    ).rejects.toThrow(/not signed by/);
   });
 });
 
@@ -254,7 +377,7 @@ describe("assertAspInclusionMatchesRoot", () => {
         index: 0,
         levels: 2,
         pathElements: ["1"],
-        pathIndices: [0, 1],
+        pathIndices: ["0", "1"],
       }),
     ).rejects.toThrow(/malformed/);
   });
@@ -289,7 +412,7 @@ describe("prover consumes a fetched inclusion path (#972)", () => {
     // State leaves: this note's own commitment sits at its leaf index, the rest
     // are unrelated deposits.
     const stateLeaves = DEPOSIT_INDICES.map((i) =>
-      i === LEAF_INDEX ? toHex32(deposit.commitment) : toHex32(BigInt(i) + 1n),
+      i === LEAF_INDEX ? deposit.commitment : BigInt(i) + 1n,
     );
 
     return { note, stateLeaves, labels, built };
@@ -371,6 +494,25 @@ describe("prover consumes a fetched inclusion path (#972)", () => {
         },
       }),
     ).rejects.toThrow(/does not reproduce the root/);
+  });
+
+  it("rejects a fetched path whose depth differs from the circuit (#1080)", async () => {
+    const { note, stateLeaves, labels, built } = await fixture();
+
+    await expect(
+      buildPoolWithdrawWitness({
+        ...base,
+        note,
+        stateLeaves,
+        depositIndices: [],
+        aspInclusion: {
+          root: toHex32(built.root),
+          label: labels[LEAF_INDEX]!.toString(),
+          pathElements: built.pathElements.slice(0, 16).map((e) => e.toString()),
+          pathIndices: built.pathIndices.slice(0, 16).map((i) => i.toString()),
+        },
+      }),
+    ).rejects.toThrow(/circuit expects 20/);
   });
 
   it("rejects a fetched path whose elements and indices disagree in length", async () => {

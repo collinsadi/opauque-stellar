@@ -113,6 +113,11 @@ export function readManifestByRoot(dataDir: string, poolId: string, root: string
 /**
  * `GET /inclusion/:root/:label` — the label's inclusion path for a given root.
  *
+ * Deprecated for clients (#1080): requesting a single label tells the ASP
+ * operator which deposit is about to be withdrawn. The SDK now fetches the whole
+ * manifest (`GET /manifest/:root`) and computes the path locally; this endpoint
+ * is kept only for explicitly opted-in legacy callers.
+ *
  * The tree is rebuilt from the manifest's own label list, so the returned path is
  * bound to that root by construction: it cannot be served for a different set.
  */
@@ -164,7 +169,8 @@ export async function readInclusion(
   }
 
   const poseidon = await getPoseidon();
-  const tree = new MerkleTree(poseidon, labels.map((l) => BigInt(l)), manifest.levels);
+  const tree = new MerkleTree(poseidon, manifest.levels);
+  for (const l of labels) tree.insert(BigInt(l));
   // Recompute rather than trust the filename: a served proof must belong to the
   // root it is served under.
   const computedRoot = toHex32(tree.root());

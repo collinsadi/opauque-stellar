@@ -27,10 +27,50 @@ export class ConfigError extends OpaqueError {
   }
 }
 
+/**
+ * Why a signer adapter failed:
+ * - `"rejected"` — the user declined the request in their wallet.
+ * - `"unavailable"` — the wallet is not installed, not connected, or not allowed.
+ * - `"account-changed"` — the wallet signed with a different account than expected.
+ * - `"failed"` — any other signing failure.
+ */
+export type SignerErrorReason = "rejected" | "unavailable" | "account-changed" | "failed";
+
 /** A signer adapter failed to produce a signature. */
 export class SignerError extends OpaqueError {
-  constructor(message: string, options?: { cause?: unknown }) {
+  /** Why signing failed; `"failed"` when the adapter cannot tell. */
+  readonly reason: SignerErrorReason;
+  constructor(
+    message: string,
+    options?: { cause?: unknown; reason?: SignerErrorReason },
+  ) {
     super(message, "SIGNER", options);
+    this.reason = options?.reason ?? "failed";
+  }
+}
+
+/** The user declined a wallet request (connect, sign). `reason` is always `"rejected"`. */
+export class SignerRejectedError extends SignerError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, { ...options, reason: "rejected" });
+  }
+}
+
+/**
+ * An optional peer dependency (e.g. `tweetnacl`, `@stellar/freighter-api`) is
+ * needed for the requested feature but is not installed. The SDK still loads
+ * without it; only the feature that needs it fails, with this error.
+ */
+export class MissingPeerDependencyError extends OpaqueError {
+  /** The npm package name to install. */
+  readonly dependency: string;
+  constructor(dependency: string, feature: string, options?: { cause?: unknown }) {
+    super(
+      `${dependency} is required for ${feature}; install it as a peer dependency (npm install ${dependency}).`,
+      "MISSING_PEER_DEPENDENCY",
+      options,
+    );
+    this.dependency = dependency;
   }
 }
 

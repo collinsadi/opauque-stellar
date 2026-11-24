@@ -6,6 +6,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync, readdirSync, unlinkSync, renameSync, statSync, openSync, fsyncSync, closeSync } from "node:fs";
 import { join } from "node:path";
+import { Keypair } from "@stellar/stellar-sdk";
 import type { SetManifest } from "./types.ts";
 
 /**
@@ -28,31 +29,103 @@ export function computeDatasetHash(root: string, labels: string[]): string {
   return "0x" + h.digest("hex");
 }
 
+/** Domain separator for manifest signatures; bump the version on any encoding change. */
+export const MANIFEST_SIGNATURE_DOMAIN = "opaque-asp-manifest/v1";
+
 /**
- * Compute a signature over the manifest for authentication (issue #1011).
- * The signature covers poolId, root, datasetHash, policy, and ledger.
+ * Anything that can produce an Ed25519 signature and name its Stellar public key.
+ * A Stellar `Keypair` satisfies this directly.
  */
-export function signManifest(manifest: SetManifest, signingKey: string): string {
-  const h = createHash("sha256");
-  h.update(manifest.poolId);
-  h.update(manifest.root);
-  h.update(manifest.datasetHash);
-  h.update(manifest.policy ?? "");
-  h.update(String(manifest.ledger ?? ""));
-  h.update(signingKey);
-  return "0x" + h.digest("hex");
+export interface ManifestSigner {
+  publicKey(): string;
+  sign(data: Buffer): Buffer;
+}
+
+/** A manifest before it is signed. */
+export type UnsignedSetManifest = Omit<SetManifest, "signer" | "signature">;
+
+function lengthPrefixed(value: string): Buffer {
+  const bytes = Buffer.from(value, "utf8");
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(bytes.length >>> 0, 0);
+  return Buffer.concat([len, bytes]);
+}
+
+/** sha256(BE32(count) || BE32(index)...) — commits to the deposit index of every label. */
+export function computeIndicesHash(indices: number[]): string {
+  const buf = Buffer.alloc(4 + 4 * indices.length);
+  buf.writeUInt32BE(indices.length >>> 0, 0);
+  indices.forEach((index, i) => buf.writeUInt32BE(index >>> 0, 4 + 4 * i));
+  return "0x" + createHash("sha256").update(buf).digest("hex");
 }
 
 /**
- * Verify a manifest signature against the signing key (issue #1011).
+ * Canonical, delimited byte encoding of a manifest's signed fields (#1081).
+ *
+ * Every field is a UTF-8 string prefixed with its BE32 byte length, in a fixed
+ * order, after a versioned domain separator — so no two distinct manifests can
+ * encode to the same bytes. Labels are bound through `datasetHash` (which a
+ * verifier recomputes from `root` + `labels`) and deposit indices through
+ * {@link computeIndicesHash}, keeping the signed message small for large sets.
+ *
+ * Field order: domain, poolId, root, version, levels, algo, datasetHash,
+ * policy, ledger, generatedAt, labelCount, indicesHash. Hex values are lowercase.
  */
-export function verifyManifestSignature(
-  manifest: SetManifest,
-  signature: string,
-  signingKey: string,
-): boolean {
-  const expected = signManifest(manifest, signingKey);
-  return expected === signature;
+export function canonicalManifestBytes(manifest: UnsignedSetManifest): Buffer {
+  const fields = [
+    MANIFEST_SIGNATURE_DOMAIN,
+    manifest.poolId,
+    manifest.root.toLowerCase(),
+    String(manifest.version),
+    String(manifest.levels),
+    manifest.algo,
+    manifest.datasetHash.toLowerCase(),
+    manifest.policy,
+    String(manifest.ledger),
+    manifest.generatedAt,
+    String(manifest.labels.length),
+    computeIndicesHash(manifest.indices),
+  ];
+  return Buffer.concat(fields.map(lengthPrefixed));
+}
+
+/**
+ * Sign a manifest with the ASP's Ed25519 key (#1081). Returns the manifest with
+ * `signer` (the Stellar G-address of the key) and `signature` (hex, 64 bytes).
+ */
+export function signManifest(manifest: UnsignedSetManifest, signer: ManifestSigner): SetManifest {
+  const { signer: _s, signature: _sig, ...unsigned } = manifest as SetManifest;
+  const signature = signer.sign(canonicalManifestBytes(unsigned)).toString("hex");
+  return { ...unsigned, signer: signer.publicKey(), signature };
+}
+
+/**
+ * Verify a manifest against the ASP's published public key (Stellar G-address).
+ *
+ * Checks that the manifest names that key as its signer, that `datasetHash`
+ * matches its own `root` + `labels`, and that the Ed25519 signature covers the
+ * canonical encoding. Needs only the public key.
+ */
+export function verifyManifestSignature(manifest: SetManifest, aspPublicKey: string): boolean {
+  if (!manifest.signature || !manifest.signer || manifest.signer !== aspPublicKey) return false;
+  if (!/^[0-9a-fA-F]{128}$/.test(manifest.signature)) return false;
+  if (!Array.isArray(manifest.labels) || !Array.isArray(manifest.indices)) return false;
+  if (manifest.labels.length !== manifest.indices.length) return false;
+  let datasetHash: string;
+  try {
+    datasetHash = computeDatasetHash(manifest.root, manifest.labels);
+  } catch {
+    return false;
+  }
+  if (datasetHash !== manifest.datasetHash.toLowerCase()) return false;
+  try {
+    return Keypair.fromPublicKey(aspPublicKey).verify(
+      canonicalManifestBytes(manifest),
+      Buffer.from(manifest.signature, "hex"),
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -67,22 +140,20 @@ const DEFAULT_MAX_SETS_PER_POOL = 100;
  * Write `data/sets/<poolId>/<root>.json` and `latest.json` atomically (issue #1011).
  *
  * Uses temp-file-plus-rename to prevent corruption if the process crashes
- * mid-write. Includes dataset hash, policy, ledger, and signature in the
- * manifest for consumer authentication.
+ * mid-write. Every written manifest is signed with the ASP's Ed25519 key
+ * (#1081), so consumers can authenticate it with the published public key.
  */
 export function writeManifest(
   dataDir: string,
-  manifest: SetManifest,
-  signingKey?: string,
+  manifest: UnsignedSetManifest,
+  signer: ManifestSigner,
   maxSetsPerPool: number = DEFAULT_MAX_SETS_PER_POOL,
 ): string {
+  if (!signer) throw new Error("writeManifest requires the ASP manifest signing key");
   const dir = join(dataDir, "sets", manifest.poolId);
   mkdirSync(dir, { recursive: true });
 
-  // Add signature if signing key provided (issue #1011)
-  const signedManifest = signingKey
-    ? { ...manifest, signature: signManifest(manifest, signingKey) }
-    : manifest;
+  const signedManifest = signManifest(manifest, signer);
 
   const manifestJson = `${JSON.stringify(signedManifest, null, 2)}\n`;
 

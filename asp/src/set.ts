@@ -6,7 +6,7 @@
  * label's position up in the published manifest.
  */
 import { computeLabel, MerkleTree, getPoseidon, toHex32 } from "./merkle.ts";
-import type { SetManifest } from "./types.ts";
+import { computeDatasetHash, type UnsignedSetManifest } from "./publish.ts";
 
 export class AssociationSet {
   readonly indices: number[] = [];
@@ -42,16 +42,26 @@ export class AssociationSet {
     return this.tree.proof(leafIndex);
   }
 
-  manifest(poolId: string, generatedAt: string): SetManifest {
+  /** The unsigned manifest for this set; `writeManifest` signs it. */
+  manifest(
+    poolId: string,
+    generatedAt: string,
+    meta: { policy: string; ledger: number },
+  ): UnsignedSetManifest {
+    const root = this.rootHex();
+    const labels = this.labels.map((l) => l.toString());
     return {
       poolId,
-      root: this.rootHex(),
+      root,
       version: this.labels.length,
       levels: this.tree.depth,
       algo: "poseidon-bn254",
-      labels: this.labels.map((l) => l.toString()),
+      labels,
       indices: [...this.indices],
       generatedAt,
+      datasetHash: computeDatasetHash(root, labels),
+      policy: meta.policy,
+      ledger: meta.ledger,
     };
   }
 }

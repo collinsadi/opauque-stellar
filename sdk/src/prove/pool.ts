@@ -232,6 +232,11 @@ export async function buildPoolWithdrawWitness(opts: {
     if (inclusion.pathElements.length !== inclusion.pathIndices.length) {
       throw new Error("ASP inclusion proof is malformed: path/index length mismatch.");
     }
+    if (inclusion.pathElements.length !== POOL_TREE_DEPTH) {
+      throw new Error(
+        `ASP inclusion proof has ${inclusion.pathElements.length} levels; the withdraw circuit expects ${POOL_TREE_DEPTH}.`,
+      );
+    }
     let computed = BigInt(inclusion.label);
     for (let level = 0; level < inclusion.pathElements.length; level += 1) {
       const sibling = BigInt(inclusion.pathElements[level]!);

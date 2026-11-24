@@ -24,6 +24,7 @@ const BUDGETS_KIB = {
   "dist/index.js": 62,
   "dist/crypto/index.js": 26,
   "dist/relayer-protocol/index.js": 6,
+  "dist/freighter.js": 4,
 };
 
 function formatKib(bytes) {

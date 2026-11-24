@@ -11,7 +11,7 @@
  */
 import { AssociationSet } from "./set.ts";
 import { MerkleTree, getPoseidon, toHex32 } from "./merkle.ts";
-import { computeDatasetHash, writeManifest } from "./publish.ts";
+import { computeDatasetHash, writeManifest, type ManifestSigner } from "./publish.ts";
 import { PublicationMonitor } from "./monitor.ts";
 import { ReorgGuard } from "./reorg-guard.ts";
 import type { Store } from "./store.ts";
@@ -26,6 +26,11 @@ export interface TickConfig {
   policy: Policy;
   /** If set, the manifest JSON is written under this directory. */
   dataDir?: string;
+  /**
+   * Ed25519 key that signs every published manifest (#1081). Required whenever
+   * `dataDir` is set; a Stellar `Keypair` works directly.
+   */
+  manifestSigner?: ManifestSigner;
   /**
    * Confirmations to wait before treating a deposit as final. A deposit in ledger L
    * has `latest - L + 1` confirmations; deposits below this depth are left for a
@@ -79,6 +84,9 @@ export async function confirmedDeposits(
 }
 
 export async function runPoolTick(cfg: TickConfig): Promise<TickResult> {
+  if (cfg.dataDir && !cfg.manifestSigner) {
+    throw new Error("ASP manifest publishing requires manifestSigner (set ASP_MANIFEST_SECRET or ASP_SECRET)");
+  }
   const now = cfg.now ?? (() => new Date().toISOString());
   const state = cfg.store.load(cfg.poolId) ?? initState(cfg.poolId, cfg.scope);
   state.rejectedIndices ??= [];
@@ -160,9 +168,9 @@ export async function runPoolTick(cfg: TickConfig): Promise<TickResult> {
   const onChainRoot = await cfg.adapter.currentAspRoot();
   let published = false;
   if (set.size > 0 && localRoot !== onChainRoot) {
-    const manifest = set.manifest(cfg.poolId, now());
-    if (cfg.dataDir) writeManifest(cfg.dataDir, manifest);
-    await cfg.adapter.postAspRoot(localRoot, computeDatasetHash(localRoot, manifest.labels));
+    const manifest = set.manifest(cfg.poolId, now(), { policy: cfg.policy.name, ledger: state.lastLedger });
+    if (cfg.dataDir) writeManifest(cfg.dataDir, manifest, cfg.manifestSigner!);
+    await cfg.adapter.postAspRoot(localRoot, manifest.datasetHash);
     published = true;
     if (cfg.publicationMonitor) {
       cfg.publicationMonitor.recordPublication(localRoot, state.lastLedger);

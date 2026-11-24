@@ -11,7 +11,8 @@
     "indexer:once": "tsx scripts/indexer.ts --once",
     "indexer": "tsx scripts/indexer.ts",
     "asp:reinstate": "tsx scripts/reinstate.ts",
-    "serve": "tsx scripts/server.ts"
+    "serve": "tsx scripts/server.ts",
+    "verify:manifest": "tsx scripts/verify-manifest.ts"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^15.1.0",
