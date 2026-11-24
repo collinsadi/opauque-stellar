@@ -38,6 +38,9 @@ jobs:
       poseidon: ${{ steps.filter.outputs.poseidon }}
       sdk: ${{ steps.filter.outputs.sdk }}
       service-images: ${{ steps.filter.outputs.service-images }}
+      asp-tests: ${{ steps.filter.outputs.asp-tests }}
+      publisher-tests: ${{ steps.filter.outputs.publisher-tests }}
+      relayer-tests: ${{ steps.filter.outputs.relayer-tests }}
       supply-chain: ${{ steps.filter.outputs.supply-chain }}
       backup-scripts: ${{ steps.filter.outputs.backup-scripts }}
     steps:
@@ -88,6 +91,22 @@ jobs:
               - 'relayer/**'
               - 'deployments/**'
               - '.dockerignore'
+              - '.github/workflows/ci.yml'
+            asp-tests:
+              - 'asp/**'
+              - 'shared/**'
+              - 'deployments/**'
+              - '.github/workflows/ci.yml'
+            publisher-tests:
+              - 'publisher/**'
+              - 'shared/**'
+              - 'deployments/**'
+              - '.github/workflows/ci.yml'
+            relayer-tests:
+              - 'relayer/**'
+              - 'shared/**'
+              - 'sdk/src/relayer-protocol/**'
+              - 'deployments/**'
               - '.github/workflows/ci.yml'
             supply-chain:
               - '**/Cargo.toml'
@@ -485,6 +504,107 @@ jobs:
       - name: Tests
         if: needs.changes.outputs.sdk == 'true'
         run: npm test --prefix sdk
+
+  # ── Service tests: ASP, publisher, relayer (typecheck + vitest) ─────────
+  # Each service's typecheck and vitest suite run whenever that service or
+  # the code it shares (root shared/, deployments/, relayer's SDK protocol
+  # sources) changes. Without these jobs a broken service commit merges with
+  # no test signal.
+  asp-tests:
+    name: ASP tests (Node 20)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    needs: changes
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        if: needs.changes.outputs.asp-tests == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js 20
+        if: needs.changes.outputs.asp-tests == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: asp/package-lock.json
+
+      - name: Install ASP dependencies
+        if: needs.changes.outputs.asp-tests == 'true'
+        run: npm ci --prefix asp
+
+      - name: Typecheck
+        if: needs.changes.outputs.asp-tests == 'true'
+        run: npm run typecheck --prefix asp
+
+      - name: Tests
+        if: needs.changes.outputs.asp-tests == 'true'
+        run: npm test --prefix asp
+
+  publisher-tests:
+    name: Publisher tests (Node 20)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    needs: changes
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        if: needs.changes.outputs.publisher-tests == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js 20
+        if: needs.changes.outputs.publisher-tests == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: publisher/package-lock.json
+
+      - name: Install publisher dependencies
+        if: needs.changes.outputs.publisher-tests == 'true'
+        run: npm ci --prefix publisher
+
+      - name: Typecheck
+        if: needs.changes.outputs.publisher-tests == 'true'
+        run: npm run typecheck --prefix publisher
+
+      - name: Tests
+        if: needs.changes.outputs.publisher-tests == 'true'
+        run: npm test --prefix publisher
+
+  relayer-tests:
+    name: Relayer tests (Node 20)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    needs: changes
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        if: needs.changes.outputs.relayer-tests == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js 20
+        if: needs.changes.outputs.relayer-tests == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: relayer/package-lock.json
+
+      - name: Install relayer dependencies
+        if: needs.changes.outputs.relayer-tests == 'true'
+        run: npm ci --prefix relayer
+
+      - name: Typecheck
+        if: needs.changes.outputs.relayer-tests == 'true'
+        run: npm run typecheck --prefix relayer
+
+      - name: Tests
+        if: needs.changes.outputs.relayer-tests == 'true'
+        run: npm test --prefix relayer
 
   # ── Workflow lint: catch undefined npm run scripts ─────────────────────
   workflow-lint:
