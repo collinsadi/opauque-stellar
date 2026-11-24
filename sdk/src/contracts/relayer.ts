@@ -21,25 +21,37 @@ import {
 } from "../rpc/scval";
 
 /**
- * A `#[contracttype] struct` crosses the wire as an ScVal::Map keyed by field
- * name — not a positional tuple. Build it explicitly so field values keep
- * their real types (an address stays an address, not a string).
+ * A `#[contracttype] struct` crosses the wire as an ScVal::Map keyed by
+ * **Symbol** field names, with entries sorted by key (the host rejects an
+ * unsorted map or string keys). Build it explicitly so field values keep their
+ * real types (an address stays an address, not a string).
  */
-function structToScVal(fields: Record<string, xdr.ScVal>): xdr.ScVal {
+export function structToScVal(fields: Record<string, xdr.ScVal>): xdr.ScVal {
   return xdr.ScVal.scvMap(
-    Object.entries(fields).map(
-      ([key, val]) => new xdr.ScMapEntry({ key: xdr.ScVal.scvString(key), val }),
-    ),
+    Object.keys(fields)
+      .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(
+        (key) =>
+          new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol(key), val: fields[key] as xdr.ScVal }),
+      ),
   );
 }
 
 /**
- * A `#[contracttype] enum` variant crosses the wire as an ScVal::Vec whose
- * only element is the variant's symbol — what `soroban-sdk` decodes back into
- * the Rust enum.
+ * A `#[contracttype]` enum declared with explicit integer discriminants
+ * (`DoubleSign = 0`) crosses the wire as a plain u32 — not a Vec[Symbol], which
+ * is the encoding for enums with unit variants *without* discriminants.
+ * Mirrors `SlashableOffense` in `contracts/relayer-registry/src/slashing.rs`.
  */
-function enumVariantToScVal(variant: string): xdr.ScVal {
-  return xdr.ScVal.scvVec([xdr.ScVal.scvSymbol(variant)]);
+export const SLASHABLE_OFFENSE_VALUES = {
+  DoubleSign: 0,
+  InvalidSignature: 1,
+} as const satisfies Record<SlashableOffense, number>;
+
+export function slashableOffenseToScVal(offense: SlashableOffense): xdr.ScVal {
+  const value = SLASHABLE_OFFENSE_VALUES[offense];
+  if (value === undefined) throw new Error(`Unknown SlashableOffense: ${String(offense)}`);
+  return u32ToScVal(value);
 }
 
 /**
@@ -606,7 +618,7 @@ export class RelayerRegistry {
         // SlashingProof is one struct argument, not a spread of arguments.
         structToScVal({
           relayer: addressToScVal(relayer),
-          offense: enumVariantToScVal(offense),
+          offense: slashableOffenseToScVal(offense),
           evidence: bytesToScVal(evidence),
           timestamp: u64ToScVal(timestamp),
           reporter: addressToScVal(opts.proof.reporter),

@@ -16,7 +16,8 @@ import {
   type PoolNote,
 } from "../crypto/index";
 import { NotWiredError } from "../errors/index";
-import { provePoolWithdraw, type PoolWithdrawProof } from "../prove/pool";
+import { PoolMerkleTree, provePoolWithdraw, type PoolWithdrawProof } from "../prove/pool";
+import { getPoseidon, hashFields } from "../crypto/notes";
 import type { SimulationReport } from "../rpc/client";
 import type { OpaqueSigner } from "../signer/index";
 import { keypairSigner } from "../signer/index";
@@ -39,7 +40,10 @@ export type DepositCoverageReason =
   | "no-asp-root"
   | "unknown-state-root"
   | "unknown-asp-root"
-  | "tree-at-capacity"
+  | "note-not-in-state"
+  | "excluded-from-asp"
+  | "state-root-expired"
+  | "asp-root-expired"
   | "withdrawals-paused";
 
 /**
@@ -59,8 +63,11 @@ export interface DepositCoverage {
   aspRootKnown: boolean;
   /** Empty when `covered`; otherwise why the deposit cannot be proven yet. */
   reasons: DepositCoverageReason[];
-  /** Commitment-tree capacity, for the headroom check. */
-  capacity: TreeCapacityInfo;
+  /**
+   * Commitment-tree capacity, informational only (it never blocks a withdrawal).
+   * `null` when the deployed pool predates `get_tree_capacity_info` (#1070).
+   */
+  capacity: TreeCapacityInfo | null;
   /** Whether deposits are currently accepted (a paused pool accepts no new deposits). */
   depositsPaused: boolean;
   /** Whether withdrawals are currently paused. */
@@ -330,19 +337,31 @@ export class PoolService {
   }
 
   /**
-   * Can a withdrawal for a deposit be proven right now, against the roots the
-   * pool has published? Composes the pool's state views: reads the latest state
-   * and ASP roots, checks the contract actually knows both, and reports the
-   * pause flags and tree headroom alongside.
+   * Can a withdrawal be proven *and accepted* right now? Pass the `note` to
+   * check that specific deposit: its commitment is in the state tree, its label
+   * is in the ASP set, both derived roots are known to the pool, and (when the
+   * publish ledgers are supplied) neither root has expired. The reasons mirror
+   * what actually makes `withdraw()` revert; tree capacity is not one of them
+   * (it only limits new deposits) and is reported separately.
    *
-   * Run this *before* `proveWithdraw` — proving is the expensive step, and an
-   * absent or unknown root means the resulting proof could not be submitted
-   * anyway. `reasons` is empty exactly when `covered` is true.
+   * Without a `note` this is the coarse pool-level check against the latest
+   * published roots (or the `stateRoot`/`aspRoot` you pass).
    *
-   * Pass `stateRoot`/`aspRoot` to check specific roots (e.g. ones fetched
-   * earlier and cached) instead of the latest published pair.
+   * Root expiry: the pool exposes no view of when a root was published, so
+   * freshness is only judged when you supply `rootLedgers` (the ledger of the
+   * root's publish event). Otherwise it is not assessed and never claimed stale.
+   *
+   * Optional entrypoints missing from an older deployment are skipped rather
+   * than failing the check (#1070). `reasons` is empty exactly when `covered`.
    */
   async isDepositCovered(opts?: {
+    note?: PoolNote;
+    /** Leaves/indices to skip the on-chain reconstruction (note mode). */
+    stateLeaves?: bigint[];
+    depositIndices?: number[];
+    reconstruct?: ReconstructStateOptions;
+    /** Ledgers at which the state / ASP roots were published, to judge expiry. */
+    rootLedgers?: { state?: number; asp?: number };
     stateRoot?: Uint8Array;
     aspRoot?: Uint8Array;
     source?: string;
@@ -355,27 +374,63 @@ export class PoolService {
         pool.getLatestRoot({ source, kind: "asp" }),
         pool.isDepositsPaused(source),
         pool.isWithdrawalsPaused(source),
-        pool.getTreeCapacityInfo(source),
+        // Optional entrypoint: absent on older deployments, so skip it there.
+        pool.tryGetTreeCapacityInfo(source),
       ]);
 
-    const stateRoot = opts?.stateRoot ?? latestState;
-    const aspRoot = opts?.aspRoot ?? latestAsp;
+    const reasons: DepositCoverageReason[] = [];
+    let stateRoot = opts?.stateRoot ?? latestState;
+    let aspRoot = opts?.aspRoot ?? latestAsp;
+
+    const note = opts?.note;
+    if (note) {
+      let { stateLeaves, depositIndices } = opts;
+      if (!stateLeaves || !depositIndices) {
+        const state = await pool.reconstructState({
+          startLedger: this.ctx.config.startLedger,
+          ...opts.reconstruct,
+        });
+        stateLeaves = state.stateLeaves;
+        depositIndices = state.depositIndices;
+      }
+      const poseidon = await getPoseidon();
+      const inState =
+        stateLeaves[note.leafIndex] != null &&
+        toHex32(stateLeaves[note.leafIndex]!).toLowerCase() === note.commitment.toLowerCase();
+      if (!inState) reasons.push("note-not-in-state");
+      // The roots a withdrawal would actually be proven against.
+      stateRoot = bigIntToBytes32(new PoolMerkleTree(poseidon, stateLeaves).root());
+      const scope = BigInt(this.ctx.config.pool.scope);
+      const aspLeaves = depositIndices.map((i) => hashFields(poseidon, [scope, BigInt(i)]));
+      aspRoot = bigIntToBytes32(new PoolMerkleTree(poseidon, aspLeaves).root());
+      if (!depositIndices.includes(note.leafIndex)) reasons.push("excluded-from-asp");
+    }
+
     const [stateRootKnown, aspRootKnown] = await Promise.all([
       stateRoot ? pool.isKnownStateRoot({ source, root: stateRoot }) : Promise.resolve(false),
       aspRoot ? pool.isKnownAspRoot({ source, root: aspRoot }) : Promise.resolve(false),
     ]);
 
-    const reasons: DepositCoverageReason[] = [];
     if (!stateRoot) reasons.push("no-state-root");
     else if (!stateRootKnown) reasons.push("unknown-state-root");
     if (!aspRoot) reasons.push("no-asp-root");
     else if (!aspRootKnown) reasons.push("unknown-asp-root");
-    if (withdrawalsPaused) reasons.push("withdrawals-paused");
-    // The pool reverts a deposit past `max_capacity`; at the ceiling no new
-    // commitment fits, so nothing further can be proven against it either.
-    if (capacity.maxCapacity > 0 && capacity.currentCount >= capacity.maxCapacity) {
-      reasons.push("tree-at-capacity");
+
+    // `withdraw` rejects a root once `now - publishedLedger > root_expiry_ledgers`.
+    const ledgers = opts?.rootLedgers;
+    if (ledgers && (ledgers.state != null || ledgers.asp != null)) {
+      const [config, now] = await Promise.all([
+        pool.getConfig(source),
+        this.ctx.rpc.getLatestLedger(),
+      ]);
+      if (ledgers.state != null && stateRootKnown && now - ledgers.state > config.rootExpiryLedgers) {
+        reasons.push("state-root-expired");
+      }
+      if (ledgers.asp != null && aspRootKnown && now - ledgers.asp > config.rootExpiryLedgers) {
+        reasons.push("asp-root-expired");
+      }
     }
+    if (withdrawalsPaused) reasons.push("withdrawals-paused");
 
     return {
       covered: reasons.length === 0,

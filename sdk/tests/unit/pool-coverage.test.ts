@@ -10,7 +10,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { Keypair, xdr } from "@stellar/stellar-sdk";
 import {
+  ContractCompatibilityError,
   OpaqueClient,
+  SimulationError,
+  deriveDeposit,
+  type PoolNote,
   keypairSigner,
   type ContractInvoker,
   type ReadOptions,
@@ -155,7 +159,7 @@ describe("PoolService.isDepositCovered", () => {
     expect(coverage.withdrawalsPaused).toBe(true);
   });
 
-  it("reports a full tree, since nothing new can be proven against it", async () => {
+  it("does not treat a full tree as a withdrawal blocker", async () => {
     stubCoverage({
       get_tree_capacity_info: {
         max_capacity: 1_000,
@@ -165,8 +169,32 @@ describe("PoolService.isDepositCovered", () => {
       },
     });
     const coverage = await client.pool.isDepositCovered();
-    expect(coverage.covered).toBe(false);
-    expect(coverage.reasons).toEqual(["tree-at-capacity"]);
+    expect(coverage.covered).toBe(true);
+    expect(coverage.reasons).toEqual([]);
+    expect(coverage.capacity?.currentCount).toBe(1_000);
+  });
+
+  it("skips get_tree_capacity_info on an older deployment instead of failing (#1070)", async () => {
+    stubCoverage();
+    const base = inv.readNative.bind(inv);
+    inv.readNative = (async (opts: ReadOptions) => {
+      if (opts.method === "get_tree_capacity_info") {
+        throw new SimulationError("Simulation failed", {
+          diagnostics: "HostError: trying to invoke non-existent contract function",
+        });
+      }
+      return base(opts);
+    }) as typeof inv.readNative;
+    const coverage = await client.pool.isDepositCovered();
+    expect(coverage.covered).toBe(true);
+    expect(coverage.capacity).toBeNull();
+    await expect(client.pool.getTreeCapacityInfo()).rejects.toMatchObject({
+      code: "CONTRACT_COMPATIBILITY",
+      method: "get_tree_capacity_info",
+    });
+    await expect(client.pool.getTreeCapacityInfo()).rejects.toBeInstanceOf(
+      ContractCompatibilityError,
+    );
   });
 
   it("checks specific roots when the caller supplies them", async () => {
@@ -183,7 +211,71 @@ describe("PoolService.isDepositCovered", () => {
     stubCoverage({ is_deposits_paused: true });
     const coverage = await client.pool.isDepositCovered();
     expect(coverage.depositsPaused).toBe(true);
-    expect(coverage.capacity.currentCount).toBe(100);
-    expect(coverage.capacity.maxCapacity).toBe(65_536);
+    expect(coverage.capacity?.currentCount).toBe(100);
+    expect(coverage.capacity?.maxCapacity).toBe(65_536);
+  });
+});
+
+describe("PoolService.isDepositCovered with a note (#1073)", () => {
+  const stateLeaf = async (leafIndex: number) => {
+    const d = await deriveDeposit({ value: 10_000_000n, scope: 1, leafIndex, nullifier: 11n, secret: 22n });
+    const note = {
+      value: "10000000",
+      leafIndex,
+      nullifier: "11",
+      secret: "22",
+      commitment: "0x" + d.commitment.toString(16).padStart(64, "0"),
+    } as unknown as PoolNote;
+    return { d, note };
+  };
+
+  it("is covered for an included note whose derived roots are known and fresh", async () => {
+    const { d, note } = await stateLeaf(0);
+    stubCoverage({ get_config: { root_expiry_ledgers: 1_000 } });
+    const coverage = await client.pool.isDepositCovered({
+      note,
+      stateLeaves: [d.commitment],
+      depositIndices: [0],
+      rootLedgers: { state: 4_900, asp: 4_900 },
+    });
+    expect(coverage.reasons).toEqual([]);
+    expect(coverage.covered).toBe(true);
+  });
+
+  it("flags a note the ASP set excludes", async () => {
+    const { d, note } = await stateLeaf(0);
+    stubCoverage();
+    const coverage = await client.pool.isDepositCovered({
+      note,
+      stateLeaves: [d.commitment],
+      depositIndices: [],
+    });
+    expect(coverage.covered).toBe(false);
+    expect(coverage.reasons).toContain("excluded-from-asp");
+  });
+
+  it("flags a note missing from the state tree", async () => {
+    const { note } = await stateLeaf(0);
+    stubCoverage();
+    const coverage = await client.pool.isDepositCovered({
+      note,
+      stateLeaves: [123n],
+      depositIndices: [0],
+    });
+    expect(coverage.reasons).toContain("note-not-in-state");
+  });
+
+  it("flags stale roots using the pool's expiry window (age > expiry)", async () => {
+    const { d, note } = await stateLeaf(0);
+    // latest ledger is 5_000; state published 3_999 ago... 5_000-3_999=1_001 > 1_000
+    stubCoverage({ get_config: { root_expiry_ledgers: 1_000 } });
+    const coverage = await client.pool.isDepositCovered({
+      note,
+      stateLeaves: [d.commitment],
+      depositIndices: [0],
+      rootLedgers: { state: 3_999, asp: 4_000 },
+    });
+    expect(coverage.covered).toBe(false);
+    expect(coverage.reasons).toEqual(["state-root-expired"]);
   });
 });

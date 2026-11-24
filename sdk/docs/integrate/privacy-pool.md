@@ -67,8 +67,14 @@ if (!coverage.covered) {
       // A pause request has passed its timelock. Warn the user; nothing can be
       // withdrawn until it lifts.
       break;
-    case "tree-at-capacity":
-      // No commitment fits any more, so nothing new can be proven either.
+    case "note-not-in-state":
+    case "excluded-from-asp":
+      // Pass `note` to check one deposit: it is missing from the state tree or
+      // the ASP association set, so this note cannot be withdrawn (yet).
+      break;
+    case "state-root-expired":
+    case "asp-root-expired":
+      // Only reported when you pass `rootLedgers`; republish/refresh the root.
       break;
   }
   await new Promise((r) => setTimeout(r, 5000));
