@@ -19,6 +19,7 @@ import {
   type InvokeOptions,
   type ReadOptions,
 } from "../../src/index";
+import { slashableOffenseToScVal } from "../../src/contracts/relayer";
 
 const REGISTRY = "CRELAYERREGISTRYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const SAC = "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5SOAOPIFY6YQGAXE";
@@ -164,6 +165,32 @@ describe("relayer-registry operator lifecycle", () => {
     expect(a[0]).toMatchObject({ relayer: OTHER, timestamp: 1_700_000_000n, reporter: PK });
     // ...and arg 1 is the slash amount.
     expect(a[1]).toBe(ONE_XLM);
+  });
+
+  it("reportSlash encodes SlashingProof as a Symbol-keyed sorted map with a u32 offense", async () => {
+    await new RelayerRegistry(inv, REGISTRY).reportSlash({
+      proof: {
+        relayer: OTHER,
+        offense: "InvalidSignature",
+        evidence: bytes(64, 4),
+        timestamp: 1_700_000_000n,
+        reporter: PK,
+      },
+      slashAmount: ONE_XLM,
+      signer,
+    });
+    const map = inv.last!.args[0]!.map()!;
+    expect(map.map((e) => e.key().switch().name)).toEqual(Array(5).fill("scvSymbol"));
+    const keys = map.map((e) => e.key().sym().toString());
+    expect(keys).toEqual(["evidence", "offense", "relayer", "reporter", "timestamp"]);
+    const offense = map[1]!.val();
+    expect(offense.switch().name).toBe("scvU32");
+    expect(offense.u32()).toBe(1);
+  });
+
+  it("encodes every SlashableOffense as its integer discriminant", () => {
+    expect(slashableOffenseToScVal("DoubleSign").u32()).toBe(0);
+    expect(slashableOffenseToScVal("InvalidSignature").u32()).toBe(1);
   });
 
   it("initialize / setConfig / transferAdmin are admin-gated and encode their arguments", async () => {
