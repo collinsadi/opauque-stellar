@@ -247,6 +247,39 @@ export class EventTruncationError extends OpaqueError {
 }
 
 /**
+ * A contract-event scan needs ledgers the RPC has already pruned. Those ledgers
+ * were never read, so results built from them are **incomplete**: a skipped
+ * announcement is a missed payment, and a missing deposit yields a wrong Merkle
+ * root. The SDK raises this instead of quietly restarting from the oldest
+ * retained ledger.
+ *
+ * Pass `allowRetentionGap` to accept a partial result. The gap is then reported
+ * to the caller (`onRetentionGap`, or `retentionGap` on the result) rather than
+ * hidden.
+ */
+export class RetentionGapError extends OpaqueError {
+  /** What was being scanned, e.g. `"privacy-pool:Deposit"`. */
+  readonly scope: string;
+  /** First pruned ledger the scan was asked for (inclusive). */
+  readonly fromLedger: number;
+  /** Last pruned ledger (inclusive); the first retained ledger is this + 1. */
+  readonly toLedger: number;
+
+  constructor(opts: { scope: string; fromLedger: number; toLedger: number; cause?: unknown }) {
+    super(
+      `${opts.scope}: ledgers ${opts.fromLedger}-${opts.toLedger} are outside the RPC retention ` +
+        `window and were not scanned, so results built from them are incomplete. Start from a ` +
+        `retained ledger (e.g. the deployment ledger), or pass allowRetentionGap to accept a partial result.`,
+      "EVENT_RETENTION_GAP",
+      { cause: opts.cause },
+    );
+    this.scope = opts.scope;
+    this.fromLedger = opts.fromLedger;
+    this.toLedger = opts.toLedger;
+  }
+}
+
+/**
  * A capability that depends on a layer not yet wired in this build (e.g. the
  * proving layer, the WASM scanner, or the relayer gateway client). Thrown so
  * the surface is discoverable and the failure is explicit rather than silent.

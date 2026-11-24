@@ -166,7 +166,9 @@ describe("paginateContractEvents", () => {
     expect(error!.scope).toBe("privacy-pool:Deposit");
     expect(error!.pagesRead).toBe(2);
     expect(error!.continuationCursor).toBe("c2");
-    expect(error!.lastScannedLedger).toBe(200);
+    // Ledger 200 may be only partly read (its events continue on the next page),
+    // so the last ledger known to be complete is 199.
+    expect(error!.lastScannedLedger).toBe(199);
   });
 
   it("yields a truncated marker page instead of throwing when asked to", async () => {
@@ -357,9 +359,9 @@ describe("PaymentsService.scanIterator", () => {
     };
 
     await expect(read()).rejects.toBeInstanceOf(EventTruncationError);
-    // The cursor is left where a resumption can pick up: the last page that was
-    // fully read, not the uncommitted tail.
-    expect(await client.scanStore.getCursor(scanCursorKey(identity))).toBe(100);
+    // Ledger 100 was only partly read when the cap hit, so the cursor stops
+    // before it. Resuming then re-reads ledger 100 in full (issue #1075).
+    expect(await client.scanStore.getCursor(scanCursorKey(identity))).toBe(99);
   });
 
   it("can be asked for a partial scan instead of failing", async () => {
@@ -393,6 +395,11 @@ describe("PaymentsService.scanIterator", () => {
     })) {
       matches.push(match);
     }
-    expect(matches.length).toBe(2);
+    // The match from ledger 100 is complete (the scan moved on to 200). The match
+    // from ledger 200 was only partly read, so it waits for the next run, which
+    // re-reads ledger 200 in full. Nothing is lost and nothing is yielded twice.
+    expect(matches.length).toBe(1);
+    expect(matches[0].ledger).toBe(100);
+    expect(await client.scanStore.getCursor(scanCursorKey(identity))).toBe(199);
   });
 });

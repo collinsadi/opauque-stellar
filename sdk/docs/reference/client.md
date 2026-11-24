@@ -42,8 +42,8 @@ signer, including the blind-signing limitations of Soroban invocations.
 - `send({ to, amountXlm, memo?, feePerOperation? })` — memo required for known custodial destinations; if the payment lands but the announcement fails, throws `UnannouncedPaymentError` with everything needed to retry
 - `announcePaidTransfer({ stealthAddress, ephemeralPubKey, metadata })` — retry a failed announcement (`err.toAnnounceParams()` supplies the arguments)
 - `scan({ announcements, identity })` — pure-TS, returns matches
-- `scanIterator({ identity, startLedger?, cursorKey?, maxPages?, allowTruncation? })` — async generator, streams matches from chain with a resumable, **per-identity** cursor; throws `EventTruncationError` rather than returning a partial scan
-- `scanCursorKey(identity)` — the `ScanStore` key an identity's cursor lives under
+- `scanIterator({ identity, startLedger?, cursorKey?, maxPages?, allowTruncation?, allowRetentionGap?, onRetentionGap? })` — async generator, streams matches from chain with a resumable, **per-identity** cursor; a match is yielded once its ledger is fully read, so resumption is exact. Throws `EventTruncationError` rather than returning a partial scan, and `RetentionGapError` when the RPC has pruned ledgers the scan needs
+- `scanCursorKey(identity)` — the `ScanStore` key an identity's cursor lives under, derived from the public viewing key (no private key material)
 - `sweep({ stealthPrivKey, destination, amountStroops, memo?, feePerOperation? })`
 - `sweepWithMerge({ stealthPrivKey, destination })` — merges the stealth account, recovering the full balance including the base reserve; throws `MergeIncompatibleError` for trustlines/offers (fall back to `sweep`)
 

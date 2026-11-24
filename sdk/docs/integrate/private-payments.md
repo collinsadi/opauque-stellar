@@ -97,7 +97,10 @@ without touching the network.
 
 `scanIterator` reads announcements from the stealth-announcer contract and
 **matches** them against the recipient's keys (pure crypto, no network),
-yielding each transfer addressed to this identity as soon as its page is read:
+yielding each transfer addressed to this identity once its ledger is fully read.
+A page can end partway through a ledger, so matches from the newest ledger
+wait until the scan moves past it. That keeps resumption exact: nothing is
+skipped and nothing is yielded twice.
 
 <<< @/snippets/private-payments.ts#scan
 
@@ -116,9 +119,15 @@ every run.
 Scans are event-paged and bounded: a scan that hits the page cap raises
 `EventTruncationError` (transfers may be missing) with `lastScannedLedger` and
 `continuationCursor`, rather than reporting a partial result as a complete one.
-The persisted cursor stays at the last fully-read page, so calling
+The persisted cursor stays at the last ledger read in full, so calling
 `scanIterator` again resumes there. Pass `allowTruncation: true` only if a gap
 is acceptable to you.
+
+A scan that starts in history the RPC has pruned raises `RetentionGapError`,
+because those announcements can never be read. A cursor saved long ago can hit
+this too. Start from a retained ledger with `startLedger`, or pass
+`allowRetentionGap: true` with `onRetentionGap` to continue and record the
+pruned range.
 
 ::: details Supplying your own announcements
 `payments.scan({ announcements, identity })` matches an announcement list you

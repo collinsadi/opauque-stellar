@@ -6,7 +6,7 @@ import { scValToNative, xdr } from "@stellar/stellar-sdk";
 import type { ContractInvoker } from "../rpc/client";
 import type { OpaqueSigner } from "../signer/index";
 import { addressToScVal, bytesToScVal, u64ToScVal } from "../rpc/scval";
-import { paginateContractEvents } from "../rpc/events";
+import { paginateContractEvents, type RetentionGap } from "../rpc/events";
 import type { StealthAnnouncement } from "../crypto/index";
 import { assertValidStealthMetaAddress } from "../crypto/dksap";
 
@@ -16,25 +16,32 @@ export const SCHEME_ID_SECP256K1 = 1n;
 const ANNOUNCEMENT_EVENT_LOOKBACK = 16_000;
 const ANNOUNCEMENT_TOPIC = xdr.ScVal.scvSymbol("Announcement").toXDR("base64");
 
+/** A decoded announcement, tagged with the ledger it was emitted in. */
+export interface LedgerAnnouncement extends StealthAnnouncement {
+  /** Ledger the `Announcement` event belongs to. */
+  ledger: number;
+}
+
 /** A page of `Announcement` events, plus how far the scan can be trusted to have read. */
 export interface AnnouncementPage {
   /**
-   * Announcements decoded from this page. Empty for a page over a quiet ledger
-   * range — such pages are yielded too, so a caller can advance a persisted
-   * cursor past a range that holds no transfers instead of rescanning it on
-   * every run.
+   * Announcements decoded from this page, each tagged with its own ledger.
+   * Empty for a page over a quiet ledger range — such pages are yielded too, so
+   * a caller can advance a persisted cursor past a range that holds no transfers
+   * instead of rescanning it on every run.
    */
-  announcements: StealthAnnouncement[];
+  announcements: LedgerAnnouncement[];
   /**
-   * Highest ledger represented in `announcements` — the ledger a match in this
-   * page belongs to (the scan's start ledger for a quiet page).
+   * Highest ledger represented in `announcements`. That ledger may be only
+   * partly read: a later page can still add its announcements (the scan's start
+   * ledger for a quiet page).
    */
   ledger: number;
   /**
    * Highest ledger this scan has read through. Set on the last page of a
    * drained scan, where it can be well past {@link ledger}: the quiet ledgers
    * after the final announcement were read too. Persist a cursor from this
-   * value (`ledger + 1` on resume) to skip exactly the range already scanned.
+   * value (`cursor + 1` on resume) to skip exactly the range already scanned.
    */
   endLedger: number;
   /** True on the last page of a fully drained scan — nothing was left unread. */
@@ -42,11 +49,16 @@ export interface AnnouncementPage {
   /**
    * True when the page cap stopped the scan with events still unread: this
    * scan is **incomplete** and transfers may have been missed. Resume with
-   * `continuationCursor`, or from `ledger + 1` on a later scan.
+   * `continuationCursor`, or from the ledger before {@link ledger} on a later scan.
    */
   truncated: boolean;
   /** Opaque `getEvents` cursor to continue the truncated scan from. */
   continuationCursor?: string;
+  /**
+   * Ledgers skipped because the RPC has pruned them. Set from the first page the
+   * clamp affects onward; absent when the requested start was retained.
+   */
+  retentionGap?: RetentionGap;
 }
 
 /** Options for {@link StealthAnnouncer.scanEvents}. */
@@ -231,7 +243,7 @@ export class StealthAnnouncer {
       maxPages: opts?.maxPages,
       throwOnTruncation: opts?.throwOnTruncation,
     })) {
-      const announcements: StealthAnnouncement[] = [];
+      const announcements: LedgerAnnouncement[] = [];
       for (const ev of page.events) {
         const data = scValToNative(ev.value) as unknown[];
         const stealthAddress = Buffer.from(data[1] as Uint8Array).toString("hex");
@@ -241,6 +253,7 @@ export class StealthAnnouncer {
           stealthAddress: "0x" + stealthAddress,
           ephemeralPubKey,
           viewTag: metadata[0] ?? 0,
+          ledger: Number(ev.ledger),
         });
       }
       yield {
@@ -250,6 +263,7 @@ export class StealthAnnouncer {
         complete: page.complete,
         truncated: page.truncated,
         continuationCursor: page.continuationCursor,
+        retentionGap: page.retentionGap,
       };
     }
   }

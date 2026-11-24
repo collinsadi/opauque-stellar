@@ -33,6 +33,12 @@ export interface ScanStore {
   getCursor(identity?: string): Promise<number | null>;
   /** Record the last processed ledger for `identity`. */
   setCursor(ledger: number, identity?: string): Promise<void>;
+  /**
+   * Remove the cursor stored for `identity`. Optional: the SDK calls it only to
+   * retire a cursor saved under a pre-migration key, so a store that omits it
+   * simply keeps that stale entry.
+   */
+  deleteCursor?(identity?: string): Promise<void>;
 }
 
 /** In-memory {@link NoteStore}. Notes are keyed by commitment. */
@@ -72,6 +78,9 @@ export class MemoryScanStore implements ScanStore {
   }
   async setCursor(ledger: number, identity = ""): Promise<void> {
     this.cursors.set(identity, ledger);
+  }
+  async deleteCursor(identity = ""): Promise<void> {
+    this.cursors.delete(identity);
   }
 }
 
