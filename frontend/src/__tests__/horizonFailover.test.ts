@@ -44,7 +44,6 @@ describe("RPC failover chaos test", () => {
       backoff.recordFailure();
       backoff.recordFailure();
       let state = backoff.getState();
-      const highInterval = state.currentIntervalMs;
       expect(state.consecutiveFailures).toBe(3);
 
       backoff.recordSuccess();
@@ -267,11 +266,6 @@ describe("RPC failover chaos test", () => {
     });
 
     it("allows testing both primary and fallback URL paths", () => {
-      const urls = {
-        primary: "https://horizon.stellar.org",
-        fallback: "https://horizon-testnet.stellar.org",
-      };
-
       const backoffs = {
         primary: new AdaptiveBackoff(1000),
         fallback: new AdaptiveBackoff(1000),

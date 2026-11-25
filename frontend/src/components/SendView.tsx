@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { motion } from "framer-motion";
 import {
   BASE_FEE,
@@ -44,6 +44,10 @@ import {
   type PaymentLinkRequest,
 } from "../lib/paymentLink";
 import { NetworkValidationService } from "../services/networkValidation";
+import { waitForTransaction } from "../lib/pollingUtils";
+
+/** How long to wait for the announcement transaction to land before giving up. */
+const ANNOUNCE_CONFIRM_TIMEOUT_MS = 60_000;
 
 const isMetaAddress = (value: string): boolean => {
   const normalized = value.startsWith("0x") ? value : `0x${value}`;
@@ -86,6 +90,13 @@ export function SendView() {
   const [maxSendableStroops, setMaxSendableStroops] = useState<bigint | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [showQrScanner, setShowQrScanner] = useState(false);
+  // Aborts any in-flight confirmation poll when the view unmounts (#923).
+  const pollAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    pollAbortRef.current = controller;
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     if (!address) {
@@ -203,24 +214,10 @@ export function SendView() {
       return;
     }
 
-    // If a G-address is entered, resolve it to a meta-address via the registry.
-    if (!resolvedLink && isGAddress(recipientMeta)) {
-      setSending(true);
-      setSteps([]);
-      addStep("wait", "Resolving stealth meta-address from registry…");
-      const resolved = await resolveMetaAddress(recipientMeta);
-      if (!resolved) {
-        setError("Stellar address is not registered in the stealth registry.");
-        setSteps((prev) => {
-          const last = prev[prev.length - 1];
-          return prev.slice(0, -1).concat([{ ...last, status: "error" as const }]);
-        });
-        setSending(false);
-        return;
-      }
-      addStep("ok", "Meta-address resolved from registry.", resolved);
-      recipientMeta = resolved;
-    } else if (!resolvedLink && !isMetaAddress(recipientMeta)) {
+    // #922: finish ALL synchronous validation before entering the busy state, so a
+    // bad amount or memo never flashes the stepper or disables the form.
+    const needsRegistryLookup = !resolvedLink && isGAddress(recipientMeta);
+    if (!resolvedLink && !needsRegistryLookup && !isMetaAddress(recipientMeta)) {
       setError(
         "Enter a valid Stellar address (G…), stealth meta-address (0x + 132 hex chars), or a payment link.",
       );
@@ -234,7 +231,7 @@ export function SendView() {
       setError("Invalid amount.");
       return;
     }
-    if (value === 0n) {
+    if (value <= 0n) {
       setError("Amount must be greater than 0.");
       return;
     }
@@ -249,6 +246,33 @@ export function SendView() {
 
     setSending(true);
     setSteps([]);
+
+    // If a G-address is entered, resolve it to a meta-address via the registry.
+    if (needsRegistryLookup) {
+      addStep("wait", "Resolving stealth meta-address from registry…");
+      let resolved: string | null = null;
+      let lookupError: string | null = null;
+      try {
+        resolved = await resolveMetaAddress(recipientMeta);
+      } catch (e) {
+        lookupError = e instanceof Error ? e.message : "Registry lookup failed";
+      }
+      if (!resolved) {
+        setError(
+          lookupError
+            ? `Could not reach the stealth registry: ${lookupError}`
+            : "Stellar address is not registered in the stealth registry.",
+        );
+        setSteps((prev) => {
+          const last = prev[prev.length - 1];
+          return prev.slice(0, -1).concat([{ ...last, status: "error" as const }]);
+        });
+        setSending(false);
+        return;
+      }
+      addStep("ok", "Meta-address resolved from registry.", resolved);
+      recipientMeta = resolved;
+    }
 
     function addStep(
       status: ProtocolStep["status"],
@@ -373,11 +397,13 @@ export function SendView() {
         resolvePendingTx(announceHash, "failed", "Rejected by the RPC node");
         throw new Error(JSON.stringify(announceSend));
       }
-      let announceResp = await soroban.getTransaction(announceHash);
-      while (announceResp.status === "NOT_FOUND") {
-        await new Promise((r) => setTimeout(r, 1000));
-        announceResp = await soroban.getTransaction(announceHash);
-      }
+      // #923: bounded, abortable confirmation wait (was an unbounded loop). On
+      // timeout the tx stays tracked as pending so the background poller can still
+      // resolve it; a slow ledger is not recorded as a failure.
+      const announceResp = await waitForTransaction(
+        () => soroban.getTransaction(announceHash),
+        { timeoutMs: ANNOUNCE_CONFIRM_TIMEOUT_MS, signal: pollAbortRef.current?.signal },
+      );
       if (announceResp.status !== "SUCCESS") {
         resolvePendingTx(announceHash, "failed", announceResp.status);
         throw new Error(`Announcement failed: ${announceResp.status}`);

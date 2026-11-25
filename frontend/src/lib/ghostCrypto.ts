@@ -94,7 +94,7 @@ async function decryptField(
 
 // ---- Public API ----
 
-type GhostEntryLike = {
+export type GhostEntryLike = {
   cluster: string;
   stealthAddress: string;
   ephemeralPrivKeyHex?: string;

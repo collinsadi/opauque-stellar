@@ -145,14 +145,9 @@ export const useVaultStore = create<VaultState>()(
         /* hydrated */
       },
       // Migrate plaintext data to encrypted when passphrase becomes available
-      migrate: async (persistedState: unknown, version: number) => {
-        // If already encrypted or no state, keep as-is
-        if (version === 1 || typeof persistedState !== "object" || persistedState === null) {
-          return persistedState;
-        }
-        // Legacy plaintext state - return as-is for the migration to handle
-        return persistedState;
-      },
+      // Both encrypted (v1) and legacy plaintext state already have the VaultState
+      // shape; encryptedStorage re-encrypts plaintext on the next write.
+      migrate: async (persistedState: unknown) => persistedState as VaultState,
     }
   ),
 );

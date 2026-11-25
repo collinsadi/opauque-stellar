@@ -13,7 +13,7 @@
 import { useEffect, useMemo, useState, useCallback, useId } from "react";
 import { useWallet } from "../hooks/useWallet";
 import { useSchemaStore } from "../store/schemaStore";
-import { validateStellarAddress, getAddressValidationError } from "../lib/stellarAddress";
+import { getAddressValidationError } from "../lib/stellarAddress";
 import type { SchemaV2 } from "../lib/schema";
 import {
   bytesToHex,

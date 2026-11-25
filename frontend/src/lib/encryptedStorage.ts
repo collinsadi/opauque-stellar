@@ -162,7 +162,8 @@ export function isEncryptedPayload(value: unknown): value is EncryptedPayload {
  * ```
  */
 export function createEncryptedStorage<TState>(
-  storageKey: string,
+  // Kept for call-site readability; zustand passes the persisted key as `name`.
+  _storageKey: string,
   getPassphrase: () => string | null,
 ): {
   getItem: (name: string) => Promise<{ state: TState; version?: number } | null>;

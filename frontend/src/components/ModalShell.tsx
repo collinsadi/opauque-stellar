@@ -9,7 +9,10 @@ type ModalShellProps = {
   onClose: () => void;
   /** When false, clicking the backdrop won't close. */
   closeOnBackdrop?: boolean;
-  /** While true, Escape and backdrop clicks are ignored and a notice is shown. */
+  /**
+   * While true, every dismissal path (Escape, backdrop click, header close button)
+   * is ignored and a notice is shown. Defaults to false.
+   */
   busy?: boolean;
   maxWidthClassName?: string;
   contentClassName?: string;
@@ -78,8 +81,9 @@ export function ModalShell({
               </div>
               <button
                 type="button"
-                onClick={onClose}
-                className="rounded-lg p-1 text-mist/70 transition-colors hover:text-white"
+                onClick={() => !busy && onClose()}
+                disabled={busy}
+                className="rounded-lg p-1 text-mist/70 transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-mist/70"
                 aria-label="Close"
               >
                 <svg

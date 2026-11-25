@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { RecoveryManager, type BackupFile } from "../../services/recoveryManager";
-import { debugLog } from "../lib/debugLog";
+import { debugLog } from "../../lib/debugLog";
 
 export const BackupImport: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
@@ -25,8 +25,8 @@ export const BackupImport: React.FC = () => {
         throw new Error("Invalid backup file format.");
       }
 
-const payload = await RecoveryManager.importBackup(password, backupFile);
-// In a real app, populate stores with the imported payload here.
+      // In a real app, populate stores with the imported payload here.
+      await RecoveryManager.importBackup(password, backupFile);
       debugLog("Backup imported successfully");
       setSuccess(true);
       setFile(null);

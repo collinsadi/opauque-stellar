@@ -259,13 +259,20 @@ committed.
 cd frontend
 npm ci
 npm run lint              # ESLint, zero errors
-npx tsc -b --noEmit       # typecheck
+npm run typecheck         # tsc -b with the app's strict config
 npm test                  # vitest run
-npm run build             # production build
+npm run build             # production build (runs tsc -b again)
 ```
 
+Run the typecheck through the npm script (or `npx tsc -b` from inside
+`frontend/`). Running `npx tsc` from the repo root resolves an unrelated `tsc`
+npm package and checks nothing — that is how type errors reached `main` (#1088).
+
 CI runs lint, typecheck, test, and build on **Node 20 and Node 22** — this is the
-only component tested on both. The `accessibility-audit.yml` workflow adds a
+only component tested on both. The separate **Frontend typecheck** job always runs
+(no path filter) and is meant to be a required status check; it also runs
+`npm run typecheck:gate`, which injects known error classes into a scratch file and
+fails unless `tsc -b` rejects every one of them. The `accessibility-audit.yml` workflow adds a
 Playwright/axe-core audit on `frontend/**` changes (see § 13).
 
 ### 6e. SDK

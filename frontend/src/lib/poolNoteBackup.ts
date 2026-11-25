@@ -1,6 +1,6 @@
 import JSZip from "jszip";
 import type { PoolNote } from "./poolNotes";
-import { KDF_ITERATIONS, KDF_PARAMS } from "./kdfConfig";
+import { KDF_PARAMS } from "./kdfConfig";
 
 export const BACKUP_FORMAT_VERSION = 2;
 export const BACKUP_SCHEMA_URI =
@@ -53,7 +53,7 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(bin);
 }
 
-function base64ToBytes(base64: string): Uint8Array {
+function base64ToBytes(base64: string): Uint8Array<ArrayBuffer> {
   const bin = atob(base64);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) {
@@ -69,7 +69,8 @@ function randomBytes(length: number): Uint8Array<ArrayBuffer> {
 }
 
 export async function computeSha256Hex(data: Uint8Array): Promise<string> {
-  const hashBuf = await crypto.subtle.digest("SHA-256", data);
+  // Copy into an ArrayBuffer-backed view: WebCrypto rejects SharedArrayBuffer views.
+  const hashBuf = await crypto.subtle.digest("SHA-256", new Uint8Array(data));
   return Array.from(new Uint8Array(hashBuf))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
@@ -304,7 +305,7 @@ export async function importEncryptedPoolNoteBackup(
     const decryptedBuf = await crypto.subtle.decrypt(
       { name: "AES-GCM", iv },
       key,
-      ciphertext,
+      new Uint8Array(ciphertext),
     );
     decryptedPlaintext = new TextDecoder().decode(decryptedBuf);
   } catch {
@@ -331,7 +332,8 @@ export async function importEncryptedPoolNoteBackup(
  */
 export function migrateDecryptedNotes(
   payload: unknown,
-  sourceVersion: number,
+  // Reserved for version-specific migrations; every known version shares one shape today.
+  _sourceVersion: number,
   fallbackCluster: string,
 ): DecryptedNoteBackupPayload {
   if (!payload || typeof payload !== "object") {

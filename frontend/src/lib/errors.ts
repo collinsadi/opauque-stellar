@@ -46,6 +46,7 @@ export type OpaqueErrorCode =
   | "NOTE_COMMITMENT_MISMATCH"
   | "POOL_ROOTS_UNPUBLISHED"
   | "POOL_ROOTS_STALE"
+  | "POOL_HISTORY_INCOMPLETE"
   | "PROOF_ARTIFACT_UNAVAILABLE"
   | "PROOF_GENERATION_FAILED"
   // verification
@@ -302,6 +303,43 @@ export class PoolRootsStaleError extends ProofError {
     this.poolId = init.poolId;
     this.stateRootMatches = init.stateRootMatches;
     this.aspRootMatches = init.aspRootMatches;
+  }
+}
+
+/**
+ * The wallet could not rebuild the complete pool state tree: RPC event paging hit its
+ * cap, or leaves fall outside RPC retention and no indexer fallback filled them (#921).
+ * Proving against a tree with holes would silently produce a wrong root.
+ */
+export class PoolHistoryIncompleteError extends ProofError {
+  readonly poolId: string;
+  readonly missingLeafIndices: number[];
+  readonly truncated: boolean;
+
+  constructor(
+    init: OpaqueErrorInit & {
+      poolId: string;
+      missingLeafIndices: number[];
+      truncated: boolean;
+    },
+  ) {
+    super({
+      ...init,
+      name: "PoolHistoryIncompleteError",
+      code: "POOL_HISTORY_INCOMPLETE",
+      stage: "proof",
+      retryable: false,
+      context: {
+        ...init.context,
+        poolId: init.poolId,
+        missingLeafCount: init.missingLeafIndices.length,
+        firstMissingLeaf: init.missingLeafIndices[0],
+        truncated: init.truncated,
+      },
+    });
+    this.poolId = init.poolId;
+    this.missingLeafIndices = init.missingLeafIndices;
+    this.truncated = init.truncated;
   }
 }
 

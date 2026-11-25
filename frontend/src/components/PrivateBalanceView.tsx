@@ -324,6 +324,7 @@ async function processRawLogsToFoundTxs(
   const totalBalance = found.reduce((sum, tx) => sum + (tx.balance ?? 0n), 0n);
   debugLog("📥 [Opaque] PrivateBalance: fetchFoundTxs done", {
     count: found.length,
+    unknownBalanceCount,
     totalBalanceStroops: totalBalance.toString(),
     totalBalanceXlm: formatXlm(totalBalance),
   });
@@ -610,7 +611,8 @@ export function PrivateBalanceView() {
     const dust: PortfolioEntry[] = [];
     for (const tx of activeTxs) {
       const balanceRaw = tx.balance;
-      if (balanceRaw <= 0n) continue;
+      // #1133: an unknown (null) balance is neither claimable nor dust.
+      if (balanceRaw == null || balanceRaw <= 0n) continue;
       if (balanceRaw <= DUST_CEILING_STROOPS) {
         dustTotalRaw += balanceRaw;
         dust.push({ tx, balanceRaw });
@@ -647,7 +649,7 @@ export function PrivateBalanceView() {
         return;
       }
       const amountRaw = tx.balance;
-      if (amountRaw <= 0n) return;
+      if (amountRaw == null || amountRaw <= 0n) return;
       if (!trimmed) {
         setClaimError("Please enter a destination address.");
         return;
@@ -1020,8 +1022,8 @@ export function PrivateBalanceView() {
   useEffect(() => {
     if (!scanNotificationsEnabled || scanner.progress.phase !== "done") return;
     void notifyScanComplete({
-      foundCount: found.filter((tx) => !tx.isSpent && tx.balance > 0n).length,
-      newGhostCount: ghostTxs.filter((tx) => tx.balance > 0n).length,
+      foundCount: found.filter((tx) => !tx.isSpent && tx.balance != null && tx.balance > 0n).length,
+      newGhostCount: ghostTxs.filter((tx) => tx.balance != null && tx.balance > 0n).length,
     });
   }, [scanNotificationsEnabled, scanner.progress.phase, found, ghostTxs]);
 

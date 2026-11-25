@@ -39,7 +39,11 @@ describe("ghostCrypto", () => {
 
   it("rejects unsupported payload versions", async () => {
     await expect(
-      decryptGhostEntries({ version: 2, salt: "AA==", entries: [] }, "pin"),
+      decryptGhostEntries(
+        // Deliberately invalid: version 2 does not exist.
+        { version: 2, salt: "AA==", entries: [] } as unknown as Parameters<typeof decryptGhostEntries>[0],
+        "pin",
+      ),
     ).rejects.toThrow("Unsupported encrypted payload version");
   });
 

@@ -131,7 +131,10 @@ When `ASP_POLICY=allowlist` is active, any finalized deposit index absent from t
 If an appeal is accepted, run the operator command below against the ASP data directory. It removes the persisted rejection and adds the index to the approved set immediately; the next tick republishes the association-set root.
 
 ```sh
-npm --prefix asp run asp:reinstate -- --pool-id <pool-id> --index <deposit-index> --data-dir <asp-data-dir>
+npm --prefix asp run asp:reinstate -- --pool-id <pool-id> --index <deposit-index> --data-dir <asp-data-dir> \
+  --operator <name-or-ticket> --reason "<appeal reference>"
 ```
 
-The command is deliberately limited to indices recorded as rejected and should be run under the operator's normal change-control process. The persisted policy decisions remain available for the audit trail.
+The command is deliberately limited to indices recorded as rejected and should be run under the operator's normal change-control process. The persisted policy decisions remain available for the audit trail, and every reinstatement appends its own `manual-reinstatement` approve decision recording `--operator` and `--reason`.
+
+It is safe to run while the indexer is running. Both take the pool's state lock (`data/state/<pool-id>.json.lock`): the reinstatement waits for any in-flight tick to finish (default timeout 60s, `--lock-timeout-ms` to change it), and the next tick republishes the root with the deposit included. A lock left behind by a crashed process is reclaimed automatically once its PID is gone.

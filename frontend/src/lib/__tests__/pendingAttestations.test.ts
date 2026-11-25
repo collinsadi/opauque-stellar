@@ -82,7 +82,7 @@ describe("recoverPendingAttestation", () => {
     expect(done).toBeNull();
     expect(d.onResolved).toHaveBeenCalledTimes(1);
     expect(d.announce).toHaveBeenCalledTimes(1);
-    expect(d.announce.mock.calls[0]?.[1]).toEqual(uid);
+    expect(vi.mocked(d.announce).mock.calls[0]?.[1]).toEqual(uid);
   });
 
   it("treats a failed lookup request as still pending", async () => {

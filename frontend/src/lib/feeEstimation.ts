@@ -10,7 +10,6 @@ import {
   TransactionBuilder,
   FeeBumpTransaction,
   type Transaction,
-  type FeeBumpBuilder,
   BASE_FEE,
 } from "@stellar/stellar-sdk";
 import { getSorobanServer } from "./stellar";
@@ -47,7 +46,8 @@ export interface NetworkFeeConditions {
 export async function getNetworkFeeConditions(): Promise<NetworkFeeConditions> {
   try {
     const server = getSorobanServer();
-    const health = await server.getHealth();
+    // Reachability probe: an unhealthy RPC throws and falls back to defaults below.
+    await server.getHealth();
     // Use ledger close time as a congestion proxy (normal ~5s)
     const ledgerCloseTime = 5; // default assumption
     const isCongested = ledgerCloseTime > 8;

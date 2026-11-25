@@ -73,6 +73,9 @@ export async function resolveMetaAddress(address: string): Promise<Hex | null> {
     if (!bytes || bytes.length !== 66) return null;
     return ("0x" + bytesToHex(bytes)) as Hex;
   } catch (error) {
+    // An unfunded account cannot have registered a meta-address; anything that
+    // looks like a connectivity failure must surface so the caller can retry.
+    if (isAccountNotFound(error) && !isConnectivityError(error)) return null;
     throw error instanceof Error ? error : new Error("Registry lookup failed");
   }
 }

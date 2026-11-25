@@ -1,26 +1,40 @@
-/** Reinstate an appealed deposit in the next ASP association set. */
+/**
+ * Reinstate an appealed deposit in the next ASP association set.
+ *
+ * Safe to run while the indexer is running: it waits for the pool's state lock
+ * (held by the indexer for the duration of each tick), applies the change, and
+ * records an audit decision. The next tick republishes the root.
+ */
 import { resolve } from "node:path";
 import { FileStore } from "../src/store.ts";
+import { reinstateDeposit } from "../src/reinstate.ts";
 
-function arg(name: string): string {
+const USAGE =
+  "usage: npm run asp:reinstate -- --pool-id POOL --index N [--operator NAME] [--reason TEXT] [--data-dir DIR] [--lock-timeout-ms MS]";
+
+function optional(name: string): string | undefined {
   const i = process.argv.indexOf(name);
-  const value = i >= 0 ? process.argv[i + 1] : undefined;
-  if (!value) throw new Error(`usage: npm run asp:reinstate -- --pool-id POOL --index N [--data-dir DIR]`);
+  return i >= 0 ? process.argv[i + 1] : undefined;
+}
+
+function required(name: string): string {
+  const value = optional(name);
+  if (!value) throw new Error(USAGE);
   return value;
 }
 
-const poolId = arg("--pool-id");
-const index = Number(arg("--index"));
-if (!Number.isInteger(index) || index < 0) throw new Error("--index must be a non-negative integer");
-const dataDirArg = process.argv.indexOf("--data-dir");
-const dataDir = resolve(dataDirArg >= 0 && process.argv[dataDirArg + 1] ? process.argv[dataDirArg + 1]! : "data");
-const store = new FileStore(dataDir);
-const state = store.load(poolId);
-if (!state) throw new Error(`no state found for pool ${poolId}`);
-if (!(state.rejectedIndices ?? []).includes(index)) throw new Error(`deposit ${index} is not a persisted rejection`);
-state.rejectedIndices = (state.rejectedIndices ?? []).filter((n) => n !== index);
-state.deferredIndices = (state.deferredIndices ?? []).filter((n) => n !== index);
-if (!state.approvedIndices.includes(index)) state.approvedIndices.push(index);
-state.approvedIndices.sort((a, b) => a - b);
-store.save(state);
-console.log(JSON.stringify({ ok: true, poolId, index, nextSet: true }));
+const poolId = required("--pool-id");
+const index = Number(required("--index"));
+const dataDir = resolve(optional("--data-dir") ?? "data");
+const timeoutRaw = optional("--lock-timeout-ms");
+const timeoutMs = timeoutRaw === undefined ? undefined : Number(timeoutRaw);
+if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
+  throw new Error("--lock-timeout-ms must be a positive number");
+}
+
+const result = await reinstateDeposit(new FileStore(dataDir), poolId, index, {
+  operator: optional("--operator") ?? process.env.USER,
+  reason: optional("--reason"),
+  lock: { timeoutMs },
+});
+console.log(JSON.stringify({ ...result, nextSet: true }));

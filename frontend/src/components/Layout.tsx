@@ -5,7 +5,6 @@ import { TestnetBanner } from "./TestnetBanner";
 import { NetworkStatusBanner } from "./NetworkStatusBanner";
 import { isTabNavVisible } from "../lib/tabAccess";
 import { useTranslation } from "../lib/i18n";
-import { debugLog } from "../lib/debugLog";
 
 export type Tab =
   | "dashboard"

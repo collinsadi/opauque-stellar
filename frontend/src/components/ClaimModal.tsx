@@ -52,7 +52,8 @@ export function ClaimModal({
   onClose,
 }: ClaimModalProps) {
   const amountRaw = tx.balance;
-  const amountStr = formatXlm(amountRaw);
+  // #1133: a null balance is unknown (RPC failure), not zero.
+  const amountStr = amountRaw == null ? "unknown" : formatXlm(amountRaw);
   const quote = withdrawalPreview?.quote;
   const destinationTrimmed = destination.trim();
   const privacyVerdict = evaluateDestinationPrivacy({

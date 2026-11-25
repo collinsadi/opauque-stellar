@@ -10,7 +10,7 @@
  * misconfiguration from pointing the wallet at attacker-controlled endpoints.
  */
 
-import { isHostnameAllowed, validateRpcHostname } from "./rpcAllowlist";
+import { validateRpcHostname } from "./rpcAllowlist";
 
 export type StellarNetwork = "testnet" | "futurenet" | "mainnet" | "local";
 export const STELLAR_NETWORKS: readonly StellarNetwork[] = [

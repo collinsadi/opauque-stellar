@@ -19,9 +19,13 @@ export type ContractKey =
   | "relayerRegistry"
   | "multisigAdmin";
 
+/** Contracts a manifest may omit until they are deployed (`multisig-admin` is not yet). */
+export type OptionalContractKey = "multisigAdmin";
+
 export type ContractRecord = {
-  id: string;
-  wasmHash: string;
+  /** Contract ID, or null/"" until deployed (per manifest.schema.json). */
+  id: string | null;
+  wasmHash: string | null;
   package?: string;
 };
 
@@ -85,7 +89,12 @@ export type DeploymentManifestV1 = {
   multisig: string | null;
   wiring: WiringBlock | null;
   deploymentStatus: DeploymentStatus;
-  contracts: Record<ContractKey, ContractRecord>;
+  /**
+   * `OptionalContractKey` entries may be absent until first deployed;
+   * this matches `manifest.schema.json` and `scripts/verify-deployment-manifest.ts`.
+   */
+  contracts: Record<Exclude<ContractKey, OptionalContractKey>, ContractRecord> &
+    Partial<Record<OptionalContractKey, ContractRecord>>;
   artifacts: {
     frontend: {
       buildCommit: string | null;
@@ -144,6 +153,6 @@ export function manifestContractIds(
   manifest: DeploymentManifestV1,
 ): Record<ContractKey, string> {
   return Object.fromEntries(
-    CONTRACT_KEYS.map((key) => [key, manifest.contracts[key].id]),
+    CONTRACT_KEYS.map((key) => [key, manifest.contracts[key]?.id ?? ""]),
   ) as Record<ContractKey, string>;
 }

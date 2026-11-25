@@ -86,7 +86,8 @@ export type UseScannerOptions = {
 };
 
 export type WatchlistBalances = {
-  eth: Record<string, bigint>;
+  /** Native balance per address; null when the fetch failed (#1133). */
+  eth: Record<string, bigint | null>;
   tokens: Record<string, Record<string, bigint>>;
 };
 
@@ -95,7 +96,7 @@ export type UseScannerResult = {
   announcements: CachedAnnouncement[];
   progress: ScanProgress;
   /** Native balance per ghost/watchlist address (manual scan). Use for displaying/claiming manual receives. */
-  ghostBalances: Record<string, bigint>;
+  ghostBalances: Record<string, bigint | null>;
   // #111: opaque-mainnet-v1 is XLM-only. Asset / token balances are
   // explicitly out of v1 scope; the field
   // below was previously marked "reserved for future use" but the
@@ -406,7 +407,7 @@ async function checkWatchlistBalances(
   watchlist: string[],
   addressResolver: Record<string, string> = {},
 ): Promise<WatchlistBalances> {
-  const eth: Record<string, bigint> = {};
+  const eth: Record<string, bigint | null> = {};
   const tokensOut: Record<string, Record<string, bigint>> = {};
   for (const addr of watchlist) {
     tokensOut[addr] = {};
@@ -472,7 +473,7 @@ export function processInIdleBatches<T, R>(
 export function useScanner(opts: UseScannerOptions): UseScannerResult {
   const { cluster, publicClient, announcerAddress, enabled, ghostAddresses = [], watchlistAddresses = [], addressResolver = {} } = opts;
   const [announcements, setAnnouncements] = useState<CachedAnnouncement[]>([]);
-  const [ghostBalances, setGhostBalances] = useState<Record<string, bigint>>({});
+  const [ghostBalances, setGhostBalances] = useState<Record<string, bigint | null>>({});
   const [ghostTokenBalances, setGhostTokenBalances] = useState<Record<string, Record<string, bigint>>>({});
   const [progress, setProgress] = useState<ScanProgress>({
     phase: "idle",

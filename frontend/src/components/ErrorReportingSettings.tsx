@@ -205,7 +205,7 @@ export function ErrorReportingSettings() {
                 ),
                 featureFlags: getFeatureFlags(),
                 syncStatus: { scanner: "ready", lastLedger: 12345, lastUpdatedAt: new Date().toISOString() },
-                errors: pending.length > 0 ? pending : [sampleReport()],
+                errors: pending.length > 0 ? [...pending] : [sampleReport()],
               });
               downloadDiagnosticsExport(exportPayload, "opaque-diagnostics.json");
             }}

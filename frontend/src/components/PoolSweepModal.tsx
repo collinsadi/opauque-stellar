@@ -147,7 +147,7 @@ export function PoolSweepModal({ tx, cluster, onClose, onSwept }: PoolSweepModal
             className="text-slate-200"
           />
           <span className="text-success font-medium shrink-0">
-            {formatXlm(tx.balance)} XLM
+            {tx.balance == null ? "Unknown" : `${formatXlm(tx.balance)} XLM`}
           </span>
         </div>
       </div>

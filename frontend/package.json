@@ -11,6 +11,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "typecheck": "tsc -b",
+    "typecheck:gate": "tsx scripts/verify-typecheck-gate.ts",
     "lint:unused": "tsx scripts/check-unused-exports.ts",
     "preview": "vite preview",
     "start": "vite preview --host 0.0.0.0 --port ${PORT:-4173}",

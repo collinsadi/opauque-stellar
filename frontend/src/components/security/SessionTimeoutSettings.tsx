@@ -58,7 +58,7 @@ export function SessionTimeoutSettings() {
 
       <p className="mt-3 text-xs text-mist/60">
         Currently {idleTimeoutEnabled && idleTimeoutMinutes > 0
-          ? `locking after ${idleTimeoutMinutes} minute${idleTimeoutMinutes === 1 ? "" : "s"} of inactivity`
+          ? `locking after ${idleTimeoutMinutes} minutes of inactivity`
           : "disabled"}
         .
       </p>

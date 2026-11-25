@@ -1,6 +1,5 @@
 import { isAllowed, getNetworkDetails } from "@stellar/freighter-api";
 import { useSecurityStore } from "../store/securityStore";
-import { networkConnectivityService } from "./networkConnectivity";
 
 export class NetworkValidationService {
   /**

@@ -59,7 +59,7 @@ export class RecoveryManager {
   }
 
   private static async computeChecksum(data: Uint8Array): Promise<string> {
-    const hashBuf = await globalThis.crypto.subtle.digest("SHA-256", data);
+    const hashBuf = await globalThis.crypto.subtle.digest("SHA-256", new Uint8Array(data));
     return Array.from(new Uint8Array(hashBuf))
       .map((b) => b.toString(16).padStart(2, "0"))
       .join("");

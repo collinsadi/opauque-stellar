@@ -15,7 +15,6 @@ import {
   buildDomainSeparatedMessage,
   isValidCompressedSecp256k1PublicKey,
   assertValidStealthMetaAddress,
-  LEGACY_SETUP_MESSAGE,
   type Hex,
 } from "../stealth";
 
