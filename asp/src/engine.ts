@@ -83,18 +83,69 @@ export async function confirmedDeposits(
   return deposits.filter((d) => d.ledger <= maxFinalLedger);
 }
 
+function decisionKey(depositIndex: number, policy: string): string {
+  return `${depositIndex}\u0000${policy}`;
+}
+
+/**
+ * Append `record` unless the latest decision for the same deposit and policy already
+ * says the same thing. Re-screening a deposit that is still deferred for the same
+ * reason is not a new decision, so the audit log stays bounded (#1086).
+ */
+export function appendDecision(
+  decisions: PolicyDecisionRecord[],
+  latest: Map<string, PolicyDecisionRecord>,
+  record: PolicyDecisionRecord,
+): boolean {
+  const key = decisionKey(record.depositIndex, record.policy);
+  const prev = latest.get(key);
+  if (prev && prev.verdict === record.verdict && prev.reason === record.reason) return false;
+  decisions.push(record);
+  latest.set(key, record);
+  return true;
+}
+
+function latestDecisions(decisions: PolicyDecisionRecord[]): Map<string, PolicyDecisionRecord> {
+  const latest = new Map<string, PolicyDecisionRecord>();
+  for (const d of decisions) latest.set(decisionKey(d.depositIndex, d.policy), d);
+  return latest;
+}
+
+/**
+ * Run one tick while holding the pool's writer lock, so an operator reinstatement can
+ * never be overwritten by a tick that loaded state before it and saves after it.
+ */
 export async function runPoolTick(cfg: TickConfig): Promise<TickResult> {
   if (cfg.dataDir && !cfg.manifestSigner) {
     throw new Error("ASP manifest publishing requires manifestSigner (set ASP_MANIFEST_SECRET or ASP_SECRET)");
   }
+  const release = await cfg.store.lock(cfg.poolId);
+  try {
+    return await runPoolTickLocked(cfg);
+  } finally {
+    release();
+  }
+}
+
+async function runPoolTickLocked(cfg: TickConfig): Promise<TickResult> {
   const now = cfg.now ?? (() => new Date().toISOString());
-  const state = cfg.store.load(cfg.poolId) ?? initState(cfg.poolId, cfg.scope);
+  const loaded = cfg.store.load(cfg.poolId);
+  const loadedJson = loaded ? JSON.stringify(loaded) : null;
+  const state = loaded ?? initState(cfg.poolId, cfg.scope);
   state.rejectedIndices ??= [];
   state.deferredIndices ??= [];
   state.decisions ??= [];
+  const latest = latestDecisions(state.decisions);
+  // Only write the state file when this tick actually changed something.
+  const saveIfChanged = () => {
+    if (JSON.stringify(state) !== loadedJson) cfg.store.save(state);
+  };
 
   // 1. Read finalized deposits and screen any index without a terminal decision.
-  const readAfterIndex = state.deferredIndices.length > 0 ? -1 : state.lastIndex;
+  // Resume just before the oldest deferred deposit rather than from genesis.
+  const readAfterIndex = state.deferredIndices.length > 0
+    ? Math.min(state.lastIndex, Math.min(...state.deferredIndices) - 1)
+    : state.lastIndex;
   const deposits = await confirmedDeposits(
     cfg.adapter,
     await cfg.adapter.readDeposits(readAfterIndex, state.lastLedger),
@@ -116,7 +167,7 @@ export async function runPoolTick(cfg: TickConfig): Promise<TickResult> {
     const verdict = evaluated.verdict;
     for (const decision of evaluated.decisions) {
       const record: PolicyDecisionRecord = { depositIndex: dep.index, policy: decision.policy, verdict: decision.verdict, reason: decision.reason, timestamp: decision.timestamp };
-      state.decisions.push(record);
+      appendDecision(state.decisions, latest, record);
     }
     if (verdict === "approve") {
       state.approvedIndices.push(dep.index);
@@ -147,7 +198,7 @@ export async function runPoolTick(cfg: TickConfig): Promise<TickResult> {
     const check = cfg.reorgGuard.validate(state.lastLedger);
     if (!check.ok) {
       haltedForReorg = true;
-      cfg.store.save(state);
+      saveIfChanged();
       return {
         poolId: cfg.poolId,
         approvedCount: state.approvedIndices.length,
@@ -225,7 +276,7 @@ export async function runPoolTick(cfg: TickConfig): Promise<TickResult> {
     }
   }
 
-  cfg.store.save(state);
+  saveIfChanged();
   return {
     poolId: cfg.poolId,
     approvedCount: state.approvedIndices.length,
