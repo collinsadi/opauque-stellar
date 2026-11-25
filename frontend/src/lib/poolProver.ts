@@ -29,6 +29,7 @@ import { getNetwork, getNetworkPassphrase } from "./chain";
 import {
   NoteCommitmentMismatchError,
   NoteNotIndexedError,
+  PoolHistoryIncompleteError,
   PoolNotDeployedError,
   PoolRootsStaleError,
   PoolRootsUnpublishedError,
@@ -65,18 +66,24 @@ function parseOldestLedgerFromRangeError(err: unknown): number | null {
   return m ? Number(m[1]) : null;
 }
 
-async function poolEventStartLedger(server: rpc.Server): Promise<number> {
+async function poolEventStartLedger(server: rpc.Server): Promise<{ start: number; clipped: boolean }> {
   const latest = (await server.getLatestLedger()).sequence;
   const deployedAt = getActiveManifest()?.deploymentLedger;
-  let start = deployedAt && deployedAt > 0 ? deployedAt : Math.max(1, latest - EVENT_LOOKBACK);
+  const knowsDeployment = !!deployedAt && deployedAt > 0;
+  let start = knowsDeployment ? deployedAt : Math.max(1, latest - EVENT_LOOKBACK);
+  // Without a deployment ledger the lookback window may start after the first deposit.
+  let clipped = !knowsDeployment && start > 1;
   try {
     const health = await server.getHealth();
     const oldest = Number(health.oldestLedger);
-    if (start < oldest) start = oldest;
+    if (start < oldest) {
+      start = oldest;
+      clipped = true;
+    }
   } catch {
     /* health unavailable */
   }
-  return start;
+  return { start, clipped };
 }
 
 function toBE32(v: bigint): Uint8Array {
@@ -148,9 +155,33 @@ type PoolEvents = {
   depositIndices: number[];
 };
 
-async function readPoolEvents(poolId: string): Promise<PoolEvents> {
+/** Max getEvents pages followed per topic before the read is declared truncated. */
+export const EVENT_PAGE_CAP = 200;
+
+/** Pool events as read from one source, before gap checking. */
+export type RawPoolEvents = {
+  byIndex: Map<number, bigint>;
+  depositIndices: number[];
+  /** True when paging stopped at EVENT_PAGE_CAP before the cursor caught up. */
+  truncated: boolean;
+  /** True when the read window may not reach back to the pool's deployment. */
+  clipped: boolean;
+};
+
+/** Response shape of `GET {VITE_INDEXER_URL}/pools/{poolId}/state-leaves`. */
+export type IndexerStateLeaves = {
+  /** 0x-prefixed 32-byte commitments in state-tree index order (complete history). */
+  leaves: string[];
+  /** State-tree leaf index of every deposit. */
+  depositIndices: number[];
+};
+
+async function readPoolEventsFromRpc(poolId: string): Promise<RawPoolEvents> {
   const server = getSorobanServer();
-  let startLedger = await poolEventStartLedger(server);
+  const { start, clipped: startClipped } = await poolEventStartLedger(server);
+  let startLedger = start;
+  let clipped = startClipped;
+  let truncated = false;
   const depositTopic = xdr.ScVal.scvSymbol("Deposit").toXDR("base64");
   const withdrawTopic = xdr.ScVal.scvSymbol("Withdraw").toXDR("base64");
 
@@ -163,13 +194,14 @@ async function readPoolEvents(poolId: string): Promise<PoolEvents> {
   ] as const) {
     let cursor: string | undefined;
     let prevCursor: string | undefined;
+    let caughtUp = false;
     const filters = [{ type: "contract" as const, contractIds: [poolId], topics: [[topic, "*"]] }];
     // Soroban getEvents pages through the ledger range ~10k ledgers at a time and
     // returns many EMPTY pages before the ones that actually hold events. Follow
     // the cursor until it stops advancing (we have caught up to latestLedger);
     // breaking on the first short/empty page would miss every deposit that sits
     // beyond the first page.
-    for (let page = 0; page < 200; page++) {
+    for (let page = 0; page < EVENT_PAGE_CAP; page++) {
       let res: rpc.Api.GetEventsResponse;
       try {
         const req: rpc.Server.GetEventsRequest = cursor
@@ -180,6 +212,7 @@ async function readPoolEvents(poolId: string): Promise<PoolEvents> {
         const oldest = parseOldestLedgerFromRangeError(err);
         if (!cursor && oldest != null && startLedger < oldest) {
           startLedger = oldest;
+          clipped = true;
           res = await server.getEvents({ startLedger, filters, limit: 100 });
         } else {
           throw err;
@@ -201,16 +234,142 @@ async function readPoolEvents(poolId: string): Promise<PoolEvents> {
         }
       }
       cursor = res.cursor;
-      if (!cursor || cursor === prevCursor) break;
+      if (!cursor || cursor === prevCursor) {
+        caughtUp = true;
+        break;
+      }
       prevCursor = cursor;
     }
+    // #921: never stop silently at the page cap — later events would be missing.
+    if (!caughtUp) truncated = true;
+  }
+
+  return { byIndex, depositIndices, truncated, clipped };
+}
+
+/** The configured indexer base URL (`VITE_INDEXER_URL`), or null when unset. */
+export function configuredIndexerUrl(): string | null {
+  const raw = (import.meta.env.VITE_INDEXER_URL as string | undefined)?.trim();
+  return raw ? raw.replace(/\/+$/, "") : null;
+}
+
+const HEX32 = /^0x[0-9a-fA-F]{64}$/;
+
+/**
+ * Fetch the full state-leaf history from the indexer. The response is untrusted:
+ * anything it supplies is cross-checked against RPC events here and against the
+ * PUBLISHED on-chain state root before any proof is generated, so a wrong or
+ * malicious indexer can only cause a failed withdrawal, never a bad proof.
+ */
+export async function fetchStateLeavesFromIndexer(
+  baseUrl: string,
+  poolId: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<IndexerStateLeaves> {
+  const url = `${baseUrl}/pools/${encodeURIComponent(poolId)}/state-leaves`;
+  const res = await fetchImpl(url, { headers: { accept: "application/json" } });
+  if (!res.ok) throw new Error(`Indexer returned HTTP ${res.status} for ${url}`);
+  const body = (await res.json()) as Partial<IndexerStateLeaves> | null;
+  const leaves = body?.leaves;
+  const deposits = body?.depositIndices;
+  if (
+    !Array.isArray(leaves) ||
+    !leaves.every((l) => typeof l === "string" && HEX32.test(l)) ||
+    !Array.isArray(deposits) ||
+    !deposits.every((i) => Number.isInteger(i) && i >= 0 && i < leaves.length)
+  ) {
+    throw new Error("Indexer returned a malformed state-leaves response.");
+  }
+  return { leaves, depositIndices: deposits };
+}
+
+/**
+ * Merge RPC events with optional indexer data into a gap-free state tree. Throws
+ * `PoolHistoryIncompleteError` rather than zero-filling a missing leaf (#921): a
+ * zero leaf yields a root that can never match the published one.
+ */
+export function assemblePoolEvents(
+  poolId: string,
+  raw: RawPoolEvents,
+  indexer: IndexerStateLeaves | null = null,
+): PoolEvents {
+  const byIndex = new Map(raw.byIndex);
+  const deposits = new Set(raw.depositIndices);
+  if (indexer) {
+    indexer.leaves.forEach((hex, i) => {
+      const leaf = BigInt(hex);
+      const fromRpc = byIndex.get(i);
+      if (fromRpc !== undefined && fromRpc !== leaf) {
+        throw new PoolHistoryIncompleteError({
+          message: `Indexer leaf #${i} disagrees with on-chain events; refusing to use the indexer.`,
+          poolId,
+          missingLeafIndices: [],
+          truncated: raw.truncated,
+        });
+      }
+      byIndex.set(i, leaf);
+    });
+    for (const i of indexer.depositIndices) deposits.add(i);
   }
 
   const max = byIndex.size === 0 ? -1 : Math.max(...byIndex.keys());
+  const missing: number[] = [];
   const stateLeaves: bigint[] = [];
-  for (let i = 0; i <= max; i++) stateLeaves.push(byIndex.get(i) ?? 0n);
-  depositIndices.sort((a, b) => a - b);
-  return { stateLeaves, depositIndices };
+  for (let i = 0; i <= max; i++) {
+    const leaf = byIndex.get(i);
+    if (leaf === undefined) missing.push(i);
+    else stateLeaves.push(leaf);
+  }
+  const truncated = raw.truncated && !indexer;
+  if (missing.length > 0 || truncated) {
+    const why = truncated
+      ? `Reading pool events stopped at the ${EVENT_PAGE_CAP}-page cap before reaching the latest ledger.`
+      : `Pool history is missing ${missing.length} leaf(s) (first: #${missing[0]}), most likely older than the RPC node's event retention.`;
+    throw new PoolHistoryIncompleteError({
+      message:
+        `${why} The withdrawal proof cannot be built from incomplete history. ` +
+        (indexer
+          ? "The configured indexer did not fill the gap; try again once it has caught up."
+          : "Set VITE_INDEXER_URL to an indexer that serves full pool history, or use an archival RPC node."),
+      poolId,
+      missingLeafIndices: missing,
+      truncated: raw.truncated,
+    });
+  }
+  return { stateLeaves, depositIndices: Array.from(deposits).sort((a, b) => a - b) };
+}
+
+export async function readPoolEvents(
+  poolId: string,
+  deps: {
+    readRpc?: (poolId: string) => Promise<RawPoolEvents>;
+    indexerUrl?: string | null;
+    fetchImpl?: typeof fetch;
+  } = {},
+): Promise<PoolEvents> {
+  const raw = await (deps.readRpc ?? readPoolEventsFromRpc)(poolId);
+  const indexerUrl = deps.indexerUrl === undefined ? configuredIndexerUrl() : deps.indexerUrl;
+  const max = raw.byIndex.size === 0 ? -1 : Math.max(...raw.byIndex.keys());
+  const hasGaps = raw.byIndex.size !== max + 1;
+  let indexer: IndexerStateLeaves | null = null;
+  if (indexerUrl && (raw.truncated || raw.clipped || hasGaps)) {
+    try {
+      indexer = await fetchStateLeavesFromIndexer(indexerUrl, poolId, deps.fetchImpl);
+    } catch (err) {
+      // Only fatal if RPC data alone is unusable; assemblePoolEvents reports that.
+      if (raw.truncated || hasGaps) {
+        throw new PoolHistoryIncompleteError({
+          message:
+            `Pool history from RPC is incomplete and the indexer fallback failed: ${err instanceof Error ? err.message : String(err)}`,
+          poolId,
+          missingLeafIndices: [],
+          truncated: raw.truncated,
+          cause: err,
+        });
+      }
+    }
+  }
+  return assemblePoolEvents(poolId, raw, indexer);
 }
 
 /** Read the latest published root (state or ASP) via a read-only simulation. */

@@ -1,8 +1,10 @@
 /**
  * Proof Generator Modal - V2
  *
- * Generates a Groth16 ZK proof for a discovered V2 trait, entirely in the browser.
- * No private data leaves the user's device. The proof can then be submitted on-chain
+ * Generates a Groth16 ZK proof for a discovered V2 trait in the browser. Keys and the
+ * proof witness stay on the device, but the leaf commitment and attestation metadata
+ * are sent to the reputation publisher to obtain a Merkle path (see
+ * PUBLISHER_DISCLOSURE below, #920). The proof can then be submitted on-chain
  * to the groth16_verifier program's verify_proof_v2 instruction.
  */
 
@@ -33,6 +35,16 @@ import * as snarkjs from "snarkjs";
 
 
 import { buildPoseidon } from "circomlibjs";
+
+/**
+ * Accurate data-flow disclosure (#920). The proof is computed locally, but to fetch a
+ * Merkle path the wallet POSTs this metadata to VITE_REPUTATION_PUBLISHER_URL.
+ */
+const PUBLISHER_DISCLOSURE =
+  "Your keys and the proof witness stay in this browser. To fetch a Merkle path, the wallet " +
+  "sends the attestation's leaf commitment, schema ID, attestation UID, transaction hash and " +
+  "ledger to the reputation publisher, which also sees your IP address. These values are " +
+  "already public on-chain, but the request links them to this session."
 
 // =============================================================================
 // Constants
@@ -435,9 +447,11 @@ export function ProofGeneratorModal({ trait, onClose }: ProofGeneratorModalProps
                 {freeze.frozen ? "Proof generation blocked" : "Generate Proof in Browser"}
               </button>
 
-              <p className="text-center text-xs text-ink-500">
-                No private data leaves your browser. Proof generation takes 10-60 seconds.
-              </p>
+              <div className="rounded-xl border border-ink-700 bg-ink-950 px-4 py-3 text-xs text-ink-400" data-testid="publisher-disclosure">
+                <p className="font-medium text-mist mb-1">What leaves your browser</p>
+                <p>{PUBLISHER_DISCLOSURE}</p>
+                <p className="mt-2 text-ink-500">Proof generation takes 10-60 seconds.</p>
+              </div>
             </>
           )}
 
@@ -469,7 +483,7 @@ export function ProofGeneratorModal({ trait, onClose }: ProofGeneratorModalProps
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
                 </div>
-                <p className="text-sm font-medium text-white">Proof ready. No private data left your browser.</p>
+                <p className="text-sm font-medium text-white">Proof ready. Your keys and witness never left your browser.</p>
               </div>
 
               <div className="rounded-xl border border-ink-700 bg-ink-950 px-4 py-3">

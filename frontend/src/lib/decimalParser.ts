@@ -20,17 +20,19 @@ export function parseXlmToStroops(xlmString: string): bigint {
     throw new Error("XLM amount cannot be empty");
   }
 
+  // #922: amounts are never negative. Reject a sign outright instead of returning a
+  // negative bigint that callers would have to remember to check.
+  if (trimmed.startsWith("-")) {
+    throw new Error(`XLM amount cannot be negative: ${trimmed}`);
+  }
+
   // Check for invalid characters
-  if (!/^-?\d+\.?\d*$/.test(trimmed)) {
+  if (!/^\d+\.?\d*$/.test(trimmed)) {
     throw new Error(`Invalid XLM amount: ${trimmed}`);
   }
 
-  // Handle negative values
-  const isNegative = trimmed.startsWith("-");
-  const absolute = isNegative ? trimmed.slice(1) : trimmed;
-
   // Split into integer and decimal parts
-  const parts = absolute.split(".");
+  const parts = trimmed.split(".");
   const integerPart = parts[0] || "0";
   const decimalPart = parts[1] || "";
 
@@ -46,9 +48,7 @@ export function parseXlmToStroops(xlmString: string): bigint {
 
   // Combine and convert to bigint
   const stroopsString = integerPart + paddedDecimal;
-  const stroops = BigInt(stroopsString);
-
-  return isNegative ? -stroops : stroops;
+  return BigInt(stroopsString);
 }
 
 /**

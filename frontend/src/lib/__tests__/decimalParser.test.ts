@@ -33,6 +33,14 @@ describe("parseXlmToStroops", () => {
     expect(() => parseXlmToStroops("1.2.3")).toThrow();
   });
 
+  it("rejects negative amounts instead of returning a negative bigint (#922)", () => {
+    expect(() => parseXlmToStroops("-1")).toThrow(/negative/);
+    expect(() => parseXlmToStroops("-0.0000001")).toThrow(/negative/);
+    expect(() => parseXlmToStroops(" -5 ")).toThrow(/negative/);
+    expect(() => parseXlmToStroops("-0")).toThrow(/negative/);
+    expect(() => parseXlmToStroops("+1")).toThrow();
+  });
+
   it("should handle edge cases", () => {
     expect(parseXlmToStroops("0.0000000")).toBe(0n);
     expect(parseXlmToStroops("999999999.9999999")).toBe(9_999_999_999_999_999n);
