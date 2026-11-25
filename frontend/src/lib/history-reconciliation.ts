@@ -20,7 +20,7 @@
 
 import type { TxHistoryEntry } from "../store/txHistoryStore";
 
-export type ChainHistoryStatus = "confirmed" | "failed" | "pending";
+export type ChainHistoryStatus = "confirmed" | "failed" | "pending" | "unknown";
 
 /** Single entry produced by the chain side, in pre-merge form. */
 export interface ChainHistoryItem {

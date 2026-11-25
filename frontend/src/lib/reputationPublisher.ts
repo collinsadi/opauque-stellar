@@ -59,16 +59,19 @@ async function signSubmission(
 
 export async function submitLeafAndFetchInclusion(
   submission: ReputationLeafSubmission,
-  signMessage: (msg: string) => Promise<string>,
+  /**
+   * Optional signer for the `x-reputation-signature` header (#1159). The publisher
+   * does not verify it yet, so callers that have no stealth-identity signer omit it
+   * rather than signing with the wallet key (which would link the leaf to the wallet).
+   */
+  signMessage?: (msg: string) => Promise<string>,
 ): Promise<ReputationPublisherInclusion> {
   const base = publisherBaseUrl();
-  const signature = await signSubmission(submission, signMessage);
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (signMessage) headers["x-reputation-signature"] = await signSubmission(submission, signMessage);
   const res = await fetch(`${base}/v1/reputation/leaves`, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-reputation-signature": signature,
-    },
+    headers,
     body: JSON.stringify(submission),
   });
   const data = await parseJsonResponse<{ inclusion?: ReputationPublisherInclusion }>(res);

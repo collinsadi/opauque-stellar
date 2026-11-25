@@ -50,6 +50,11 @@ function getE2EWallet() {
   return typeof window !== "undefined" ? window.__OPAQUE_E2E_WALLET__ : undefined;
 }
 
+/** Freighter's own error text for signing failures, or a fallback (restored; see #1088). */
+function freighterErrorMessage(error: { message?: string } | undefined, fallback: string): string {
+  return error?.message?.trim() || fallback;
+}
+
 export function StellarWalletProviders({ children }: { children: ReactNode }) {
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);

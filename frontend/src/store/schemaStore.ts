@@ -8,6 +8,7 @@
  */
 
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 import { createEncryptedStorage } from "../lib/encryptedStorage";
 import { getEncryptionPassphrase } from "../lib/getEncryptionPassphrase";
 import type { SchemaV2 } from "../lib/schema";
@@ -100,7 +101,7 @@ export const useSchemaStore = create<SchemaStoreState>()(
       addSchema: (schema) =>
         set((state) => ({
           schemas: { ...state.schemas, [schema.schemaId]: schema },
-        }),
+        })),
 
       mergeSchemas: (schemas) =>
         set((state) => {
@@ -122,7 +123,7 @@ export const useSchemaStore = create<SchemaStoreState>()(
             ...state.discoveredTraits,
             [trait.attestationUid]: trait,
           },
-        }),
+        })),
 
       markTraitInvalid: (attestationUid) =>
         set((state) => {

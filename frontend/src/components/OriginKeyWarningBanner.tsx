@@ -10,7 +10,7 @@
  */
 
 import { useOriginKeyWarning } from "../hooks/useOriginKeyWarning";
-import { AlertTriangle, X, ArrowRight } from "lucide-react";
+import { LuTriangleAlert as AlertTriangle, LuX as X, LuArrowRight as ArrowRight } from "react-icons/lu";
 
 export function OriginKeyWarningBanner() {
   const { hasOriginMismatch, canonicalOrigin, currentOrigin, dismiss, migrateToCurrentOrigin } =

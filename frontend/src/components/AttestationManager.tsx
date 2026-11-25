@@ -395,6 +395,10 @@ export function AttestationManager({
           <div className="rounded-xl border border-ink-700 bg-ink-900 px-4 py-4 text-sm text-mist">
             Loading schemas from chain...
           </div>
+        ) : schemaSyncError && schemas.length === 0 ? (
+          <div role="alert" className="rounded-xl border border-ink-700 bg-ink-900 px-4 py-4 text-sm text-mist">
+            Could not load schemas from chain: {schemaSyncError}
+          </div>
         ) : schemas.length === 0 ? (
           <div className="rounded-xl border border-ink-700 bg-ink-900 px-4 py-4 text-sm text-mist flex items-center justify-between gap-4">
             <span>You have no schemas you can attest under.</span>

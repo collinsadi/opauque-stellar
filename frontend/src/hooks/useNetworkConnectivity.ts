@@ -63,7 +63,7 @@ export function useNetworkConnectivity() {
     networkConnectivityService.markRequestFailed(id);
   };
   
-  const retryFailedRequest = (id: string, retryFn: () => Promise<void>) => {
+  const retryFailedRequest = (_id: string, retryFn: () => Promise<void>) => {
     // Clear the failure state before retry
     useNetworkStore.getState().clearConnectionFailure();
     
@@ -102,7 +102,7 @@ export function useNetworkAwareAction<T extends (...args: any[]) => Promise<any>
     onRetry?: () => void;
   }
 ): T {
-  const { isOnline, shouldBlockOperations, trackRequest, completeRequest, markRequestFailed } = useNetworkConnectivity();
+  const { shouldBlockOperations, trackRequest, completeRequest, markRequestFailed } = useNetworkConnectivity();
   
   const wrappedAction = async (...args: Parameters<T>): Promise<ReturnType<T>> => {
     // Generate unique request ID

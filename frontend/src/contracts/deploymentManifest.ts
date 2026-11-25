@@ -63,7 +63,7 @@ export function resolveContractId(
     const networkValue = envValue(networkKey);
     if (networkValue) return networkValue;
 
-    const manifestId = DEPLOYMENT_MANIFESTS[network].contracts[key].id;
+    const manifestId = DEPLOYMENT_MANIFESTS[network].contracts[key]?.id;
     if (manifestId) return manifestId;
   }
 

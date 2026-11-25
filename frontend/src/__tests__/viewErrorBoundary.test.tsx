@@ -7,7 +7,7 @@ import { ViewErrorBoundary } from "../components/ViewErrorBoundary";
 
 afterEach(() => cleanup());
 
-function ThrowingComponent() {
+function ThrowingComponent(): React.ReactNode {
   throw new Error("test render failure");
 }
 

@@ -23,9 +23,11 @@ export async function notifyScanComplete(payload: ScanNotificationPayload) {
       ? "A scan finished and found claimable or watched ghost activity."
       : "A scan finished with no new claimable activity.";
 
-  new Notification("Opaque scan complete", {
+  // `renotify` is supported by browsers but missing from TypeScript's DOM lib.
+  const options: NotificationOptions & { renotify?: boolean } = {
     body,
     tag: "opaque-scan-complete",
     renotify: discoveries > 0,
-  });
+  };
+  new Notification("Opaque scan complete", options);
 }

@@ -8,6 +8,7 @@
       "@deployments": ["../deployments/index.ts"],
       "@deployments/*": ["../deployments/*"],
       "@relayer/*": ["../relayer/src/*"],
+      "@opaquecash/stellar/relayer-protocol": ["src/types/sdk-relayer-protocol.ts"],
       "@stellar/stellar-sdk": ["node_modules/@stellar/stellar-sdk"],
       "@noble/hashes/*": ["node_modules/@noble/hashes/*"],
       "tweetnacl": ["node_modules/tweetnacl"],

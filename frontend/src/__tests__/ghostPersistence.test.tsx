@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import { GhostPersistenceWarning } from "../components/GhostPersistenceWarning";
 import { useGhostAddressStore } from "../store/ghostAddressStore";

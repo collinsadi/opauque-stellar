@@ -7,7 +7,7 @@
 
 import { useState, useEffect } from "react";
 import { estimateFees, type FeeEstimate, type NetworkFeeConditions, getNetworkFeeConditions } from "../lib/feeEstimation";
-import { Zap, AlertTriangle } from "lucide-react";
+import { LuZap as Zap, LuTriangleAlert as AlertTriangle } from "react-icons/lu";
 
 interface FeeSelectorProps {
   selectedFee: string | null;

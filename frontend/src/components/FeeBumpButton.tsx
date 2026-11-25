@@ -8,7 +8,7 @@
 import { useState } from "react";
 import { type Transaction, type FeeBumpTransaction } from "@stellar/stellar-sdk";
 import { buildFeeBumpTransaction, getSuggestedFeeBump } from "../lib/feeEstimation";
-import { Rocket, Loader2 } from "lucide-react";
+import { LuRocket as Rocket, LuLoaderCircle as Loader2 } from "react-icons/lu";
 
 interface FeeBumpButtonProps {
   tx: Transaction | FeeBumpTransaction;
