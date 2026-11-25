@@ -12,7 +12,9 @@ import { createHash } from "node:crypto";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import Ajv from "ajv";
+// The manifest schema declares JSON Schema draft 2020-12, so it must be compiled
+// with the 2020-12 Ajv build (the default `ajv` export is draft-07).
+import Ajv2020 from "ajv/dist/2020";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
@@ -64,13 +66,14 @@ function loadSchema() {
 }
 
 function validateAgainstSchema(manifest, schema) {
-  const ajv = new Ajv({ useDefaults: false, strict: false });
+  const ajv = new Ajv2020({ useDefaults: false, strict: false });
   const validate = ajv.compile(schema);
   const valid = validate(manifest);
 
   if (!valid) {
     return (validate.errors || []).map((err) => {
-      const path = err.dataPath ? `${err.dataPath}` : "$";
+      // Ajv v8 reports the JSON pointer as `instancePath` (`dataPath` is the v6 name).
+      const path = err.instancePath ? `${err.instancePath}` : "$";
       return `${path}: ${err.message}`;
     });
   }
